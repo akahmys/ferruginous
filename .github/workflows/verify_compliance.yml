@@ -1,0 +1,41 @@
+name: RR-15 compliance audit
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Install Rust (Edition 2024 / MSRV 1.85)
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: 1.85.0
+
+    - name: Rust Cache
+      uses: Swatinem/rust-cache@v2
+
+    - name: Run Secret Scanning Script
+      run: |
+        chmod +x ./scripts/verify_secrets.sh
+        ./scripts/verify_secrets.sh
+
+    - name: Run Gitleaks (Industry Standard)
+      uses: gitleaks/gitleaks-action@v2
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Run RR-15 Compliance Audit
+      run: |
+        chmod +x ./scripts/verify_compliance.sh
+        ./scripts/verify_compliance.sh

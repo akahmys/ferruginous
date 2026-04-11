@@ -1,0 +1,206 @@
+//! High-level PDF document loader and entry point.
+//! (ISO 32000-2:2020 Clause 7.5.8)
+
+use crate::xref::{MemoryXRefIndex, parse_xref_section, parse_xref_stream_content};
+use crate::trailer::{find_trailer_info, TrailerInfo};
+use crate::lexer::parse_object;
+use crate::core::{Object, Resolver, PdfError, PdfResult, ParseErrorVariant, StructureErrorVariant, ContentErrorVariant};
+use std::collections::BTreeSet;
+use std::convert::TryInto;
+
+/// Represents the physical and logical structure of a PDF document.
+/// (ISO 32000-2:2020 Clause 7.5.8)
+#[derive(Clone)]
+pub struct PdfDocument {
+    /// Raw byte buffer of the PDF file.
+    pub data: Vec<u8>,
+    /// Flattened cross-reference index.
+    pub xref_index: MemoryXRefIndex,
+    /// Information from the last trailer dictionary.
+    pub last_trailer: TrailerInfo,
+    /// Security handler for encrypted documents.
+    pub security: Option<std::sync::Arc<crate::security::SecurityHandler>>,
+}
+
+fn parse_single_xref_section(
+    data: &[u8], 
+    offset: usize
+) -> PdfResult<(MemoryXRefIndex, Object)> {
+    debug_assert!(!data.is_empty(), "parse_single: data empty");
+    debug_assert!(offset < data.len(), "parse_single: offset out of bounds");
+    if data.get(offset..offset + 4) == Some(b"xref") {
+        let (_, section) = parse_xref_section(&data[offset..])
+            .map_err(|e| PdfError::ParseError(ParseErrorVariant::general(offset as u64, format!("Xref parse error at {offset}: {e:?}"))))?;
+        Ok((section.index, Object::new_dict_arc(section.trailer)))
+    } else {
+        let obj_bytes = &data[offset..];
+        let (input, _header) = crate::lexer::parse_id_gen_obj(obj_bytes)
+            .map_err(|e| PdfError::ParseError(ParseErrorVariant::HeaderError { offset: offset as u64, details: format!("{e:?}") }))?;
+        let (_, obj) = parse_object(input)
+            .map_err(|e| PdfError::ParseError(ParseErrorVariant::general(offset as u64, format!("Xref stream parse error: {e:?}"))))?;
+        
+        if let Object::Stream(dict, stream_data) = obj {
+            if dict.get(b"Type".as_slice()) == Some(&Object::new_name(b"XRef".to_vec())) {
+                let decoded_data = crate::filter::decode_stream(&dict, &stream_data)
+                    .map_err(|e| PdfError::ContentError(ContentErrorVariant::General(e.to_string())))?;
+                let index = parse_xref_stream_content(&decoded_data, &dict)
+                    .map_err(|e| PdfError::ParseError(ParseErrorVariant::general(offset as u64, e.to_string())))?;
+                return Ok((index, Object::new_stream_arc(std::sync::Arc::clone(&dict), std::sync::Arc::clone(&stream_data))));
+            }
+        }
+        Err(PdfError::StructureError(StructureErrorVariant::NoXRefFound(offset)))
+    }
+}
+
+/// Loads the physical structure of a PDF (`XRef` tables and trailers).
+pub fn load_document_structure(data: &[u8]) -> PdfResult<PdfDocument> {
+    debug_assert!(!data.is_empty(), "load_structure: data empty");
+    
+    let start_pos = find_pdf_header(data)?;
+    let initial_info = find_trailer_info(data)
+        .map_err(|e| PdfError::ParseError(ParseErrorVariant::general(0, e.to_string())))?;
+
+    let merged_index = resolve_xref_chain(data, start_pos, initial_info.last_xref_offset)?;
+    let security = init_security(data, &merged_index, &initial_info);
+    
+    Ok(PdfDocument { 
+        data: data.to_vec(),
+        xref_index: merged_index, 
+        last_trailer: initial_info,
+        security,
+    })
+}
+
+fn find_pdf_header(data: &[u8]) -> PdfResult<usize> {
+    let search_limit = std::cmp::min(data.len(), 1024);
+    data[..search_limit].windows(5).position(|w| w == b"%PDF-")
+        .ok_or_else(|| PdfError::ParseError(ParseErrorVariant::general(0, "Could not find PDF header")))
+}
+
+fn resolve_xref_chain(data: &[u8], start_pos: usize, initial_offset: u64) -> PdfResult<MemoryXRefIndex> {
+    let mut merged_index = MemoryXRefIndex::default();
+    let mut visited_offsets = BTreeSet::new();
+    let mut current_xref_offset = initial_offset;
+    let mut loop_count = 0;
+    const MAX_XREF_LAYERS: usize = 1000;
+
+    loop {
+        loop_count += 1;
+        if loop_count > MAX_XREF_LAYERS { return Err(PdfError::StructureError(StructureErrorVariant::TooManyXRefLayers)); }
+        
+        let offset_usize = adjust_xref_offset(data, start_pos, current_xref_offset)?;
+        if visited_offsets.contains(&(offset_usize as u64)) { break; }
+        visited_offsets.insert(offset_usize as u64);
+
+        let (index, trailer_obj) = parse_single_xref_section(data, offset_usize)?;
+        for (id, entry) in index.entries {
+            merged_index.entries.entry(id).or_insert(entry);
+        }
+        
+        let current_trailer = match trailer_obj {
+            Object::Dictionary(d) => d,
+            Object::Stream(d, _) => d,
+            _ => return Err(PdfError::StructureError(StructureErrorVariant::InvalidTrailerType)),
+        };
+
+        if let Some(Object::Integer(prev)) = current_trailer.get(b"Prev".as_slice()) {
+            current_xref_offset = (*prev).try_into().map_err(|_| PdfError::StructureError(StructureErrorVariant::InvalidPrev))?;
+        } else { break; }
+    }
+    Ok(merged_index)
+}
+
+fn adjust_xref_offset(data: &[u8], start_pos: usize, offset: u64) -> PdfResult<usize> {
+    let mut offset_usize: usize = offset.try_into()
+        .map_err(|_| PdfError::ParseError(ParseErrorVariant::InvalidOffset { offset: offset as usize }))?;
+    
+    if offset_usize >= data.len() || (data.get(offset_usize..offset_usize+4) != Some(b"xref") && data.get(offset_usize).map(|b| !b.is_ascii_digit()).unwrap_or(true)) {
+        let adjusted = offset_usize + start_pos;
+        if adjusted < data.len() {
+            offset_usize = adjusted;
+        }
+    }
+
+    while offset_usize < data.len() && data[offset_usize].is_ascii_whitespace() { offset_usize += 1; }
+    Ok(offset_usize)
+}
+
+fn init_security(
+    data: &[u8],
+    index: &crate::xref::MemoryXRefIndex,
+    trailer: &crate::trailer::TrailerInfo
+) -> Option<std::sync::Arc<crate::security::SecurityHandler>> {
+    debug_assert!(!data.is_empty(), "init_security: data empty");
+    debug_assert!(!index.entries.is_empty(), "init_security: empty index");
+    use crate::resolver::PdfResolver;
+    use std::sync::Arc;
+    
+    let encrypt_ref = match trailer.trailer_dict.get(b"Encrypt".as_slice()) {
+        Some(Object::Reference(r)) => Some(*r),
+        _ => None,
+    };
+    
+    if let Some(r) = encrypt_ref {
+        let resolver = PdfResolver {
+            data,
+            index: Arc::new(index.clone()),
+            security: None,
+            cache: std::sync::Mutex::new(std::collections::BTreeMap::new()),
+        };
+        if let Ok(Object::Dictionary(dict)) = resolver.resolve(&r) {
+            if let Ok(handler) = crate::security::SecurityHandler::new(&dict, trailer.id().as_deref().map(|v| v.as_slice()), b"") {
+                return Some(Arc::new(handler));
+            }
+        }
+    }
+    None
+}
+
+impl PdfDocument {
+    /// Returns the root Catalog of the PDF document.
+    pub fn catalog(&self) -> PdfResult<crate::catalog::Catalog<'_>> {
+        use crate::resolver::PdfResolver;
+        use std::sync::Arc;
+        
+        let root_ref = self.last_trailer.root()
+            .ok_or_else(|| PdfError::StructureError(StructureErrorVariant::MissingRoot))?;
+        
+        let resolver = PdfResolver {
+            data: &self.data,
+            index: Arc::new(self.xref_index.clone()),
+            security: self.security.clone(),
+            cache: std::sync::Mutex::new(std::collections::BTreeMap::new()),
+        };
+        
+        let obj = resolver.resolve(&root_ref)
+            .map_err(|e| PdfError::ResourceError(format!("Failed to resolve /Root: {e}")))?;
+
+        if let Object::Dictionary(dict) = obj {
+            debug_assert!(!dict.is_empty());
+            Ok(crate::catalog::Catalog::new(std::sync::Arc::clone(&dict), Box::leak(Box::new(resolver))))
+        } else {
+            Err(PdfError::InvalidType { expected: "Dictionary".into(), found: "Other".into() })
+        }
+    }
+
+    /// Returns the `PageTree` for the document using the provided resolver.
+    pub fn page_tree_at<'a, R: crate::core::Resolver + 'a>(&self, resolver: &'a R) -> PdfResult<crate::page::PageTree<'a>> {
+        let root_ref = self.last_trailer.root()
+            .ok_or_else(|| PdfError::StructureError(StructureErrorVariant::MissingRoot))?;
+        
+        let obj = resolver.resolve(&root_ref)?;
+        if let Object::Dictionary(dict) = obj {
+            let catalog = crate::catalog::Catalog::new(dict, resolver);
+            catalog.page_tree()
+        } else {
+            Err(PdfError::InvalidType { expected: "Dictionary".into(), found: "Other".into() })
+        }
+    }
+
+    /// Returns the `PageTree` for the document.
+    pub fn page_tree(&self) -> PdfResult<crate::page::PageTree<'_>> {
+        let catalog = self.catalog()?;
+        catalog.page_tree()
+            .map_err(|e| PdfError::ResourceError(e.to_string()))
+    }
+}

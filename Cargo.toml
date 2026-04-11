@@ -1,0 +1,58 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/ferruginous-sdk",
+    "crates/ferruginous-render",
+    "crates/ferruginous-ui",
+]
+
+[workspace.dependencies]
+thiserror = "2.0.11"
+serde = { version = "1.0", features = ["derive"] }
+vello = { git = "https://github.com/linebender/vello" }
+rayon = "1.10"
+ttf-parser = "0.21"
+lcms2 = "6.0"
+egui = "0.33.1"
+eframe = { version = "0.33.1", default-features = false }
+egui-wgpu = "0.33.1"
+
+[patch.crates-io]
+image = { git = "https://github.com/image-rs/image.git", tag = "v0.25.5" }
+time = { git = "https://github.com/time-rs/time.git", tag = "v0.3.36" }
+serde_with = { git = "https://github.com/jonasbb/serde_with.git", tag = "v3.11.0" }
+url = { git = "https://github.com/servo/rust-url.git", tag = "v2.5.2" }
+idna = { git = "https://github.com/servo/rust-url.git", tag = "v2.5.2" }
+# ... rest of the patches ...
+tauri = { git = "https://github.com/tauri-apps/tauri.git", tag = "tauri-v2.0.0" }
+
+[workspace.package]
+version = "0.1.0"
+authors = ["Ferruginous Developers"]
+edition = "2024"
+rust-version = "1.94"
+license = "MIT"
+repository = "https://github.com/akahmys/Ferruginous"
+
+[workspace.metadata.hirt]
+integrity_level = "high"
+compliance_standard = "ISO 32000-2:2020"
+safety_protocol = "HDD-SR-01"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+pedantic = "warn"
+nursery = "warn"
+all = "warn"
+too_many_lines = "allow"
+module_name_repetitions = "allow"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
