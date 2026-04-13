@@ -5,7 +5,7 @@
 - **[RR-15](.agent/protocols/RELIABLE_RUST_15.md)**: 15 の安全性制約を機械的に適用。
 - **[HDD](.agent/protocols/HDD_PROTOCOL.md)**: 仕様先行・自動検証ハーネス駆動を徹底。
 - **Target**: ISO 32000-2:2020 (PDF 2.0) Only
-- **MSRV**: 1.85.0 / Edition 2024
+- **MSRV**: 1.94 / Edition 2024
 
 ## 2. 開発原則 (Parallel Principles)
 
@@ -121,7 +121,7 @@
 - **M56-G: ドキュメント品質の向上** [x]
   - 主要 API への ISO 32000-2 条項引用に基づく解説追加。
 
-### Phase 18: Multibyte Text Rendering Precision (マルチバイトテキスト描画の精密化) [/]
+### Phase 18: Multibyte Text Rendering Precision (マルチバイトテキスト描画の精密化) [完了]
 
 > [!IMPORTANT]
 > **定量診断フェーズ完了 (2026-04-13)**:

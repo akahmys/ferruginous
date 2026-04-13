@@ -1,3 +1,7 @@
+//! Diagnostic utility for analyzing Japanese text layout and matrix transformations.
+//!
+//! (ISO 32000-2:2020 Clause 9.7.4.3)
+
 use ferruginous_sdk::loader::load_document_structure;
 use ferruginous_sdk::PdfResult;
 use std::env;

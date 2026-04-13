@@ -447,7 +447,7 @@ impl Font {
                 }
             }
         }
-        // Heuristic: Center horizontally based on actual width
+        // DEFAULT Vertical Metrics (Clause 9.7.4.3)
         let w0 = self.char_width(code);
         (self.dw2.1, w0 / 2.0, self.dw2.0)
     }
@@ -842,20 +842,19 @@ impl Font {
             }
         }
 
-        // 2. Check Unicode mapping for common punctuation that needs rotation in fallback.
-        // E.g. ( ) [ ] { } -
+        // 2. Check Unicode mapping for common punctuation that needs rotation.
         let unicode = self.to_unicode_string(code);
         if let Some(c) = unicode.chars().next() {
-            // ASCII digits and letters (already covered above for 1-byte, but handle multi-byte mapping too)
             if c.is_ascii_graphic() {
                 return true;
             }
-            // Add specific punctuation marks often found in Japanese text that need rotation if not vertical-alternate
             matches!(c, '（' | '）' | '［' | '］' | '｛' | '｝' | '〈' | '〉' | '《' | '》' | 
                 '「' | '」' | '『' | '』' | '【' | '】' | '〔' | '〕' | '〖' | '〗' |
                 '〘' | '〙' | '〚' | '〛' | '〜' | '…' | '―' | '‐' | '－' | '＝' | '：' | '；')
         } else {
-            false
+            // 3. Fallback: If no Unicode mapping, use glyph width as a heuristic.
+            // Half-width characters in Japanese fonts are typically rotated in vertical flow.
+            self.char_width(code) < 700.0
         }
     }
 }

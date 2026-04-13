@@ -37,7 +37,7 @@ Rust の安全性を最大限に引き出した「壊れにくい」実装と、
 
 ## 技術的な構成
 
-- **言語**: Rust (Edition 2024 / MSRV 1.85.0)
+- **言語**: Rust (Edition 2024 / MSRV 1.94)
 - **描画**: [Vello](https://github.com/linebender/vello) / WGPU
 - **UI フレームワーク**: [egui](https://github.com/emilk/egui) / eframe (0.33.1)
 - **準拠規格**: ISO 32000-2:2020

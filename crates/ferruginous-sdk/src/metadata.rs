@@ -39,7 +39,7 @@ impl Metadata {
     }
 
     /// Simplistic XMP value extraction without a full XML parser.
-    /// (Adhering to MSRV 1.85.0 and minimal complexity requirements)
+    /// (Adhering to MSRV 1.94 and minimal complexity requirements)
     fn extract_xmp_value(&self, tag: &str) -> Option<String> {
         let xmp = self.as_xmp_string();
         let start_tag = format!("<{tag}>");

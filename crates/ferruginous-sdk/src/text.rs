@@ -94,28 +94,17 @@ impl TextState {
             let w1 = v_adv.unwrap_or(-1000.0);
             // ty = (w1 - adj)/1000 * fs + Tc + Tw
             // In PDF vertical mode, Tc and Tw are ADDED to the displacement. (Clause 9.3.2)
-            // But if w1 is negative (-1000), adding positive Tc makes ty 'less negative',
-            // which would bunch characters if we don't handle the Tm inversion.
-            let ty = ((w1 - tj_adj) / 1000.0).mul_add(fs, -tc) - tw;
+            let ty = ((w1 - tj_adj) / 1000.0).mul_add(fs, tc) + tw;
             
             let coeffs = self.matrix.as_coeffs();
-            // MOVE DOWN logic: Conventional PDF vertical text moves down.
-            // If Tm has d < 0 (inverted), moving by ty (negative) results in +Y movement (UP).
-            // We force the displacement to be downward in user space if d is negative.
-            let mut dy = ty;
-            if coeffs[3] < 0.0 && ty < 0.0 {
-                // If Tm is flipped and ty is negative, we need to flip ty to move DOWN in user space.
-                dy = -ty;
-            }
-
+            // Displacement is along the y-axis of text space.
+            // (ISO 32000-2:2020 Clause 9.4.4)
             self.matrix = Affine::new([
                 coeffs[0], coeffs[1], coeffs[2], coeffs[3], 
-                coeffs[4] + dy * coeffs[2], 
-                coeffs[5] + dy * coeffs[3]
+                coeffs[4] + ty * coeffs[2], 
+                coeffs[5] + ty * coeffs[3]
             ]);
-            println!("[DIAG] Adv(V): ty={:.2}, dy={:.2}, Tm_post=[{:.2}, {:.2}]", 
-                ty, dy, self.matrix.as_coeffs()[4], self.matrix.as_coeffs()[5]);
-            (dy, matrix_before)
+            (ty, matrix_before)
         }
     }
 }

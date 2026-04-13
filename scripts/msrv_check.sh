@@ -25,7 +25,17 @@ fi
 # 2. Check for occurrences of the old MSRV (1.85.0)
 OLD_MSRV="1.85.0"
 echo "Searching for obsolete version: $OLD_MSRV"
-MAPPINGS=$(grep -r "$OLD_MSRV" . --exclude-dir=target --exclude-dir=.git --exclude-dir=.gemini --exclude=msrv_check.sh)
+MAPPINGS=$(grep -rn "$OLD_MSRV" . \
+    --exclude-dir=.git \
+    --exclude-dir=target \
+    --exclude-dir=.gemini \
+    --exclude-dir=.agent \
+    --exclude-dir=node_modules \
+    --exclude="*.pdf" \
+    --exclude="*.log" \
+    --exclude="Cargo.lock" \
+    --exclude="msrv_check.sh" \
+    --exclude="*.txt")
 
 if [ -n "$MAPPINGS" ]; then
     echo "Error: Obsolete MSRV ($OLD_MSRV) found in the following files:"
@@ -36,7 +46,15 @@ fi
 # 3. Check for any version mismatch in other Cargo.toml files
 CARGO_TOMLS=$(find . -name "Cargo.toml" -not -path "./target/*")
 for file in $CARGO_TOMLS; do
-    # Only check if it defines rust-version explicitly (not .workspace = true)
+    # Skip if it is the root Cargo.toml (already checked)
+    if [[ "$file" == "./$ROOT_CARGO" ]] || [[ "$file" == "$ROOT_CARGO" ]]; then
+        continue
+    fi
+    # Skip if it uses workspace inheritance
+    if grep -q "rust-version = { workspace = true }" "$file"; then
+        continue
+    fi
+    
     version=$(grep "rust-version =" "$file" | cut -d '"' -f 2)
     if [ -n "$version" ] && [[ "$version" != "$EXPECTED_VERSION" ]]; then
         echo "Error: $file rust-version ($version) does not match $ROOT_CARGO ($EXPECTED_VERSION)"

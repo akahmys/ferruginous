@@ -72,12 +72,12 @@ fn run_visual_regression_test(pdf_path: &str, page_idx: usize, name: &str) {
 
 #[test]
 fn test_visual_regression_japanese_text() {
-    run_visual_regression_test("../../samples/japanese-test.pdf", 0, "japanese-test");
+    run_visual_regression_test("../../samples/pdf20/jp-harness.pdf", 0, "jp-harness");
 }
 
 #[test]
 fn test_visual_regression_graphics_suite() {
-    let pdf_path = "../../samples/graphics-suite.pdf";
+    let pdf_path = "../../samples/graphics/graphics-suite.pdf";
     // Page 1: Basic Shapes
     run_visual_regression_test(pdf_path, 0, "graphics-suite");
     // Page 2: Curves & Clipping

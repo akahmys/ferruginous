@@ -1,30 +1,30 @@
 #![allow(clippy::all, missing_docs)]
-//! Example module
+//! Example utility for dumping content stream nodes.
 
 use ferruginous_sdk::loader::load_document_structure;
 use ferruginous_sdk::content::{Processor, parse_content_stream};
+use std::error::Error;
 
-fn main() {
+fn main() -> Result<(), Box<dyn Error>> {
     println!("Dumping page traces...");
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 3 { 
         println!("Usage: dump_page <pdf> <page_number>");
-        return; 
+        return Ok(()); 
     }
     
     let path = &args[1];
-    let page_idx = args[2].parse::<usize>().unwrap();
+    let page_idx = args[2].parse::<usize>()?;
     
-    let doc_bytes = std::fs::read(path).unwrap();
-    let doc = load_document_structure(&doc_bytes).unwrap();
-    let _resolver = doc.resolver();
+    let doc_bytes = std::fs::read(path)?;
+    let doc = load_document_structure(&doc_bytes)?;
     
-    let pages = doc.page_tree().unwrap();
-    match pages.get_page(page_idx - 1) {
+    let pages = doc.page_tree()?;
+    match pages.get_page(page_idx.saturating_sub(1)) {
         Ok(page) => {
             let contents = page.get_combined_content_data().unwrap_or_default();
             
-            let nodes = parse_content_stream(&contents).unwrap();
+            let nodes = parse_content_stream(&contents)?;
             let resources = page.resources();
             
             let mut processor = Processor::new(
@@ -33,11 +33,12 @@ fn main() {
                 None
             );
             
-            processor.process_nodes(&nodes).unwrap();
+            processor.process_nodes(&nodes)?;
             println!("Processed {} commands", processor.display_list.len());
         }
         Err(e) => {
             println!("Page not found or error: {}", e);
         }
     }
+    Ok(())
 }

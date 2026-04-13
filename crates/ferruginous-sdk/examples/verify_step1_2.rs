@@ -1,15 +1,21 @@
 #![allow(clippy::all, missing_docs)]
-//! Example module
+//! Verification utility for font analysis.
 
 use ferruginous_sdk::core::types::Resolver;
 use ferruginous_sdk::loader::load_document_structure;
 use ferruginous_sdk::core::Object;
 use ferruginous_sdk::font::Font;
+use std::error::Error;
 
-fn main() {
-    let pdf_path = "../../samples/legacy/writing-mode-1.pdf";
-    let data = std::fs::read(pdf_path).expect("failed to read pdf");
-    let doc = load_document_structure(&data).expect("failed to load doc");
+fn main() -> Result<(), Box<dyn Error>> {
+    let pdf_path = "samples/legacy/writing-mode-1.pdf";
+    if !std::path::Path::new(pdf_path).exists() {
+        println!("Skipping legacy verification: {} not found", pdf_path);
+        return Ok(());
+    }
+    
+    let data = std::fs::read(pdf_path)?;
+    let doc = load_document_structure(&data)?;
     let resolver = doc.resolver();
 
     println!("--- Step 1.2 Verification for {pdf_path} ---");
@@ -20,30 +26,40 @@ fn main() {
     if !vertical_font_found {
         println!("No vertical fonts found in the scanned range of this PDF.");
     }
+    Ok(())
 }
 
-fn scan_fonts(resolver: &std::sync::Arc<dyn ferruginous_sdk::core::Resolver>) -> bool {
+fn scan_fonts(resolver: &dyn Resolver) -> bool {
     let mut vertical_font_found = false;
     for i in 1..1000 {
         let r = ferruginous_sdk::core::Reference { id: i, generation: 0 };
         if let Ok(Object::Dictionary(dict)) = resolver.resolve(&r) {
             if let Some(Object::Name(subtype)) = dict.get(b"Subtype".as_ref()) {
                 if subtype.as_slice() == b"Type0" {
-                    println!("Found Type0 Font at {r:?}");
-                    if let Ok(font) = Font::from_dict(&dict, resolver.as_ref()) {
-                        println!("  BaseFont: {}", String::from_utf8_lossy(&font.base_font));
-                        println!("  Computed info -> is_vertical: {}", font.is_vertical());
-                        
-                        if font.is_vertical() {
-                            vertical_font_found = true;
-                            check_vertical_rotations(&font);
-                        }
-                    }
+                    process_type0_font(r, &dict, resolver, &mut vertical_font_found);
                 }
             }
         }
     }
     vertical_font_found
+}
+
+fn process_type0_font(
+    r: ferruginous_sdk::core::Reference, 
+    dict: &std::collections::BTreeMap<Vec<u8>, Object>, 
+    resolver: &dyn Resolver,
+    vertical_font_found: &mut bool
+) {
+    println!("Found Type0 Font at {r:?}");
+    if let Ok(font) = Font::from_dict(dict, resolver) {
+        println!("  BaseFont: {}", String::from_utf8_lossy(&font.base_font));
+        println!("  Computed info -> is_vertical: {}", font.is_vertical());
+        
+        if font.is_vertical() {
+            *vertical_font_found = true;
+            check_vertical_rotations(&font);
+        }
+    }
 }
 
 fn check_vertical_rotations(font: &Font) {

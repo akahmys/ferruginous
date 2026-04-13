@@ -1,41 +1,47 @@
-# Git 運用方針の刷新と GitHub 同期計画
+# Phase 18: Multibyte Text Rendering Precision
 
-ユーザー様のご提案に基づき、プロジェクトの健全な成長と「メインブランチの安定性」を両立するため、今後の開発を **「ブランチベース」** へと正式に移行します。
+This phase focuses on correcting Japanese character positioning and rendering by implementing missing ISO 32000-2 requirements for composite fonts (Type 0) and CIDFonts.
+
+## User Review Required
+
+> [!IMPORTANT]
+> The changes involve core rendering logic in `ferruginous-sdk`. While aiming for 100% compliance, the use of system fallback fonts on macOS (e.g., Hiragino) might lead to slight metrics mismatches if the embedded font widths in the PDF don't align with the system font. We prioritize PDF-specified widths (`W` and `W2`) over font file metrics.
 
 ## Proposed Changes
 
-### [Component] Branch Strategy (基本方針)
-
-1.  **main ブランチ**: 
-    - 常に「ビルド可能」かつ「既存テストをパスする」安定版。
-    - ユーザーによる最終承認（Merge）を受けた成果物のみを保持。
-2.  **feat/fix ブランチ**:
-    - 特定のフェーズ（例: Phase 18）や機能、バグ修正ごとに作成。
-    - AI はこのブランチ上で大胆な診断や実装変更を行い、完了後に PR（またはマージ提案）を作成。
-
-### [Component] Execution Steps (本ターンの作業)
-
-#### 1. 規約の更新
-- **[PLANNING_PROTOCOL.md](file:///Users/jun/Documents/Project/Ferruginous/.agent/protocols/PLANNING_PROTOCOL.md)** に「第 6 章: バージョン管理規約」を追記し、ブランチ戦略を明文化。
-
-#### 2. 現在の修正の永続化 (to main)
-- 現在の「インフラ整備・規約リファクタリング」は、全フェーズの共通基盤であるため、**一度 `main` ブランチにコミット・プッシュ** します。
-- これにより、プロジェクトの基底状態（Baseline）を最新化します。
-
-#### 3. 次期フェーズの開始 (to branch)
-- Phase 18（日本語描画）の開始時に、新ブランチ `feat/phase18-multibyte-diagnosis` を作成。
-- 以降の診断・修正はこのブランチ上で行い、`main` の安定性を保護します。
+### Research & Baseline
+- Run `cargo run --example create_jp_harness` to generate a test PDF.
+- Run `cargo run --example diag_layout samples/pdf20/jp-harness.pdf` to establish the baseline failure state.
 
 ---
 
-## Verification Plan
+### SDK Refactoring (Track S)
 
-### Manual Verification
-- `git checkout -b` コマンドが正常に動作し、ブランチが作成されることを確認。
-- [PLANNING_PROTOCOL.md](file:///Users/jun/Documents/Project/Ferruginous/.agent/protocols/PLANNING_PROTOCOL.md) に追記されたルールが、ユーザー様の意図と合致しているか再確認。
+#### [MODIFY] [font.rs](file:///Users/jun/Documents/Project/Ferruginous/crates/ferruginous-sdk/src/font.rs)
+- **Metric Propagation**: Ensure `from_type0_dict` correctly inherits and overrides metrics from the Descendant CIDFont.
+- **CIDToGIDMap**: Fix the logic in `get_glyph_path` to handle `Identity` mapping correctly (CID 1:1 GID) and ensure it's applied for `CIDFontType2`.
+- **Vertical Origin**: Refine `char_vertical_metrics` to ensure default values (Clause 9.7.4.3) are used when `W2` is absent.
+
+#### [MODIFY] [text.rs](file:///Users/jun/Documents/Project/Ferruginous/crates/ferruginous-sdk/src/text.rs)
+- **Origin Shift**: Update `TextState` or the rendering loop to apply the vertical origin shift `(vx, vy)` before drawing each glyph in vertical mode (`wmode == 1`).
+- **FontMatrix Sync**: Ensure the 0.001 scaling factor is explicitly handled in the transformation matrix if not already included in the CTM/Tm calculation.
+
+#### [MODIFY] [renderer.rs / content.rs] (TBD)
+- Integrate the origin shift into the actual rendering loop within `ferruginous-render` or the content stream processor.
 
 ---
 
 ## Open Questions
 
-- **ブランチの命名**: 基本は `feat/` (機能) または `fix/` (修正) としますが、Phase 単位で `phase18/` のようなプレフィックスを使用する方が管理しやすいでしょうか？
+- Should we strictly enforce the PDF's `W` and `W2` widths even if the actual font outline has a different advance? (Currently: Yes, per ISO 32000-2).
+
+## Verification Plan
+
+### Automated Tests
+- `cargo run --example create_jp_harness`
+- `cargo run --example diag_layout samples/pdf20/jp-harness.pdf`
+- Check if the output shows the expected origin shift and advancement.
+- `verify_compliance.sh` to ensure no `unwrap()` regressions.
+
+### Manual Verification
+- Visual inspection of the generated `jp-harness.pdf` in the `ferruginous-ui` (if possible) or system viewer.

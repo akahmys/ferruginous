@@ -9,7 +9,7 @@ use crate::core::{Object, Reference, PdfError, PdfResult};
 use crate::text_layer::{TextLayer, TextElement};
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use kurbo::{Affine, BezPath, Shape};
+use kurbo::{Affine, BezPath};
 
 
 /// A single PDF content stream operation consisting of an operator and its operands.
@@ -300,11 +300,7 @@ impl<'a> Processor<'a> {
                             Ok(font) => {
                                 self.text_state.wmode = u8::from(font.is_vertical());
                                 self.current_font = Some(font);
-                                println!("[DIAG] Tf: Font={}, Size={}, WMode={}", 
-                                    String::from_utf8_lossy(name), 
-                                    self.text_state.font_size, 
-                                    self.text_state.wmode
-                                );
+                                // Set vertical mode
                             }
                             Err(_e) => {
                                 // HEURISTIC: If name suggests CID, still use 2-byte splitting
@@ -335,10 +331,10 @@ impl<'a> Processor<'a> {
             } else if let Some(&Object::Integer(i)) = op.operands.get(1) {
                 self.text_state.font_size = i as f64;
             }
-            if let Some(Object::Name(name)) = self.resources.as_ref().and_then(|res| {
+            if let Some(Object::Name(_name)) = self.resources.as_ref().and_then(|res| {
                 self.text_state.font.as_ref().and_then(|obj| res.resolver.resolve_if_ref(obj).ok())
             }) {
-                println!("[DIAG] Tf(post): Font={}, Size={}", String::from_utf8_lossy(&name), self.text_state.font_size);
+                // Tf(post)
             }
         }
         Ok(())
@@ -648,66 +644,23 @@ impl<'a> Processor<'a> {
         let th = self.text_state.horizontal_scaling / 100.0;
         let rise = self.text_state.text_rise;
         
-        // 2. Vertical mode adjustment (ISO 32000-2 Clause 9.7.4.3)
-        let mut path_offset = Affine::IDENTITY;
-        if self.text_state.wmode == 1 {
-            let (_w1y, vx, vy) = font.char_vertical_metrics(char_code);
-            path_offset = Affine::translate((-vx, -vy));
-            
-            if font.char_should_rotate_vertical(char_code) {
-                // Rotate 90 degrees clockwise around the character origin.
-                // In PDF vertical mode, character origin is at (0,0) after (-vx, -vy) translation.
-                let rotation = Affine::rotate(90.0f64.to_radians());
-                path_offset = rotation * path_offset;
-                println!("[DIAG] Rot: 90deg CW applied for vertical mode");
-            }
-        }
-        
-        // 3. Width Synchronization (Enforce PDF-specified widths)
+        // 2. Adjust for vertical mode and width
+        let path_offset = self.compute_path_offset(font, char_code);
         let expected_width = font.char_width(char_code);
-        
-        let text = font.to_unicode_string(char_code);
-        let has_to_uni = font.to_unicode.is_some();
-        let is_embedded = font.descriptor.as_ref().is_some_and(|d| d.font_data.is_some());
-        
-        println!("[DIAG] Gly: CC={:02X?}, W(PDF)={:.2}, WMode={}, Uni='{}', ToUni={}, Embed={}", 
-            char_code, expected_width, i32::from(self.text_state.wmode == 1),
-            text.replace('\n', "\\n"), has_to_uni, is_embedded);
-
-        let mut glyph_scale = Affine::IDENTITY;
-        if let Some(nw) = native_width {
+        let glyph_scale = native_width.map_or(Affine::IDENTITY, |nw| {
             if nw > 0.001 && expected_width.abs() > 0.001 {
-                // Scale native glyph to match the PDF's expected width in 1000-unit space.
-                // For CID fonts, this reconciles system/fallback font metrics with the W array.
-                glyph_scale = Affine::scale_non_uniform(expected_width / nw, 1.0);
+                Affine::scale_non_uniform(expected_width / nw, 1.0)
+            } else {
+                Affine::IDENTITY
             }
-        }
+        });
 
-        // 4. Matrix Composition
-        // text_extra handles font size, horizontal scaling, and the Y-flip for coordinate normalization.
+        // 3. Matrix Composition
         let text_extra = Affine::new([fs * th, 0.0, 0.0, fs, 0.0, rise]);
-        let font_matrix = Affine::new(font.font_matrix);
+        let total_matrix = tm * text_extra * Affine::new(font.font_matrix);
+        let final_transform = total_matrix * glyph_scale * path_offset;
         
-        // total_matrix = Tm * TextExtra * FontMatrix
-        let total_matrix = tm * text_extra * font_matrix;
-        
-        // Final transformation for the glyph: [Local Space -> 1000-unit Space -> User Space]
-        // Combine transformations: Total * Scale * Offset
-        // This ensures the character origin (top-center for vertical) is preserved.
-        let glyph_space_transform = glyph_scale * path_offset;
-        let final_transform = total_matrix * glyph_space_transform;
-        
-        // 5. Update BBox and Path
-        if let Some(path_ref) = &glyph_path {
-            let bbox = path_ref.bounding_box();
-            println!("[DIAG] Mat: Tm_trans=[{:.2}, {:.2}], Final_trans=[{:.2}, {:.2}], W(PDF)={}, W(Nat)={:.2}, S_X={:.4}, BBox_x0={:.2}", 
-                tm.as_coeffs()[4], tm.as_coeffs()[5], 
-                final_transform.as_coeffs()[4], final_transform.as_coeffs()[5],
-                expected_width, native_width.unwrap_or(0.0), 
-                expected_width / native_width.unwrap_or(expected_width),
-                bbox.x0);
-        }
-
+        // 4. Update BBox and Path
         let res_bbox = final_transform.transform_rect_bbox(glyph_bbox);
         let res_path = glyph_path.map(|mut p| {
             p.apply_affine(final_transform);
@@ -715,6 +668,20 @@ impl<'a> Processor<'a> {
         });
 
         (res_bbox, res_path)
+    }
+
+    /// Computes the character origin shift and rotation for vertical writing mode.
+    fn compute_path_offset(&self, font: &crate::font::Font, char_code: &[u8]) -> Affine {
+        if self.text_state.wmode == 1 {
+            let (_w1y, vx, vy) = font.char_vertical_metrics(char_code);
+            let mut offset = Affine::translate((-vx, -vy));
+            if font.char_should_rotate_vertical(char_code) {
+                offset = Affine::rotate(90.0f64.to_radians()) * offset;
+            }
+            offset
+        } else {
+            Affine::IDENTITY
+        }
     }
 
     fn apply_text_adjustment(&mut self, d: f64, _glyphs: &mut Vec<GlyphInstance>) {
@@ -859,10 +826,8 @@ impl<'a> Processor<'a> {
     fn handle_do(&mut self, op: &Operation) -> PdfResult<Option<Vec<ContentNode>>> {
         if !self.current_visibility() { return Ok(None); }
         if let Some(Object::Name(name)) = op.operands.first() {
-            println!("[DIAG] handle_do: {}", String::from_utf8_lossy(name));
             if let Some(ref res) = self.resources {
                 if let Some(xobj) = res.get_xobject(name) {
-                    println!("[DIAG] Entering XObject: {}", String::from_utf8_lossy(name));
                     let subtype = match xobj.dictionary.get(b"Subtype".as_ref()) {
                         Some(Object::Name(n)) => n,
                         _ => return Ok(None),

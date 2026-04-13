@@ -33,17 +33,18 @@ fn test_phase4_integration_basic_render() {
     let green_rect_path = Rect::new(0.0, 0.0, 100.0, 100.0).to_path(0.1);
     let stroke_rect_path = Rect::new(10.0, 10.0, 90.0, 90.0).to_path(0.1);
 
-    let display_list = vec![
-        DrawOp::PushState,
-        DrawOp::SetTransform(Affine::IDENTITY),
-        DrawOp::FillPath {
+    use ferruginous_sdk::graphics::DrawCommand;
+    let display_list: Vec<DrawCommand> = vec![
+        DrawCommand { op: DrawOp::PushState, oc: None },
+        DrawCommand { op: DrawOp::SetTransform(Affine::IDENTITY), oc: None },
+        DrawCommand { op: DrawOp::FillPath {
             path: Arc::new(green_rect_path),
             color: Color::RGB(0.0, 1.0, 0.0),
             rule: ClippingRule::NonZeroWinding,
             blend_mode: Default::default(),
             alpha: 1.0,
-        },
-        DrawOp::StrokePath {
+        }, oc: None },
+        DrawCommand { op: DrawOp::StrokePath {
             path: Arc::new(stroke_rect_path),
             color: Color::Gray(0.5),
             width: 2.0,
@@ -53,8 +54,8 @@ fn test_phase4_integration_basic_render() {
             dash_pattern: (vec![], 0.0),
             blend_mode: Default::default(),
             alpha: 1.0,
-        },
-        DrawOp::DrawImage {
+        }, oc: None },
+        DrawCommand { op: DrawOp::DrawImage {
             data: Arc::new(decoded),
             width: 1,
             height: 1,
@@ -62,12 +63,12 @@ fn test_phase4_integration_basic_render() {
             rect: Rect::new(20.0, 20.0, 80.0, 80.0),
             blend_mode: Default::default(),
             alpha: 1.0,
-        },
-        DrawOp::PopState,
+        }, oc: None },
+        DrawCommand { op: DrawOp::PopState, oc: None },
     ];
 
     // 3. Verify Renderer can build scene without panicking
-    renderer.render_display_list(&display_list, Affine::IDENTITY);
+    renderer.render_display_list(&display_list, Affine::IDENTITY, None);
     
     // In Vello 0.8.0+, the scene is an opaque record of encodings. 
     // If it reaches here without panicking, the construction is considered successful.

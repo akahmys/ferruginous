@@ -72,9 +72,12 @@ impl TextLayer {
     }
 
     fn needs_space_between_lines(&self, prev_text: &str, next_text: &str) -> bool {
-        if prev_text.is_empty() || next_text.is_empty() { return true; }
-        let _last_char = prev_text.chars().last().unwrap();
-        let _next_char = next_text.chars().next().unwrap();
+        let last_char = prev_text.chars().last();
+        let next_char = next_text.chars().next();
+
+        if last_char.is_none() || next_char.is_none() {
+            return true;
+        }
 
         // If both are CJK, we don't need a space/newline for many Japanese use cases (e.g. copy-paste optimization)
         // However, for generic text extraction, a newline is usually preferred.
