@@ -144,24 +144,36 @@
 現在までの Phase 18 の完遂を受け、エンジンの「堅牢性」と「ビジュアル・体験」を両立させる次世代フェーズを定義します。
 
 ### Phase 19: High-End Compliance & Archiving (規格適合の頂点へ) [ ]
-プロフェッショナル向け規格の完全制覇。
-- **M62-S: PDF/A-4 & PDF/X-6 完全準拠 (Strict Write)**
-  - 長期保存および商用印刷の最新規格への適合。
-- **M63-S: 高精度カラーマネジメント (Spot Color & ICC v4)**
-  - 特色や分光定義色の高度な再現。
 
-### Phase 20: Visual Excellence & Design System (UI ブラッシュアップ) [ ]
+プロフェッショナル向け規格の完全制覇。
+
+- **M62-S: PDF/A-4 & PDF/X-6 完全準拠 (Strict Write)**
+    - M62.1-S: XMP メタデータエンジンの刷新 (ISO 16684-1 準拠) [ ]
+    - M62.2-S: Unicode 整合性チェッカーと自動修復レイヤーの実装 [ ]
+    - M62.3-S: 関連ファイル (Associated Files) の双方向管理 (PDF/A-4f 対応) [ ]
+- **M63-S: 高精度カラーマネジメント (Spot Color & ICC v4)**
+    - M63.1-S: ページレベル OutputIntents 解析とレンダリング反映 [ ]
+    - M63.2-S: 黒点補正 (Black Point Compensation) の LUT 生成エンジン [ ]
+    - M63.3-S: 分光データ (CxF/X-4) のパースと特色シミュレーション [ ]
+
+### Phase 20: Visual Excellence & Design System ("Sentinel UI") [ ]
+
 Egui をベースとした独自デザインシステム "Sentinel UI" の構築。
+
 - **M64-A: プレミアム UI テーマの構築**
-  - グラスモフィズム、HSL 色彩設計、モダンなタイポグラフィの導入。
+    - M64.1-A: `Sentinel-Theme` クレートの創設 (HSL Tokens & Dark/Light スイッチ) [ ]
+    - M64.2-A: フレームレス・ウィンドウとカスタムタイトルバーの実装 (macOS/Windows) [ ]
+    - M64.3-A: プロダクト内蔵フォント (Inter / Outfit) の統合とダイナミックヒープ化 [ ]
 - **M65-A: モーションとマイクロインタラクション**
-  - 滑らかなパネル遷移と直感的なホバーフィードバック。
+    - M65.1-A: モーション・カーブ・ライブラリの統合 (Spline-based easing) [ ]
+    - M65.2-A: パネル遷移とモーダル・オーバーレイの物理ベース・アニメーション [ ]
 
 ### Phase 21: Performance & Universal Platform (汎用性と Web) [ ]
-- **M66-S: 線形化 (Linearization) サポート**
-  - 巨大ファイルの即時表示（Fast Web View）。
+
+- **M66-S: 線形化 (Linearization / Fast Web View) 対応**
+    - M66.1-S: ヒント・テーブル生成とオブジェクト順序の最適化オプティマイザ [ ]
+    - M66.2-S: 巨大ファイルのインクリメンタル読み込みプロトコル [ ]
 - **M67-P: WGPU-WASM パフォーマンス・スプリント**
-  - ブラウザ上でのレンダリング速度をデスクトップ級に引き上げ。
 - **M68-A: リフロー閲覧モード (Liquid Mode) の初期実装**
 
 ### Phase 22: Advanced Interactive Core (高度な相互作用) [ ]

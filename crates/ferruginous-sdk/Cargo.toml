@@ -26,6 +26,7 @@ kurbo = { version = "0.13", features = ["serde"] }
 jpeg-decoder = "0.3.2"
 ttf-parser = { workspace = true }
 lcms2 = { workspace = true }
+xmp-writer = "0.3.2"
 fax = "0.2"
 weezl = "0.1"
 justbig2 = "0.1"
