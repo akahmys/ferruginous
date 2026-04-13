@@ -143,6 +143,11 @@ impl Object {
         }
     }
 
+    /// Returns the boolean value if the object is a boolean.
+    #[must_use] pub fn as_bool(&self) -> Option<bool> {
+        if let Self::Boolean(b) = self { Some(*b) } else { None }
+    }
+
     /// Returns the name of the object type.
     #[must_use] pub fn type_name(&self) -> &'static str {
         match self {

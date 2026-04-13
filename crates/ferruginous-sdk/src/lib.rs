@@ -72,6 +72,8 @@ pub mod encoding;
 
 /// Advanced shading tessellation and mesh subdivision (ISO 32000-2:2020 Clause 8.7.4.5).
 pub mod shading_tess;
+/// Global document compliance and validation (PDF/A, PDF/UA).
+pub mod validator;
 
 pub use loader::PdfDocument;
 pub use editor::PdfEditor;

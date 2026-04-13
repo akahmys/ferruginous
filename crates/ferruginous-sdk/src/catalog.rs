@@ -220,4 +220,17 @@ impl<'a> Catalog<'a> {
 
         Some(crate::ocg::OCProperties { ocgs, default_config })
     }
+
+    /// Retrieves the Associated Files (Clause 14.13).
+    /// Used for PDF/A-4f and PDF/X-6 compliance.
+    #[must_use] pub fn associated_files(&self) -> Vec<Reference> {
+        self.dictionary.get(b"AF".as_ref()).map_or(Vec::new(), |obj| {
+            match self.resolver.resolve_if_ref(obj).ok() {
+                Some(Object::Array(arr)) => {
+                    arr.iter().filter_map(|o| if let Object::Reference(r) = o { Some(*r) } else { None }).collect()
+                }
+                _ => Vec::new(),
+            }
+        })
+    }
 }

@@ -143,14 +143,14 @@
 
 現在までの Phase 18 の完遂を受け、エンジンの「堅牢性」と「ビジュアル・体験」を両立させる次世代フェーズを定義します。
 
-### Phase 19: High-End Compliance & Archiving (規格適合の頂点へ) [ ]
+### Phase 19: High-End Compliance & Archiving (規格適合の頂点へ) [x]
 
 プロフェッショナル向け規格の完全制覇。
 
 - **M62-S: PDF/A-4 & PDF/X-6 完全準拠 (Strict Write)**
-    - M62.1-S: XMP メタデータエンジンの刷新 (ISO 16684-1 準拠) [ ]
-    - M62.2-S: Unicode 整合性チェッカーと自動修復レイヤーの実装 [ ]
-    - M62.3-S: 関連ファイル (Associated Files) の双方向管理 (PDF/A-4f 対応) [ ]
+    - M62.1-S: XMP メタデータエンジンの刷新 (ISO 16684-1 準拠) [x]
+    - M62.2-S: Unicode 整合性チェッカーと自動修復レイヤーの実装 [x]
+    - M62.3-S: 関連ファイル (Associated Files) の双方向管理 (PDF/A-4f 対応) [x]
 - **M63-S: 高精度カラーマネジメント (Spot Color & ICC v4)**
     - M63.1-S: ページレベル OutputIntents 解析とレンダリング反映 [ ]
     - M63.2-S: 黒点補正 (Black Point Compensation) の LUT 生成エンジン [ ]
