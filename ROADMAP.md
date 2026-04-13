@@ -139,4 +139,41 @@
 
 - **Parallel Sync**: `task.md` で Track S と Track A の同期ポイントを管理せよ。
 - **Atomic Sync**: 各報告前に `task.md` および `ROADMAP.md` を同期。
-- **Compliance Link**: `verify_compliance.sh` のパスを各マイルストーン完了の条件とする。
+## 5. 次世代ロードマップ案: Ferruginous "Sentinel" v2.0
+
+現在までの Phase 18 の完遂を受け、エンジンの「堅牢性」と「ビジュアル・体験」を両立させる次世代フェーズを定義します。
+
+### Phase 19: High-End Compliance & Archiving (規格適合の頂点へ) [ ]
+プロフェッショナル向け規格の完全制覇。
+- **M62-S: PDF/A-4 & PDF/X-6 完全準拠 (Strict Write)**
+  - 長期保存および商用印刷の最新規格への適合。
+- **M63-S: 高精度カラーマネジメント (Spot Color & ICC v4)**
+  - 特色や分光定義色の高度な再現。
+
+### Phase 20: Visual Excellence & Design System (UI ブラッシュアップ) [ ]
+Egui をベースとした独自デザインシステム "Sentinel UI" の構築。
+- **M64-A: プレミアム UI テーマの構築**
+  - グラスモフィズム、HSL 色彩設計、モダンなタイポグラフィの導入。
+- **M65-A: モーションとマイクロインタラクション**
+  - 滑らかなパネル遷移と直感的なホバーフィードバック。
+
+### Phase 21: Performance & Universal Platform (汎用性と Web) [ ]
+- **M66-S: 線形化 (Linearization) サポート**
+  - 巨大ファイルの即時表示（Fast Web View）。
+- **M67-P: WGPU-WASM パフォーマンス・スプリント**
+  - ブラウザ上でのレンダリング速度をデスクトップ級に引き上げ。
+- **M68-A: リフロー閲覧モード (Liquid Mode) の初期実装**
+
+### Phase 22: Advanced Interactive Core (高度な相互作用) [ ]
+- **M69-S: Safe AcroJS Sandbox (RR-15 準拠)**
+  - 規格準拠の JS 実行環境をセキュアなサンドボックスで実装。
+- **M70-A: インタラクティブ・フォーム UI の刷新**
+  - リアルタイムバリデーションとシームレスな入力体験。
+
+### Phase 23: Data PDF & Hybrid Containers (データコンテナ化) [ ]
+- **M71-S: 関連ファイル (Associated Files) の双方向管理**
+  - PDF をデータコンテナとして活用する Clause 14.13 の実装。
+
+### Phase 24: AI-Native Document Intelligence (AI 連携 - 延期) [ ]
+- **M72-S: セマンティック抽出と LLM 連携**
+- **M73-A: 対話型 AI アシスタント UI**
