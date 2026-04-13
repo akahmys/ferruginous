@@ -1,23 +1,29 @@
-# Session Handoff (2026-04-13)
+# Session Handoff (2026-04-13) - ELM Lifecycle Ready
 
-- **Mode**: Build (Infrastructure)
-- **Status**: **完了 (Ready for next phase)**
+- **Mode**: Infrastructure (Setup & Refinement)
+- **Status**: **完了 (基盤構築完了 - 解析フェーズへ)**
+- **SSoT**: [PLANNING_PROTOCOL](../protocols/PLANNING_PROTOCOL.md)
 
-## What Was Done
+## Current Context (脳内スナップショット)
 
-- 開発憲章（GEMINI.md）および全プロトコルの再構築。
-- AI 協調のための「外部化メモリ」システム（.agent/session/）の確立。
-- `FIX_PROTOCOL` を自動化する新ワークフロー `fix_via_diagnosis.md` の作成。
-- ROADMAP.md および README.md を実態に合わせて「正直に」同期。
-- 全てのプロトコル間のパス不整合を解消。
+本セッションで Ferruginous の開発基盤を「推論」から「規格実証」へと完全に移行した。
 
-## Open Issues
+### 1. 外部基盤 (Tools)
+- **pdf-spec-mcp**: `.agent/tools/pdf-spec-mcp` に構築済み。ISO 32000-2 規格への直接クエリが可能。
+- **仕様書**: `specs/ISO_32000-2_sponsored-ec2.pdf` に正典を配置済み。
 
-- **日本語 PDF 描画問題**: 依然として未解決。Phase 18 は `[要再検証]` ステータス。
-- **技術負債**: `verify_compliance.sh` により、examples 配下の unwrap 放棄や一部の Clone 密度が依然として検出されている。
+### 2. 統治基盤 (Governance)
+- **ELM (External Long-Term Memory)**: `.agent/session/` が AI の生命維持装置として定義された。**「Artifact 作成と同時に ELM ミラーを生成する」** 規約が有効。
+- **原則**: 「推論より実証」が憲章（GEMINI.md）として再定義された。
 
-## Next Session Should
+## Open Issues / Blockers
 
-1. **Fix モード** の宣言。
-2. 新ワークフロー `/fix_via_diagnosis` を実行し、日本語 PDF 描画問題の診断を開始する。
-3. `regression_log.md` の遡及エントリを参照し、過去と同じ過ち（推定による修正）を繰り返さない。
+- **Phase 18 (日本語描画)**: 準備は整ったが、本質的な修正は未着手。
+- **Compliance**: `verify_compliance.sh` により、`crates/ferruginous-sdk/examples/dump_page.rs` 等での `unwrap()` 違反が検出されている（優先度：低）。
+
+## Next Action Entry Point
+
+1.  **Fix モード** の開始。
+2.  `pdf-spec-mcp` を使用した **Phase 18 の精密診断**。
+    - 抽出対象: FontMatrix, CTM, Tfs (Text font size), W (Widths) の規格要件。
+3.  ELM 規約の遵守（常に `session/` への即時永続化を伴うこと）。

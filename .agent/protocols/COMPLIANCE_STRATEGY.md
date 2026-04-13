@@ -1,31 +1,21 @@
 # ISO 32000 準拠検証戦略 (Compliance Strategy)
 
 > [!IMPORTANT]
-> 「規格への適合」は Ferruginous の生命線である。Arlington Model, VeraPDF, 差分テストを統合し、完全準拠を機械的に証明せよ。
+> **規格への適合は Ferruginous の存在意義である。**
+> 主観を排し、MCP ツール、Arlington Model、および差分テストを用いて、完全準拠を客観的に証明せよ。
 
-## 1. 検証レイヤー (Verification Layers)
+## 1. 静的検証（規格照合）
+- **MCP 監査**: `pdf-spec-mcp` を用い、実装しようとしているロジックが規格書のどの条項（Clause）に紐づくかを明文化する。
+- **Arlington 文法**: `ferruginous-sdk` の辞書・ストリーム生成が Arlington PDF Model と矛盾しないことを静的に検証する。
 
-- **規約**: Arlington Model による文法検証、VeraPDF による構造検証、および他エンジンとの比較レンダリングを統合せよ。
-- **目的**: PDF 規格の膨大な仕様に対して、多角的な自動検証による裏付けを行う。
-- **判定基準**: `scripts/verify_compliance.sh` および `cargo test` が全項目パスしていること。
+## 2. 動的検証（レンダリング・構造）
+- **VeraPDF 監査**: 出力された PDF が VeraPDF 等のバリデータで「PDF 2.0 準拠」と判定されることを目指す。
+- **差分テスト**: 他のリファレンス実装（pdfium 等）と描画結果を比較し、ピクセル単位または行列単位での整合性を確認する。
 
-## 2. 品質ゲート (Zero-Warning Gate)
+## 3. 品質ゲート (Zero-Warning Gate)
+- **Clippy**: `clippy::all`, `clippy::pedantic` において警告ゼロ。
+- **Coverage**: 重要な変換ロジック、行列計算、色空間処理におけるテスト網羅率の維持。
 
-- **規約**: `clippy::pedantic` 警告ゼロを義務化し、MSRV 1.85.0 への互換性を維持せよ。
-- **目的**: 潜在的な不具合や技術的負債をソースレベルで根絶し、長期的な保守性能を確保する。
-- **判定基準**: CI またはローカルでの `cargo clippy` 実行時に警告が 1 件も出力されないこと。
-
-## 3. 証跡と Clause 紐付け (Evidence & Clauses)
-
-- **規約**: 実装およびテストに ISO 32000-2:2020 の該当 Clause 番号を明記し、`.agent/session/walkthrough.md` にエビデンスを記録せよ。
-- **目的**: どのコードが規格のどの部分を実装しているかを明文化し、監査を容易にする。
-- **判定基準**: 全ての公開 API または重要なロジックに Clause 番号のコメントが含まれていること。
-
----
-
-## 4. 監査ステップ
-
-1. **実装前**: `specs/` と規格書の Clause を照合。
-2. **実装中**: 型安全性による不正データ排除（RR-15 遵守）。
-3. **報告前**: `verify_compliance.sh` の実行とパス。
-4. **同期**: `sync_docs` による整合性証明。
+## 4. 証跡の永続化
+- すべての検証結果は、単なる「通過報告」ではなく、**具体的な出力ログや Clause 番号と共に `walkthrough.md` に ELM 永続化（即時同期）** されなければならない。
+- `specs/` 配下のドキュメントは、常に最新の規格解釈を反映するよう `sync_docs` で同期せよ。

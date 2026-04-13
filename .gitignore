@@ -1,6 +1,8 @@
 # Rust / Cargo
 /target/
 Cargo.lock
+/samples/
+**/samples/*.pdf
 
 # IDEs
 .vscode/
@@ -28,3 +30,7 @@ clippy_*.txt
 /ferruginous_*.png
 /artifacts/
 /scratch/
+
+# PDF Specifications & Tools
+/specs/*.pdf
+/.agent/tools/

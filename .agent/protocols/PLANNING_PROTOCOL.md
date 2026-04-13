@@ -1,110 +1,69 @@
 # 戦略的プランニング・プロトコル (Planning Protocol)
 
 > [!IMPORTANT]
-> 単一案への固執を排し、多角的な解決策を検討せよ。全ファイルを役割に基づき基準化し、規約を自律的に洗練（Self-Refinement）せよ。
+> **AI の生存戦略**: セッション開始時に本プロトコルの「3.1. セッション開始手順」を完遂せよ。
+> 「記憶の蒸発」を前提とし、あらゆる思考過程を即座に外部化（ELM 永続化）せよ。
 
-## 1. SSoT 役割定義 (SSoT Role Standard)
+## 1. 信頼できる唯一の情報源 (SSoT Roles)
 
-プロジェクトの全構成要素の「役割」と「性質」を定義する。改定・追加時は本表に基づきターゲットを特定せよ。
+プロジェクトの整合性を維持するため、以下の SSoT（Single Source of Truth）定義を厳守せよ。
 
-| 分類 | ファイル/ディレクトリ | 役割・SSoT 定義 | 判定基準 (Criteria) |
+| カテゴリ | ターゲット | 役割と定義 | 判定基準 |
 | :--- | :--- | :--- | :--- |
-| **憲章** | `.agent/GEMINI.md` | **Constitution**: AI の操作原則とモード定義。 | 全プロトコルの絶対的優先順位 |
-| **規約** | `.agent/protocols/*.md` | **Protocols**: 安全性、品質、設計基準。 | 各ファイル内の「判定基準」セクション |
-| **スキル** | `.agent/skills/*.md` | **Skills**: 高度な自動化手順の定義（摩擦分析等）。 | 出力の有用性と規約への還元率 |
-| **手順** | `.agent/workflows/*.md` | **Workflows**: 定型作業の自動化（// turbo）。 | 実行エラー・警告の有無 |
-| **仕様** | `specs/*.md` | **Specifications**: 設計・構造の正典。 | ISO 32000-2 との整合性 |
-| **作業記録** | `.agent/session/task.md` | **WAL**: 作業計画と進捗の即時記録。 | 作業開始前に Plan が記述されていること |
-| **引き継ぎ** | `.agent/session/handoff.md` | **Handoff**: セッション間の状態伝達。 | セッション終了時に更新されていること |
-| **失敗記録** | `.agent/session/regression_log.md` | **Anti-Patterns**: 失敗と学びの永続記録。 | 追記のみ。セッション終了時に更新 |
-| **進捗** | `ROADMAP.md` | **Milestones**: マイルストーンの完了記録。 | 完了ゲート通過 + ユーザー承認 |
-| **計画** | `.agent/session/implementation_plan.md` | **Artifacts**: 意思決定と合意の記録。 | 承認の有無 |
-| **証明** | `.agent/session/walkthrough.md` | **Artifacts**: 実装と検証のエビデンス。 | テスト・動画・キャプチャの有無 |
+| **思想** | `.agent/GEMINI.md` | **Constitution**: 憲章・開発哲学・根本原則。 | 命令の絶対的優先順位 |
+| **規約** | `.agent/protocols/` | **Governance**: 品質・プロセス・設計の具体的制約。 | 各ファイル内の判定基準 |
+| **仕様** | `specs/` | **Specs**: 内部設計書および機能要件。 | ISO 32000 との整合性 |
+| **外部規格** | `pdf-spec-mcp` | **Standard**: ISO 32000-2:2020 国際規格の正典。 | ツールによる条項特定 |
+| **記憶 (ELM)** | `.agent/session/` | **ELM**: AI の外部長期記憶。計画、タスク、WAL。 | リアルタイムのミラー反映 |
+| **履歴** | `ROADMAP.md` | **Progress**: マイルストーンの達成と承認の記録。 | ユーザー承認の有無 |
+
+## 2. ELM ライフサイクル (The Life-Support Cycle)
+
+AI の思考が「蒸発」するのを防ぐため、以下の **即時永続化フロー** を全フェーズで適用せよ。
+
+1.  **提案 (Artifact)**: 計画（Plan）やタスク（Task）を、AI IDE の高視認性領域（Artifact）に作成。
+2.  **即時永続化 (ELM Mirror)**: 承認を待たず、作成直後のターンで **プロジェクト内の `.agent/session/` フォルダへ物理的に書き出し**。
+3.  **実行 (Execution)**: 承認された Plan に基づき作業を開始。進捗の都度 `task.md` を ELM へ反映。
+4.  **検証 (Proof)**: 検証結果（Walkthrough）も同様に Artifact 作成と ELM 永続化を同時に実施。
+
+## 3. セッション管理 (Session Management)
+
+### 3.1. セッション開始手順 [MANDATORY]
+セッション開始直後、AI は以下の手順を **一気通貫で実行** しなければならない。
+
+1.  **憲章確認**: `GEMINI.md` を読み、現在の哲学を再教育する。
+2.  **記憶のロード**: `session/handoff.md` および `session/regression_log.md` を読み、中断地点と過去の過ちを把握する。
+3.  **ELM 同期**: `session/task.md` と `session/implementation_plan.md` を読み、現在の未完了タスクと合意事項を復元する。
+4.  **モード宣言**: Build または Fix モードを宣言し、スコープを明示した上でユーザーの承認を得る。
+
+### 3.2. WAL (Write-Ahead Log) 運用
+- **意図の記録**: コードを 1 行でも変更する前に、その「意図（Why）」を `task.md` に追記せよ。
+- **結果の記録**: 変更後、テストの結果等「事実（What）」を `task.md` に記録せよ。
+- **ELM 反映**: 常に `brain` 側と `session/` 側の内容を同期させ、「書き出されていない思考は存在しない」状態を維持せよ。
+
+## 4. ポータビリティと匿名性 (Portability & Privacy)
+
+- **相対パスの強制**: 環境依存の絶対パス（`/Users/...`）を排除し、常にプロジェクトルートからの相対パスを使用せよ。
+- **匿名化**: 個人を特定する情報や秘密情報を ELM に書き込んではならない。
+- **プロジェクト完結性**: `.agent/` ディレクトリのみで AI が自律的に立ち上がれる状態を維持せよ。
+
+## 6. バージョン管理規約 (Version Control Protocol)
+
+「メインブランチの安定性」と「大胆な診断・実験」を両立するため、以下のブランチ運用を標準手順とする。
+
+- **main ブランチ (SSoT of Stability)**:
+    - 常にビルド可能であり、`verify_compliance.sh` をパスする最安定版。
+    - ユーザーによる最終承認を得た成果物のみがマージされる。
+- **開発ブランチ (feat/ or fix/)**:
+    - 新機能開発（Build モード）は `feat/phase-XX-description`。
+    - 不具合修正（Fix モード）は `fix/issue-description`。
+    - AI は原則として開発ブランチ上で作業を行い、完了後にマージを提案せよ。
+- **ライフサイクル**:
+    1. フェーズ開始時に新ブランチ作成。
+    2. ブランチ上で診断・実装・検証を実行。
+    3. 完了ゲートを通過し `walkthrough.md` で報告。
+    4. ユーザー承認後、`main` へマージし、ブランチをクローズする。
 
 ---
-
-## 2. 計画策定サイクル (Phase 1: Research & Plan)
-
-- **規約**: 既存コード、仕様書 (`specs/`)、Arlington Model を調査し、`implementation_plan.md` でアプローチを明文化せよ。
-- **目的**: 曖昧な実装を排除し、リスクとトレードオフを事前に可視化する。
-- **判定**: `implementation_plan.md` が作成され、ユーザーの承認が得られていること。
-
----
-
-## 3. セッション管理と実行 (Session Management & Execution)
-
-### 3.1. セッション開始手順 [MUST]
-
-以下の手順をセッション開始時に必ず実行せよ。省略は禁止。
-
-1. `.agent/GEMINI.md` を読み、原則とモード定義を確認する
-2. `.agent/session/handoff.md` を読み、前セッションの状態を把握する
-3. `.agent/session/regression_log.md` を読み、過去の失敗を確認する
-4. 作業モード（Build / Fix）を判定し、人間に宣言して承認を得る
-5. このセッションのスコープを宣言する
-6. `.agent/session/task.md` に計画を書く（WAL: 実行前に意図を記録）
-
-### 3.2. 作業中の WAL 運用 [MUST]
-
-- **規約**: `.agent/session/task.md` を WAL パターンで運用せよ。**各ステップの着手前に意図を記録し、完了後に結果を記録する。**
-- **目的**: AI の途中停止や文脈喪失に備え、作業意図を永続化する。
-- **判定**: `task.md` の各ステップに着手前の記述と完了後の結果が記録されていること。
-
-### 3.3. セッション終了手順 [MUST]
-
-1. 完了ゲートの判定（モードに応じたプロトコルに従う）
-2. `.agent/session/handoff.md` を更新する（未解決問題の有無にかかわらず必須）
-3. `.agent/session/regression_log.md` を更新する（失敗や学びがあった場合）
-4. 完了していない作業を正直に「未完了」と報告する
-
----
-
-## 4. 規約の自律洗練 (Role-Aware Self-Refinement)
-
-摩擦（Friction: エラー、指摘、非効率）を検知した際は、直ちに [analyze_friction](../skills/analyze_friction.md) スキルを実行し、以下の分類に基づき適切な規約を洗練せよ。
-
-- **判断・行動ミス** $\rightarrow$ `GEMINI.md` へ。
-- **実装・品質不備** $\rightarrow$ `RELIABLE_RUST_15.md` へ。
-- **プロセス・同期不全** $\rightarrow$ `PLANNING_PROTOCOL.md` へ。
-- **修正プロセスの失敗**（リグレッション、誤診断等） $\rightarrow$ `FIX_PROTOCOL.md` へ。
-- **UI 整合性・UX 不備** $\rightarrow$ `UI_DESIGN_PROTOCOL.md` へ。
-- **検証漏れ・監査不全** $\rightarrow$ `COMPLIANCE_STRATEGY.md` へ。
-
----
-
-## 5. ポータビリティと匿名性の確保 (Portability & Privacy)
-
-- **規約**: 絶対パス（`file:///Users/...` 等）の使用を厳禁し、ワークスペース内相対パスを強制せよ。
-- **目的**: プロジェクトの移動や環境変化への耐性（Portability）、および公開時のプライバシー保護を確実に実施する。
-- **判定基準**: ドキュメント内から `/Users/` 等の環境依存文字列が排除されていること。
-
-## 6. 同期と完了報告 (Phase 4: Audit & Finalize)
-
-定期的に [sync_docs](../workflows/sync_docs.md) を実行し、全ドキュメントを「今、起きている現実」に同期せよ。
-
-- **Sync & Audit**: ターン末に `scripts/verify_compliance.sh` を実行し、Clippy 警告ゼロ及び規約適合を確認。
-- **Walkthrough**: `.agent/session/walkthrough.md` にエビデンス（テスト出力、画像等）を記録。
-- **Document Sync**: [sync_docs](../workflows/sync_docs.md) 実行。全文書を実態に強制同期。
-
----
-
-## 7. 言語と記述スタイル (Language & Style)
-
-- **実施計画書の言語**: `implementation_plan.md` は、意思決定の透明性を高めるため、**必ず日本語で記述**せよ。
-- **技術用語の扱い**: Rust の型名、PDF 規格の用語、メソッド名等は英語のまま保持し、説明文を日本語で行え。
-- **トーン**: 事実と論理に基づく記述を維持せよ。ただし、**Fix モードでは不確実性を明示する表現**（「Xの可能性がある」「未検証」等）を積極的に使い、虚偽の確信を排除すること。
-
----
-
-## 8. バージョン管理規約 (Version Control Protocol)
-
-Ferruginous プロジェクトの整合性を保つため、以下の Git 運用を遵守せよ。
-
-- **ブランチ戦略**: Trunk-based Development を採用。機能開発は `feat/`、修正は `fix/` プレフィックスの短命ブランチで行え。
-- **コミットメッセージ**: `[Rule-ID] <type>: <description>` の形式を強制せよ。
-    - **Rule-ID**: RR-15 のルール ID、または仕様書の節番号を示す。
-    - **Type**: `feat`, `fix`, `docs`, `refactor`, `perf`, `test`, `ci`, `chore`。
-    - **例**: `[RR-15-2] fix: 境界条件における unwrap を Result へ置換`
-- **マージ条件**: `scripts/verify_compliance.sh` および `scripts/verify_secrets.sh` がパスしていること。
-- **秘密情報**: API キー等の秘密情報は絶対に含めてはならない。`.git/hooks/pre-push` による強制チェックを有効化せよ。
-
+> [!NOTE]
+> **Git への永続化タイミング**: 重要なマイルストーン完了時、またはセッションの区切りにおいて、積極的に GitHub へプッシュせよ。これはクラウド上の ELM（外部長期記憶）バックアップとして機能する。
