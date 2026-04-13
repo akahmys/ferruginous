@@ -56,6 +56,8 @@ pub fn find_trailer_info(data: &[u8]) -> PdfResult<TrailerInfo> {
         }
     }
     
+    // For XRef Streams, the trailer keyword is missing. 
+    // loader.rs will extract the primary trailer from the XRef stream itself.
     Ok(TrailerInfo { last_xref_offset: offset, trailer_dict: std::sync::Arc::new(BTreeMap::new()) })
 }
 

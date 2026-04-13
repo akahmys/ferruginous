@@ -10,7 +10,6 @@ Cargo.lock
 .DS_Store
 
 # Ferruginous specific
-audit_*.log
 .agent/scratch/
 .agent/brain/
 .agent/knowledge/
@@ -20,6 +19,12 @@ audit_*.log
 # Temporary artifacts
 temp_*.pdf
 *.diff
-walkthrough.md
-task.md
-implementation_plan.md
+
+# Debug/diagnostic outputs
+*.log
+dump_*.txt
+clippy_*.txt
+/screenshot*.png
+/ferruginous_*.png
+/artifacts/
+/scratch/

@@ -32,7 +32,7 @@ impl<'a> Catalog<'a> {
         let model = ArlingtonModel::from_tsv(tsv_path)
             .map_err(|e| PdfError::ResourceError(format!("Failed to load Arlington model: {e}")))?;
         assert!(!self.dictionary.is_empty());
-        model.validate(&self.dictionary, None)
+        model.validate(&self.dictionary, self.resolver, 2.0, None)
     }
 
     /// Validates the entire document against the Arlington PDF Model Registry.

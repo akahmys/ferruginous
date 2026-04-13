@@ -1,11 +1,13 @@
-//! Arlington PDF Model integration for specification-based validation.
-//! (<https://github.com/pdf-association/arlington-pdf-model>)
-
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
-use crate::core::{Object, PdfError, PdfResult, ValidationErrorVariant};
+use crate::core::{Object, PdfError, PdfResult, ValidationErrorVariant, Resolver};
+
+pub mod parser;
+pub mod evaluator;
+use parser::parse_expression;
+use evaluator::{evaluate, EvalContext};
 
 /// The set of supported property types in the Arlington PDF Model.
 /// (<https://github.com/pdf-association/arlington-pdf-model>)
@@ -101,8 +103,10 @@ pub struct KeyDefinition {
     pub key: Vec<u8>,
     /// The list of valid PDF object types for this key.
     pub types: Vec<ArlingtonType>,
-    /// Whether the key must be present in the dictionary.
-    pub required: bool,
+    /// The 'Required' predicate string.
+    pub required: String,
+    /// The 'SinceVersion' predicate string.
+    pub since: String,
 }
 
 /// Represents a complete Arlington PDF Model for a specific object type.
@@ -138,12 +142,14 @@ impl ArlingtonModel {
                 .filter(|t| !matches!(t, ArlingtonType::Unknown(s) if s.is_empty()))
                 .collect();
             
-            let required = parts[4].to_lowercase() == "true";
+            let required = parts[4].to_string();
+            let since = if parts.len() > 5 { parts[5].to_string() } else { String::new() };
 
             model.keys.insert(key.as_bytes().to_vec(), KeyDefinition {
                 key: key.as_bytes().to_vec(),
                 types,
                 required,
+                since,
             });
         }
 
@@ -151,7 +157,7 @@ impl ArlingtonModel {
     }
 
     /// Validates a dictionary against the model structure, including inherited keys.
-    pub fn validate(&self, dict: &BTreeMap<Vec<u8>, Object>, registry: Option<&ArlingtonRegistry>) -> PdfResult<()> {
+    pub fn validate(&self, dict: &BTreeMap<Vec<u8>, Object>, resolver: &dyn Resolver, version: f64, registry: Option<&ArlingtonRegistry>) -> PdfResult<()> {
         let mut errors = Vec::new();
         let all_defined_keys = if let Some(reg) = registry {
             self.get_all_keys(reg)
@@ -159,10 +165,40 @@ impl ArlingtonModel {
             self.keys.clone()
         };
 
-        // 1. Check required keys
+        let ctx = EvalContext {
+            dictionary: dict,
+            parent: None,
+            trailer: None,
+            resolver,
+            version,
+        };
+
+        // 1. Check required keys and versioning rules
         for (key, def) in &all_defined_keys {
-            if def.required && !dict.contains_key(key) {
-                errors.push(format!("Missing required key: /{}", String::from_utf8_lossy(key)));
+            // Check 'SinceVersion'
+            if !def.since.is_empty() {
+                if let Ok((_, expr)) = parse_expression(&def.since) {
+                    if !evaluate(&expr, &ctx).as_bool() && dict.contains_key(key) {
+                        errors.push(format!("Key /{} is not supported in PDF version {}", String::from_utf8_lossy(key), version));
+                    }
+                }
+            }
+
+            // Check 'Required' predicate
+            if !def.required.is_empty() && !dict.contains_key(key) {
+                let is_required = if def.required == "true" {
+                    true
+                } else if def.required == "false" {
+                    false
+                } else if let Ok((_, expr)) = parse_expression(&def.required) {
+                    evaluate(&expr, &ctx).as_bool()
+                } else {
+                    false
+                };
+
+                if is_required {
+                    errors.push(format!("Missing required key: /{}", String::from_utf8_lossy(key)));
+                }
             }
         }
 
@@ -273,7 +309,9 @@ impl ArlingtonRegistry {
             };
 
             if let Some(model) = self.get(&actual_model) {
-                if let Err(PdfError::Validation(ValidationErrorVariant::Arlington(errs))) = model.validate(dict, Some(self)) {
+                // RR-17: Using version 2.0 as the default for Arlington validation if not specified
+                let version = 2.0; 
+                if let Err(PdfError::Validation(ValidationErrorVariant::Arlington(errs))) = model.validate(dict, resolver, version, Some(self)) {
                     report.errors.extend(errs.into_iter().map(|e| format!("[{}] {}", actual_model, e)));
                 }
             }

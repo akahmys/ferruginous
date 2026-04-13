@@ -117,10 +117,10 @@ impl<'a> OutlineItem<'a> {
         Self { dictionary, reference, resolver }
     }
 
-    /// Returns the title of the outline item.
-    #[must_use] pub fn title(&self) -> Option<Vec<u8>> {
+    /// Returns the title of the outline item as a decoded UTF-8 String.
+    #[must_use] pub fn title(&self) -> Option<String> {
         if let Some(Object::String(s)) = self.dictionary.get(b"Title".as_slice()) {
-            Some(s.to_vec())
+            Some(crate::core::string::decode_text_string(s))
         } else {
             None
         }

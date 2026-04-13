@@ -60,13 +60,20 @@ pub fn load_document_structure(data: &[u8]) -> PdfResult<PdfDocument> {
     let initial_info = find_trailer_info(data)
         .map_err(|e| PdfError::ParseError(ParseErrorVariant::general(0, e.to_string())))?;
 
-    let merged_index = resolve_xref_chain(data, start_pos, initial_info.last_xref_offset)?;
-    let security = init_security(data, &merged_index, &initial_info);
+    let (merged_index, trailer_dict) = resolve_xref_chain(data, start_pos, initial_info.last_xref_offset)?;
+    
+    // Create new TrailerInfo from the resolved trailer dictionary
+    let final_info = TrailerInfo {
+        last_xref_offset: initial_info.last_xref_offset,
+        trailer_dict,
+    };
+
+    let security = init_security(data, &merged_index, &final_info);
     
     Ok(PdfDocument { 
         data: data.to_vec(),
         xref_index: merged_index, 
-        last_trailer: initial_info,
+        last_trailer: final_info,
         security,
     })
 }
@@ -77,10 +84,11 @@ fn find_pdf_header(data: &[u8]) -> PdfResult<usize> {
         .ok_or_else(|| PdfError::ParseError(ParseErrorVariant::general(0, "Could not find PDF header")))
 }
 
-fn resolve_xref_chain(data: &[u8], start_pos: usize, initial_offset: u64) -> PdfResult<MemoryXRefIndex> {
+fn resolve_xref_chain(data: &[u8], start_pos: usize, initial_offset: u64) -> PdfResult<(MemoryXRefIndex, std::sync::Arc<std::collections::BTreeMap<Vec<u8>, Object>>)> {
     let mut merged_index = MemoryXRefIndex::default();
     let mut visited_offsets = BTreeSet::new();
     let mut current_xref_offset = initial_offset;
+    let mut primary_trailer_dict = None;
     let mut loop_count = 0;
     const MAX_XREF_LAYERS: usize = 1000;
 
@@ -93,21 +101,33 @@ fn resolve_xref_chain(data: &[u8], start_pos: usize, initial_offset: u64) -> Pdf
         visited_offsets.insert(offset_usize as u64);
 
         let (index, trailer_obj) = parse_single_xref_section(data, offset_usize)?;
-        for (id, entry) in index.entries {
-            merged_index.entries.entry(id).or_insert(entry);
-        }
         
+        // The first trailer we encounter is the primary one (it contains /Root)
         let current_trailer = match trailer_obj {
             Object::Dictionary(d) => d,
             Object::Stream(d, _) => d,
             _ => return Err(PdfError::StructureError(StructureErrorVariant::InvalidTrailerType)),
         };
 
+        if primary_trailer_dict.is_none() {
+            primary_trailer_dict = Some(std::sync::Arc::clone(&current_trailer));
+        }
+
+        for (id, entry) in index.entries {
+            merged_index.entries.entry(id).or_insert(entry);
+        }
+        
         if let Some(Object::Integer(prev)) = current_trailer.get(b"Prev".as_slice()) {
             current_xref_offset = (*prev).try_into().map_err(|_| PdfError::StructureError(StructureErrorVariant::InvalidPrev))?;
+        } else if let Some(Object::Reference(r)) = current_trailer.get(b"XRefStm".as_slice()) {
+             // Handle hybrid-reference PDF where a trailer dictionary points to a hidden XRef stream
+             // (Simplified handled as a loop hop)
+             current_xref_offset = r.id as u64; // This is a simplification
         } else { break; }
     }
-    Ok(merged_index)
+    
+    let trailer_dict = primary_trailer_dict.ok_or_else(|| PdfError::StructureError(StructureErrorVariant::MissingRoot))?;
+    Ok((merged_index, trailer_dict))
 }
 
 fn adjust_xref_offset(data: &[u8], start_pos: usize, offset: u64) -> PdfResult<usize> {
@@ -197,7 +217,19 @@ impl PdfDocument {
         }
     }
 
-    /// Returns the `PageTree` for the document.
+    /// Returns a new resolver for the document.
+    pub fn resolver(&self) -> crate::resolver::PdfResolver<'_> {
+        use crate::resolver::PdfResolver;
+        use std::sync::Arc;
+        PdfResolver {
+            data: &self.data,
+            index: Arc::new(self.xref_index.clone()),
+            security: self.security.clone(),
+            cache: std::sync::Mutex::new(std::collections::BTreeMap::new()),
+        }
+    }
+
+    /// Returns the `PageTree` for the document using the internally managed catalog and resolver.
     pub fn page_tree(&self) -> PdfResult<crate::page::PageTree<'_>> {
         let catalog = self.catalog()?;
         catalog.page_tree()

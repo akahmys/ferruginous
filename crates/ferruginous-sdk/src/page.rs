@@ -5,7 +5,7 @@ use crate::core::{Object, Reference, Resolver, PdfError, PdfResult, ContentError
 use crate::arlington::ArlingtonModel;
 use crate::resources::Resources;
 use crate::annotation::Annotation;
-use crate::graphics::DrawOp;
+use crate::graphics::DrawCommand;
 use crate::text_layer::TextLayer;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -159,7 +159,7 @@ impl<'a> Page<'a> {
         let model = ArlingtonModel::from_tsv(tsv_path)
             .map_err(|e| PdfError::ResourceError(format!("Failed to load Arlington model: {e}")))?;
         assert!(!self.dictionary.is_empty());
-        model.validate(&self.dictionary, None)
+        model.validate(&self.dictionary, self.resolver, 2.0, None)
     }
 
     /// Processes the page's content stream and returns the final graphics and text state.
@@ -180,7 +180,7 @@ impl<'a> Page<'a> {
 
     /// Processes the page's content stream and returns a sequence of drawing operations.
     /// (ISO 32000-2:2020 Clause 7.8)
-    pub fn get_display_list(&self) -> PdfResult<Vec<DrawOp>> {
+    pub fn get_display_list(&self) -> PdfResult<Vec<DrawCommand>> {
         let data = self.get_combined_content_data()?;
         let resources = self.resources();
         let mut processor = crate::content::Processor::new(resources, self.media_box_array(), None);
@@ -326,6 +326,6 @@ impl<'a> PageTree<'a> {
             .map_err(|e| PdfError::ResourceError(format!("Failed to load Arlington model: {e}")))?;
         
         assert!(!dict.is_empty());
-        model.validate(&dict, None)
+        model.validate(&dict, self.resolver, 2.0, None)
     }
 }

@@ -10,6 +10,11 @@ use nom::{
 use crate::core::Object;
 use crate::core::error::{PdfError, PdfResult, ParseErrorVariant};
 
+// Embedded core Adobe CMap resources
+const CMAP_UNIJIS_UTF8_H: &[u8] = include_bytes!("../assets/cmaps/UniJIS-UTF8-H");
+const CMAP_UNIJIS_UTF16_H: &[u8] = include_bytes!("../assets/cmaps/UniJIS-UTF16-H");
+const CMAP_90MS_RKSJ_H: &[u8] = include_bytes!("../assets/cmaps/90ms-RKSJ-H");
+
 /// Represents a mapping result from a `CMap` lookup.
 /// (ISO 32000-2:2020 Clause 9.7.5.4)
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,6 +66,8 @@ pub struct CMap {
     pub codespace_ranges: Vec<(Vec<u8>, Vec<u8>)>,
     /// Whether this CMap is vertical (WMode 1).
     pub is_vertical: bool,
+    /// Parent CMap defined via `usecmap` operator (Clause 9.7.5.2).
+    pub parent: Option<Box<CMap>>,
 }
 
 impl CMap {
@@ -69,15 +76,47 @@ impl CMap {
         Self::default()
     }
 
-    /// Creates a predefined `CMap` by name (Identity-H, Identity-V).
+    /// Creates a predefined `CMap` by name (Identity-H, UniJIS-UTF8-H, etc).
     /// (ISO 32000-2:2020 Clause 9.7.5.8)
     pub fn new_predefined(name: &str) -> Option<Self> {
+        // 1. Check embedded full CMaps
+        let embedded_data = match name {
+            "UniJIS-UTF8-H" => Some(CMAP_UNIJIS_UTF8_H),
+            "UniJIS-UTF16-H" => Some(CMAP_UNIJIS_UTF16_H),
+            "90ms-RKSJ-H" => Some(CMAP_90MS_RKSJ_H),
+            _ => None,
+        };
+
+        if let Some(data) = embedded_data {
+            if let Ok(mut parsed) = Self::parse(data) {
+                parsed.name = name.to_string();
+                return Some(parsed);
+            } else {
+            }
+        }
+
+        // 2. Fallbacks for missing or purely dynamic CMaps
         match name {
-            "Identity-H" => {
+            "Identity-H" | "Identity-V" => {
                 let mut cmap = Self::new();
                 cmap.name = name.to_string();
                 cmap.codespace_ranges.push((vec![0, 0], vec![255, 255]));
-                // Identity-H assumes 2-byte input maps to same CID
+                // Identity mapping: CID = CharCode
+                cmap.cid_ranges.push(CidRange {
+                    start: vec![0, 0],
+                    end: vec![255, 255],
+                    dst_start: 0,
+                });
+                if name.ends_with("-V") {
+                    cmap.is_vertical = true;
+                }
+                Some(cmap)
+            }
+            // Add stubs for other known names if they weren't matched above
+            n if n.starts_with("UniJIS") || n.starts_with("UniGB") || n.starts_with("UniCNS") || n.starts_with("UniKS") => {
+                let mut cmap = Self::new();
+                cmap.name = n.to_string();
+                cmap.codespace_ranges.push((vec![0, 0], vec![255, 255]));
                 cmap.cid_ranges.push(CidRange {
                     start: vec![0, 0],
                     end: vec![255, 255],
@@ -85,13 +124,10 @@ impl CMap {
                 });
                 Some(cmap)
             }
-            "Identity-V" => {
-                let mut cmap = Self::new_predefined("Identity-H")?;
-                cmap.name = name.to_string();
-                cmap.is_vertical = true;
-                Some(cmap)
+            _ => {
+                // Future enhancement: attempt to dynamically load from `assets/cmaps/{name}` on filesystem
+                None
             }
-            _ => None,
         }
     }
 
@@ -127,7 +163,42 @@ impl CMap {
                 let (next, _) = tag("beginbfrange")(current_input).map_err(|e: nom::Err<nom::error::Error<&[u8]>>| PdfError::ParseError(ParseErrorVariant::CMapError(e.to_string())))?;
                 let (next, ranges) = Self::parse_range_block(next, "endbfrange")?;
                 for (start, end, dst) in ranges {
-                    cmap.bf_ranges.push(BfRange { start, end, dst });
+                    if let Object::String(d) = dst {
+                        cmap.bf_ranges.push(BfRange { start, end, dst: d });
+                    } else if let Object::Array(arr) = dst {
+                        let start_val = if start.len() == 1 {
+                            start[0] as u32
+                        } else {
+                            if start.len() == 2 {
+                                u16::from_be_bytes([start[0], start[1]]) as u32
+                            } else {
+                                0
+                            }
+                        };
+                        let end_val = if end.len() == 1 {
+                            end[0] as u32
+                        } else {
+                            if end.len() == 2 {
+                                u16::from_be_bytes([end[0], end[1]]) as u32
+                            } else {
+                                0
+                            }
+                        };
+                        let mut i = 0;
+                        while start_val + i <= end_val && (i as usize) < arr.len() {
+                            if let Object::String(d) = &arr[i as usize] {
+                                let mut src = start.clone();
+                                let mut carry = i;
+                                for j in (0..src.len()).rev() {
+                                    let sum = src[j] as u32 + carry;
+                                    src[j] = (sum % 256) as u8;
+                                    carry = sum / 256;
+                                }
+                                cmap.bf_chars.insert(src, d.clone());
+                            }
+                            i += 1;
+                        }
+                    }
                 }
                 current_input = next;
             } else if current_input.starts_with(b"begincidchar") {
@@ -149,6 +220,42 @@ impl CMap {
                 let (next, ranges) = Self::parse_codespace_block(next)?;
                 cmap.codespace_ranges.extend(ranges);
                 current_input = next;
+            } else if let Ok((next, obj)) = parse_object(current_input) {
+                let (after_spaces, _) = pdf_multispace0(next).unwrap_or((next, ()));
+                if after_spaces.starts_with(b"usecmap") {
+                    if let Object::Name(n) = obj {
+                        let name_str = String::from_utf8_lossy(&n);
+                        if let Some(parent_cmap) = Self::new_predefined(&name_str) {
+                            if parent_cmap.is_vertical {
+                                cmap.is_vertical = true;
+                            }
+                            cmap.parent = Some(Box::new(parent_cmap));
+                        }
+                    }
+                    current_input = &after_spaces[7..]; // skip "usecmap"
+                } else if after_spaces.starts_with(b"def") {
+                    if let Object::Name(n) = &obj {
+                        if n.as_slice() == b"WMode" {
+                            // Look back at operand stack for value? 
+                            // In this simple parser, we hope the previous object was the value.
+                        }
+                    }
+                    current_input = &after_spaces[3..];
+                } else {
+                    // Check if the object itself is /WMode followed by an integer and 'def'
+                    // or an integer followed by /WMode and 'def'
+                    // Simplified: check for '/WMode' as a name and see if we can find its value
+                    if let Object::Name(n) = &obj {
+                        if n.as_slice() == b"WMode" {
+                            if let Ok((_next, val_obj)) = parse_object(after_spaces) {
+                                if let Object::Integer(w) = val_obj {
+                                    cmap.is_vertical = w == 1;
+                                }
+                            }
+                        }
+                    }
+                    current_input = next;
+                }
             } else {
                 current_input = Self::skip_ps_token(current_input);
             }
@@ -188,7 +295,7 @@ impl CMap {
         }
     }
 
-    fn parse_range_block<'a>(input: &'a [u8], end_tag: &str) -> PdfResult<(&'a [u8], Vec<(Vec<u8>, Vec<u8>, std::sync::Arc<Vec<u8>>)>)> {
+    fn parse_range_block<'a>(input: &'a [u8], end_tag: &str) -> PdfResult<(&'a [u8], Vec<(Vec<u8>, Vec<u8>, Object)>)> {
         let mut current = input;
         let mut results = Vec::new();
         loop {
@@ -203,8 +310,8 @@ impl CMap {
             let (next, ()) = pdf_multispace0(next).map_err(|e: nom::Err<nom::error::Error<&[u8]>>| PdfError::ParseError(ParseErrorVariant::CMapError(e.to_string())))?;
             let (next, dst) = parse_object(next).map_err(|e| PdfError::ParseError(ParseErrorVariant::CMapError(e.to_string())))?;
             
-            if let (Object::String(s), Object::String(e), Object::String(d)) = (start, end, dst) {
-                results.push((s.to_vec(), e.to_vec(), d));
+            if let (Object::String(s), Object::String(e)) = (&start, &end) {
+                results.push((s.to_vec(), e.to_vec(), dst.clone()));
             }
             current = next;
         }
@@ -274,7 +381,13 @@ impl CMap {
 
     /// Determines the length of the character code starting at the given position.
     #[must_use] pub fn code_length(&self, input: &[u8]) -> usize {
-        if self.codespace_ranges.is_empty() { return 1; }
+        if self.codespace_ranges.is_empty() {
+             // FALLBACK: If we have no ranges, but this is a multi-byte CMap (based on name), default to 2
+             if self.name.contains("Identity") || self.name.contains("UniJIS") || self.name.contains("UniGB") {
+                 return 2.min(input.len());
+             }
+             return 1;
+        }
         
         for (start, end) in &self.codespace_ranges {
             let len = start.len();
@@ -285,6 +398,16 @@ impl CMap {
                 }
             }
         }
+        
+        // Final fallback: if no range matched, but we are in a known multi-byte CMap, try to recover
+        if self.name.contains("Identity") || self.name.contains("UniJIS") {
+            return 2.min(input.len());
+        }
+        
+        if let Some(ref parent) = self.parent {
+            return parent.code_length(input);
+        }
+
         1
     }
 
@@ -319,18 +442,21 @@ impl CMap {
             }
         }
 
+        if let Some(ref parent) = self.parent {
+            return parent.lookup(code);
+        }
+
         None
     }
 
     fn compute_offset(code: &[u8], start: &[u8]) -> u32 {
-        debug_assert!(code.len() == start.len(), "CMap::compute_offset: mismatched lengths");
-        let mut offset = 0u32;
-        let mut loop_count = 0;
-        for i in 0..code.len() {
-            loop_count += 1;
-            debug_assert!(loop_count <= 4, "CMap::compute_offset: excessive bytes");
-            offset = (offset << 8) | u32::from(code[i].saturating_sub(start[i]));
+        let mut code_val = 0u32;
+        let mut start_val = 0u32;
+        let len = code.len().min(start.len());
+        for i in 0..len {
+            code_val = (code_val << 8) | u32::from(code[i]);
+            start_val = (start_val << 8) | u32::from(start[i]);
         }
-        offset
+        code_val.saturating_sub(start_val)
     }
 }

@@ -18,3 +18,7 @@ log = "0.4"
 miniz_oxide = "0.7"
 rayon = { workspace = true }
 ttf-parser = { workspace = true }
+pollster = "0.3"
+image = "0.25"
+
+[dev-dependencies]

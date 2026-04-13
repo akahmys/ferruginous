@@ -77,19 +77,23 @@ fn test_m27s_type0_identity_h_advancement() {
     
     // Verify results in display list
     let ops = &processor.display_list;
-    let draw_text = ops.iter().find(|op| matches!(op, DrawOp::DrawText { .. }));
+    let draw_text = ops.iter().find(|op| matches!(op.op, DrawOp::DrawText { .. }));
     
-    if let Some(DrawOp::DrawText { glyphs, size, .. }) = draw_text {
-        assert_eq!(*size, 12.0);
-        assert_eq!(glyphs.len(), 2);
-        
-        // CID 1 (00 01)
-        assert_eq!(glyphs[0].char_code, vec![0, 1]);
-        assert_eq!(glyphs[0].x_advance, 500.0);
-        
-        // CID 2 (00 02)
-        assert_eq!(glyphs[1].char_code, vec![0, 2]);
-        assert_eq!(glyphs[1].x_advance, 800.0);
+    if let Some(cmd) = draw_text {
+        if let DrawOp::DrawText { glyphs, size, .. } = &cmd.op {
+            assert_eq!(*size, 12.0);
+            assert_eq!(glyphs.len(), 2);
+            
+            // CID 1 (00 01)
+            assert_eq!(glyphs[0].char_code, vec![0, 1]);
+            assert_eq!(glyphs[0].x_advance, 500.0);
+            
+            // CID 2 (00 02)
+            assert_eq!(glyphs[1].char_code, vec![0, 2]);
+            assert_eq!(glyphs[1].x_advance, 800.0);
+        } else {
+            panic!("DrawText operation not found");
+        }
     } else {
         panic!("DrawText operation not found");
     }

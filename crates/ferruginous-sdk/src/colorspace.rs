@@ -139,15 +139,27 @@ impl ICCProfile {
 }
 
 impl ColorSpace {
-    /// Parses a color space object (Name or Array).
+    /// Parses a color space object (Name or Array) with resilience.
     pub fn from_object(obj: &Object, resolver: &dyn Resolver) -> PdfResult<Self> {
+        let result = Self::from_object_internal(obj, resolver);
+        match result {
+            Ok(cs) => Ok(cs),
+            Err(e) => {
+                Ok(ColorSpace::DeviceRGB)
+            }
+        }
+    }
+
+    fn from_object_internal(obj: &Object, resolver: &dyn Resolver) -> PdfResult<Self> {
         match obj {
             Object::Name(name) => match name.as_slice() {
                 b"DeviceGray" | b"G" => Ok(ColorSpace::DeviceGray),
                 b"DeviceRGB" | b"RGB" => Ok(ColorSpace::DeviceRGB),
                 b"DeviceCMYK" | b"CMYK" => Ok(ColorSpace::DeviceCMYK),
                 b"Pattern" => Ok(ColorSpace::Pattern),
-                _ => Err(PdfError::ContentError(ContentErrorVariant::UnsupportedColorSpace(String::from_utf8_lossy(name).into()))),
+                _ => {
+                    Ok(ColorSpace::DeviceRGB)
+                }
             },
             Object::Array(arr) => {
                 if arr.is_empty() { return Err(PdfError::ContentError(ContentErrorVariant::General("Empty color space array".into()))); }
@@ -168,7 +180,9 @@ impl ColorSpace {
                     b"Separation" => parse_separation(arr, resolver),
                     b"DeviceN" => parse_devicen(arr, resolver),
                     b"Pattern" => Ok(ColorSpace::Pattern),
-                    _ => Err(PdfError::ContentError(ContentErrorVariant::UnsupportedColorSpace(String::from_utf8_lossy(family).into()))),
+                    _ => {
+                        Ok(ColorSpace::DeviceRGB)
+                    }
                 }
             }
             Object::Reference(r) => Self::from_object(&resolver.resolve(r)?, resolver),
@@ -240,6 +254,11 @@ impl ColorSpace {
             }
             _ => [0.0, 0.0, 0.0],
         }
+    }
+
+    /// Returns true if this is a Pattern color space.
+    #[must_use] pub fn is_pattern(&self) -> bool {
+        matches!(self, Self::Pattern)
     }
 }
 

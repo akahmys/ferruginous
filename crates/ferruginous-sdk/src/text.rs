@@ -71,17 +71,16 @@ impl TextState {
 
     /// Clause 9.4.4 - Text Rendering Matrix and Cursor Advancement
     /// Returns the shift value (tx' or ty') and the matrix *before* advancement.
-    pub fn advance_glyph(&mut self, is_space: bool, glyph_width: f64, tj_adj: f64) -> (f64, Affine) {
+    pub fn advance_glyph(&mut self, is_space: bool, glyph_width: f64, v_adv: Option<f64>, tj_adj: f64, char_rendered: bool) -> (f64, Affine) {
         let fs = self.font_size;
-        let tc = self.char_spacing;
-        let tw = if is_space { self.word_spacing } else { 0.0 };
+        let tc = if char_rendered { self.char_spacing } else { 0.0 };
+        let tw = if is_space && char_rendered && self.wmode == 0 { self.word_spacing } else { 0.0 };
         let th = self.horizontal_scaling / 100.0;
         
         let matrix_before = self.matrix;
-        let shift = ((glyph_width - tj_adj) / 1000.0).mul_add(fs, tc) + tw;
-
+        
         if self.wmode == 0 {
-            // Horizontal: tx = shift * th
+            let shift = ((glyph_width - tj_adj) / 1000.0).mul_add(fs, tc) + tw;
             let tx = shift * th;
             let coeffs = self.matrix.as_coeffs();
             self.matrix = Affine::new([
@@ -91,9 +90,10 @@ impl TextState {
             ]);
             (tx, matrix_before)
         } else {
-            // Vertical: ty = -shift (writing downwards)
-            let ty = -shift;
+            let w1 = v_adv.unwrap_or(-1000.0);
+            let ty = ((w1 - tj_adj) / 1000.0).mul_add(fs, tc) + tw;
             let coeffs = self.matrix.as_coeffs();
+            // Move along the second column (vertical direction)
             self.matrix = Affine::new([
                 coeffs[0], coeffs[1], coeffs[2], coeffs[3], 
                 coeffs[4] + ty * coeffs[2], 

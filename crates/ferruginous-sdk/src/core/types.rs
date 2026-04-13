@@ -44,25 +44,25 @@ pub trait Resolver: Send + Sync {
 /// (Rule 15: Uses Arc for O(1) clones of complex data)
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Object {
-    /// Boolean objects (Clause 7.3.2).
+    /// Boolean objects (Clause 7.3.2) - representing true or false values.
     Boolean(bool),
-    /// Numeric objects (Integer) (Clause 7.3.3).
+    /// Numeric objects (Integer) (Clause 7.3.3) - representing precise 64-bit integers.
     Integer(i64),
-    /// Numeric objects (Real) (Clause 7.3.3).
+    /// Numeric objects (Real) (Clause 7.3.3) - representing floating-point numbers.
     Real(f64),
-    /// String objects (Clause 7.3.4).
+    /// String objects (Clause 7.3.4) - representing sequences of bytes.
     String(Arc<Vec<u8>>),
-    /// Name objects (Clause 7.3.5).
+    /// Name objects (Clause 7.3.5) - representing unique, atomized names (keys).
     Name(Arc<Vec<u8>>),
-    /// Array objects (Clause 7.3.6).
+    /// Array objects (Clause 7.3.6) - representing an ordered collection of objects.
     Array(Arc<Vec<Object>>),
-    /// Dictionary objects (Clause 7.3.7).
+    /// Dictionary objects (Clause 7.3.7) - representing a map of name keys to objects.
     Dictionary(Arc<BTreeMap<Vec<u8>, Object>>),
-    /// Stream objects (Clause 7.3.8).
+    /// Stream objects (Clause 7.3.8) - representing a dictionary and a data payload.
     Stream(Arc<BTreeMap<Vec<u8>, Object>>, Arc<Vec<u8>>),
-    /// Null object (Clause 7.3.9).
+    /// Null object (Clause 7.3.9) - representing the absence of an object.
     Null,
-    /// Indirect Objects (References) (Clause 7.3.10).
+    /// Indirect Objects (References) (Clause 7.3.10) - pointing to an indirect object by ID.
     Reference(Reference),
 }
 
@@ -138,6 +138,22 @@ impl Object {
         match self {
             Self::String(s) | Self::Name(s) => Some(s),
             _ => None,
+        }
+    }
+
+    /// Returns the name of the object type.
+    #[must_use] pub fn type_name(&self) -> &'static str {
+        match self {
+            Self::Boolean(_) => "Boolean",
+            Self::Integer(_) => "Integer",
+            Self::Real(_) => "Real",
+            Self::String(_) => "String",
+            Self::Name(_) => "Name",
+            Self::Array(_) => "Array",
+            Self::Dictionary(_) => "Dictionary",
+            Self::Stream(_, _) => "Stream",
+            Self::Null => "Null",
+            Self::Reference(_) => "Reference",
         }
     }
 }

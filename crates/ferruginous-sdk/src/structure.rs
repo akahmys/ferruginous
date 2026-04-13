@@ -302,7 +302,7 @@ mod tests {
         dict.insert(b"RoleMap".to_vec(), Object::new_dict(role_map));
 
         let resolver = MockResolver;
-        let root = LogicalStructure::new(std::sync::Arc::new(dict.clone()), &resolver);
+        let root = LogicalStructure::new(std::sync::Arc::new(dict), &resolver);
 
         assert_eq!(root.resolve_role(b"MyType"), b"P".to_vec());
         assert_eq!(root.resolve_role(b"OtherType"), b"P".to_vec());
@@ -320,7 +320,7 @@ mod tests {
         dict.insert(b"ClassMap".to_vec(), Object::new_dict(class_dict));
 
         let resolver = MockResolver;
-        let root = LogicalStructure::new(std::sync::Arc::new(dict.clone()), &resolver);
+        let root = LogicalStructure::new(std::sync::Arc::new(dict), &resolver);
 
         let resolved = root.resolve_class(b"MyClass").unwrap();
         assert!(matches!(resolved, Object::Dictionary(_)));
@@ -331,7 +331,7 @@ mod tests {
         let dict = BTreeMap::new();
         // Validation fails if ParentTree is missing
         let resolver = MockResolver;
-        let root = LogicalStructure::new(std::sync::Arc::new(dict.clone()), &resolver);
+        let root = LogicalStructure::new(std::sync::Arc::new(dict), &resolver);
         let validator = TaggedPdfValidator::new(&root);
         let errors = validator.validate();
         assert!(!errors.is_empty());

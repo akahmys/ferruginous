@@ -9,18 +9,19 @@ use crate::graphics::{Shading, ShadingType};
 pub struct Vertex {
     /// Coordinate in shading space.
     pub point: Point,
-    /// Color components (interpolated).
+    /// Color components (interpolated RGBA).
     pub color: [f32; 4],
 }
 
 /// A triangle with interpolated vertex colors.
 #[derive(Debug, Clone, Copy)]
 pub struct ColoredTriangle {
-    /// Three vertices of the triangle.
+    /// Three vertices of the triangle forming a single primitive.
     pub v: [Vertex; 3],
 }
 
-/// Tessellates a complex shading patch into ColoredTriangles.
+/// Tessellates a complex shading patch into `ColoredTriangles`.
+#[must_use]
 pub fn tessellate_shading(shading: &Shading) -> Vec<ColoredTriangle> {
     match shading.shading_type {
         ShadingType::FreeFormGouraud | ShadingType::LatticeFormGouraud => {
@@ -51,11 +52,12 @@ pub fn tessellate_shading(shading: &Shading) -> Vec<ColoredTriangle> {
 }
 
 /// Represents a single Coons or Tensor-Product patch.
+/// (ISO 32000-2:2020 Clause 8.7.4.5.6)
 #[derive(Debug, Clone)]
 pub struct Patch {
-    /// 12 (Coons) or 16 (Tensor) control points.
+    /// 12 (Coons) or 16 (Tensor) control points defining the surface.
     pub points: Vec<Point>,
-    /// 4 corner colors.
+    /// 4 corner colors to be interpolated across the patch.
     pub colors: [[f32; 4]; 4],
 }
 
@@ -83,8 +85,8 @@ impl Patch {
         let color = lerp_color(&top, &bottom, v);
 
         // Bi-linear interpolation for point (Simplified fallback for demonstration)
-        let x = u as f64 * 300.0;
-        let y = v as f64 * 300.0;
+        let x = f64::from(u) * 300.0;
+        let y = f64::from(v) * 300.0;
         Vertex { point: Point::new(x, y), color }
     }
 }
@@ -94,13 +96,15 @@ fn subdivide_patch(patch: &Patch, depth: u32, triangles: &mut Vec<ColoredTriangl
     if depth >= MAX_DEPTH {
         // Emit two triangles for this sub-node
         let steps = 1 << depth;
+        #[allow(clippy::cast_precision_loss)]
         let step_size = 1.0 / steps as f32;
+        #[allow(clippy::cast_possible_truncation)]
         for i in 0..steps {
             for j in 0..steps {
-                let u0 = i as f32 * step_size;
-                let v0 = j as f32 * step_size;
-                let u1 = (i + 1) as f32 * step_size;
-                let v1 = (j + 1) as f32 * step_size;
+                let u0 = (f64::from(i) * f64::from(step_size)) as f32;
+                let v0 = (f64::from(j) * f64::from(step_size)) as f32;
+                let u1 = (f64::from(i + 1) * f64::from(step_size)) as f32;
+                let v1 = (f64::from(j + 1) * f64::from(step_size)) as f32;
 
                 let v_tl = patch.evaluate(u0, v0);
                 let v_tr = patch.evaluate(u1, v0);

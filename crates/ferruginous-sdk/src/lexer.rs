@@ -323,6 +323,8 @@ pub fn parse_object(input: &[u8]) -> IResult<&[u8], Object> {
         return Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Eof)));
     }
     
+    // TRACE: Parsing object
+    
     match input[0] {
         b't' | b'f' => parse_boolean(input),
         b'n' => parse_null(input),

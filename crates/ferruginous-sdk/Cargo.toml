@@ -32,6 +32,7 @@ justbig2 = "0.1"
 x509-parser = "0.16"
 rsa = "0.9"
 ed25519-dalek = "2.1"
+hayro-jpeg2000 = { version = "0.3.4", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 proptest = "1.4"

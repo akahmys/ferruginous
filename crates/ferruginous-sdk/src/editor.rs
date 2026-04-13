@@ -726,7 +726,7 @@ mod tests {
             let mut p = std::collections::BTreeMap::new();
             p.insert(b"Type".to_vec(), Object::new_name(b"Page".to_vec()));
             p.insert(b"Parent".to_vec(), Object::Reference(Reference { id: 2, generation: 0 }));
-            editor.update_object(Reference { id: id as u32, generation: 0 }, Object::new_dict(p));
+            editor.update_object(Reference { id: u32::try_from(id).expect("positive id"), generation: 0 }, Object::new_dict(p));
         }
 
         // Action: Reorder (Reverse)

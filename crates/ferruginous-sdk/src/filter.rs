@@ -88,8 +88,33 @@ fn apply_filter(
         b"JBIG2Decode" => {
             decode_jbig2(data, params)
         }
+        b"JPXDecode" => {
+            decode_jpx(data)
+        }
         _ => Err(PdfError::ParseError(ParseErrorVariant::UnsupportedFilter { filter: String::from_utf8_lossy(name).into_owned(), offset: 0 })),
     }
+}
+
+fn decode_jpx(data: &[u8]) -> PdfResult<Vec<u8>> {
+    debug_assert!(!data.is_empty(), "decode_jpx: data empty");
+    
+    let settings = hayro_jpeg2000::DecodeSettings::default();
+    let image = hayro_jpeg2000::Image::new(data, &settings)
+        .map_err(|e| PdfError::ParseError(ParseErrorVariant::general(0, format!("JPX header error: {e:?}"))))?;
+    
+    let bitmap = image.decode()
+        .map_err(|e| PdfError::ParseError(ParseErrorVariant::general(0, format!("JPX decode error: {e:?}"))))?;
+
+    // Rule 15: Memory safe decompression
+    if bitmap.is_empty() {
+         return Ok(Vec::new());
+    }
+
+    if bitmap.len() > MAX_DECOMPRESSED_SIZE {
+        return Err(PdfError::ParseError(ParseErrorVariant::general(0, format!("JPX decompressed size exceeds limit: {}", bitmap.len()))));
+    }
+
+    Ok(bitmap)
 }
 
 fn decode_lzw(data: &[u8], params: Option<&Object>) -> PdfResult<Vec<u8>> {

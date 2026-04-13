@@ -1,10 +1,10 @@
 //! PDF content stream execution and graphics state processing.
 //! (ISO 32000-2:2020 Clause 7.8 and 8.4)
 
-use crate::graphics::{GraphicsStateStack, Color, DrawOp, GlyphInstance, ClippingRule};
+use crate::graphics::{GraphicsStateStack, Color, DrawOp, DrawCommand, GlyphInstance, ClippingRule};
 use crate::resources::{Resources, RawXObject};
 use crate::text::TextState;
-use crate::core::{Object, PdfError, PdfResult, ParseErrorVariant};
+use crate::core::{Object, Reference, PdfError, PdfResult, ParseErrorVariant};
 use crate::text_layer::{TextLayer, TextElement};
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -27,6 +27,8 @@ pub enum ContentNode {
     Operation(Operation),
     /// A block of operations (e.g., delimited by q/Q or BT/ET).
     Block(Vec<u8>, Vec<ContentNode>),
+    /// A transparency group (Isolated/Knockout).
+    TransparencyGroup(crate::graphics::GroupAttributes, Vec<ContentNode>),
 }
 
 /// A processor that maintains graphics and text state while executing content nodes.
@@ -42,14 +44,16 @@ pub struct Processor<'a> {
     pub current_font: Option<crate::font::Font>,
     /// The current resource name of the font (for DrawText).
     pub current_font_name: Vec<u8>,
-    /// The sequence of drawing operations (DisplayList).
-    pub display_list: Vec<DrawOp>,
+    /// The sequence of drawing commands with metadata.
+    pub display_list: Vec<DrawCommand>,
     /// The collected text layer (if enabled).
     pub text_layer: Option<TextLayer>,
     /// The Optional Content context (Clause 14.11.4).
     pub oc_context: Option<crate::ocg::OCContext>,
     /// Stack of visibility states (BDC/EMC).
     pub visibility_stack: Vec<bool>,
+    /// Stack of active OCG references (BDC/EMC).
+    pub oc_stack: Vec<Option<Reference>>,
 }
 
 impl<'a> Processor<'a> {
@@ -57,12 +61,12 @@ impl<'a> Processor<'a> {
     pub fn new(resources: Option<Resources<'a>>, mediabox: Option<[f64; 4]>, oc_context: Option<crate::ocg::OCContext>) -> Self {
         let mut display_list = Vec::new();
         
-        // Layer 4: Coordinate Normalization
+        // Layer 4: Coordinate Normalization (ISO 32000-2:2020 Clause 8.3.2.3)
         if let Some(bbox) = mediabox {
-            let height = bbox[3] - bbox[1];
-            // Y-flip: [1 0 0 -1 0 height]
-            let m = Affine::new([1.0, 0.0, 0.0, -1.0, 0.0, height]);
-            display_list.push(DrawOp::SetTransform(m));
+            // Correct mapping: x' = x - x0, y' = y1 - y
+            // This transforms [x0, y0, x1, y1] (PDF) to [0, 0, x1-x0, y1-y0] (Top-Left Origin)
+            let m = Affine::new([1.0, 0.0, 0.0, -1.0, -bbox[0], bbox[3]]);
+            display_list.push(DrawCommand { op: DrawOp::SetTransform(m), oc: None });
         }
 
         Self {
@@ -75,7 +79,17 @@ impl<'a> Processor<'a> {
             text_layer: None,
             oc_context,
             visibility_stack: vec![true],
+            oc_stack: vec![None],
         }
+    }
+
+    fn current_oc(&self) -> Option<Reference> {
+        self.oc_stack.last().copied().flatten()
+    }
+
+    fn push_op(&mut self, op: DrawOp) {
+        let oc = self.current_oc();
+        self.display_list.push(DrawCommand { op, oc });
     }
 
     fn current_visibility(&self) -> bool {
@@ -127,6 +141,20 @@ impl<'a> Processor<'a> {
                     stack.push((form_nodes, Some(b"q".to_vec())));
                 }
             }
+            ContentNode::TransparencyGroup(attrs, mut children) => {
+                let (blend_mode, alpha) = {
+                    let gs = self.gs_stack.current()?;
+                    (gs.blend_mode, gs.fill_alpha as f32)
+                };
+                self.push_op(DrawOp::PushLayer {
+                    attrs: attrs.clone(),
+                    blend_mode,
+                    alpha,
+                });
+                self.gs_stack.push()?;
+                children.reverse();
+                stack.push((children, Some(b"LAYER".to_vec()))); // Pseudo-op to trigger PopLayer
+            }
             ContentNode::Block(start_op, mut children) => {
                 self.setup_block(&start_op)?;
                 let end_op_inner = if start_op == b"q" || start_op == b"BT" {
@@ -144,7 +172,7 @@ impl<'a> Processor<'a> {
     fn setup_block(&mut self, start_op: &[u8]) -> PdfResult<()> {
         if start_op == b"q" {
             self.gs_stack.push()?;
-            self.display_list.push(DrawOp::PushState);
+            self.push_op(DrawOp::PushState);
         } else if start_op == b"BT" {
             self.text_state.begin_text();
         }
@@ -156,9 +184,12 @@ impl<'a> Processor<'a> {
         if let Some(op) = finished_op {
             if op == b"q" {
                 self.gs_stack.pop()?;
-                self.display_list.push(DrawOp::PopState);
+                self.push_op(DrawOp::PopState);
             } else if op == b"BT" {
                 // ET
+            } else if op == b"LAYER" {
+                self.gs_stack.pop()?;
+                self.push_op(DrawOp::PopLayer);
             }
         }
         Ok(())
@@ -166,6 +197,7 @@ impl<'a> Processor<'a> {
 
     /// Executes a single PDF graphics or text operation.
     pub fn execute_operation(&mut self, op: &Operation) -> PdfResult<Option<Vec<ContentNode>>> {
+        let op_name = String::from_utf8_lossy(&op.operator);
         match op.operator.as_slice() {
             b"cm" => self.handle_cm(op).map(|()| None),
             b"Td" => self.handle_td(op).map(|()| None),
@@ -179,11 +211,22 @@ impl<'a> Processor<'a> {
             b"Tr" => self.handle_tr(op).map(|()| None),
             b"Tj" => self.handle_tj(op).map(|()| None),
             b"TJ" => self.handle_tj_array(op).map(|()| None),
+            b"T*" => self.handle_t_star(op).map(|()| None),
+            b"'" => self.handle_quote(op).map(|()| None),
+            b"\"" => self.handle_double_quote(op).map(|()| None),
             b"Do" => self.handle_do(op),
             b"m" => self.handle_m(op).map(|()| None),
             b"l" => self.handle_l(op).map(|()| None),
             b"c" => self.handle_c(op).map(|()| None),
+            b"v" => self.handle_v(op).map(|()| None),
+            b"y" => self.handle_y(op).map(|()| None),
+            b"re" => self.handle_re(op).map(|()| None),
             b"h" => self.handle_h(op).map(|()| None),
+            b"w" => self.handle_w_linewidth(op).map(|()| None),
+            b"J" => self.handle_j_cap(op).map(|()| None),
+            b"j" => self.handle_j_join(op).map(|()| None),
+            b"M" => self.handle_m_miter(op).map(|()| None),
+            b"d" => self.handle_d_dash(op).map(|()| None),
             b"S" => self.handle_s(op).map(|()| None),
             b"s" => self.handle_close_stroke(op).map(|()| None),
             b"f" | b"F" => self.handle_f(op).map(|()| None),
@@ -222,7 +265,7 @@ impl<'a> Processor<'a> {
             let m = Affine::new([v[0], v[1], v[2], v[3], v[4], v[5]]);
             self.gs_stack.current_mut()?.ctm = self.gs_stack.current()?.ctm * m;
             // Emit transform command
-            self.display_list.push(DrawOp::SetTransform(m));
+            self.push_op(DrawOp::SetTransform(m));
         }
         Ok(())
     }
@@ -238,6 +281,7 @@ impl<'a> Processor<'a> {
     fn handle_tm(&mut self, op: &Operation) -> PdfResult<()> {
         let v = self.extract_f64_operands(&op.operands, 6);
         if v.len() == 6 {
+            let m = Affine::new([v[0], v[1], v[2], v[3], v[4], v[5]]);
             self.text_state.set_matrix(v[0], v[1], v[2], v[3], v[4], v[5]);
         }
         Ok(())
@@ -252,9 +296,30 @@ impl<'a> Processor<'a> {
                 if let Some(ref res) = self.resources {
                     self.current_font_name = name.to_vec();
                     if let Some(font_dict) = res.get_font(name) {
-                        if let Ok(font) = crate::font::Font::from_dict(&font_dict, res.resolver) {
-                            self.text_state.wmode = if font.is_vertical() { 1 } else { 0 };
-                            self.current_font = Some(font);
+                        match crate::font::Font::from_dict(&font_dict, res.resolver) {
+                            Ok(font) => {
+                                self.text_state.wmode = if font.is_vertical() { 1 } else { 0 };
+                                self.current_font = Some(font);
+                            }
+                            Err(e) => {
+                                // HEURISTIC: If name suggests CID, still use 2-byte splitting
+                                let name_str = String::from_utf8_lossy(name);
+                                if name_str.starts_with("C2") || name_str.contains("Identity") || name_str.contains("Uni") {
+                                    if let Ok(mut font) = crate::font::Font::new_dummy_multi_byte() {
+                                        font.base_font = name.to_vec();
+                                        self.current_font = Some(font);
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        // Font missing in resources, try name-based fallback
+                        let name_str = String::from_utf8_lossy(name);
+                        if name_str.starts_with("C2") || name_str.contains("Identity") || name_str.contains("Uni") {
+                            if let Ok(mut font) = crate::font::Font::new_dummy_multi_byte() {
+                                font.base_font = name.to_vec();
+                                self.current_font = Some(font);
+                            }
                         }
                     }
                 }
@@ -328,14 +393,21 @@ impl<'a> Processor<'a> {
                 let char_code = bytes[i..i+len].to_vec();
                 let width = self.current_font.as_ref()
                     .map_or(0.0, |f| f.char_width(&char_code));
-                
+
                 let is_space = char_code == [32];
-                let (_, matrix_before) = self.text_state.advance_glyph(is_space, width, 0.0);
-                
+                let v_metrics = self.current_font.as_ref().map(|f| f.char_vertical_metrics(&char_code).0);
+                let (_, matrix_before) = self.text_state.advance_glyph(is_space, width, v_metrics, 0.0, true);
+
                 // Calculate BBox and Path in page space
                 let (bbox, path) = self.calculate_glyph_data(&char_code, matrix_before);
                 
-                glyphs.push(GlyphInstance { char_code, x_advance: width, bbox, path });
+                glyphs.push(GlyphInstance { 
+                    char_code, 
+                    point: kurbo::Point::new(matrix_before.translation().x, matrix_before.translation().y),
+                    x_advance: width, 
+                    bbox, 
+                    path 
+                });
                 i += len;
             }
 
@@ -344,15 +416,25 @@ impl<'a> Processor<'a> {
             }
 
             if self.current_visibility() {
-                let gs = self.gs_stack.current()?;
-                let resolved_color = gs.fill_color.to_rgb(&gs.fill_color_space);
-                self.display_list.push(DrawOp::DrawText {
-                    glyphs,
-                    font_id: self.current_font_name.clone(),
-                    size: self.text_state.font_size,
-                    color: Color::RGB(resolved_color[0], resolved_color[1], resolved_color[2]),
-                    blend_mode: gs.blend_mode,
-                    alpha: gs.fill_alpha as f32,
+                let (glyphs_out, font_id, font_size, color_out, blend_mode, alpha) = {
+                    let gs = self.gs_stack.current()?;
+                    let resolved_color = gs.fill_color.to_rgb(&gs.fill_color_space);
+                    (
+                        glyphs.clone(),
+                        self.current_font_name.clone(),
+                        self.text_state.font_size,
+                        Color::RGB(resolved_color[0], resolved_color[1], resolved_color[2]),
+                        gs.blend_mode,
+                        gs.fill_alpha as f32,
+                    )
+                };
+                self.push_op(DrawOp::DrawText {
+                    glyphs: glyphs_out,
+                    font_id,
+                    size: font_size,
+                    color: color_out,
+                    blend_mode,
+                    alpha,
                 });
             }
         }
@@ -364,7 +446,9 @@ impl<'a> Processor<'a> {
             let mut glyphs = Vec::new();
             for item in arr.iter() {
                 match item {
-                    Object::String(bytes) => self.process_string_glyphs(bytes, &mut glyphs),
+                    Object::String(bytes) => {
+                        self.process_string_glyphs(bytes, &mut glyphs);
+                    }
                     Object::Integer(i) => self.apply_text_adjustment(*i as f64, &mut glyphs),
                     Object::Real(r) => self.apply_text_adjustment(*r, &mut glyphs),
                     _ => {}
@@ -376,17 +460,63 @@ impl<'a> Processor<'a> {
             }
 
             if self.current_visibility() {
-                let gs = self.gs_stack.current()?;
-                let resolved_color = gs.fill_color.to_rgb(&gs.fill_color_space);
-                self.display_list.push(DrawOp::DrawText {
-                    glyphs,
-                    font_id: self.current_font_name.clone(),
-                    size: self.text_state.font_size,
-                    color: Color::RGB(resolved_color[0], resolved_color[1], resolved_color[2]),
-                    blend_mode: gs.blend_mode,
-                    alpha: gs.fill_alpha as f32,
+                let (glyphs_out, font_id, font_size, color_out, blend_mode, alpha) = {
+                    let gs = self.gs_stack.current()?;
+                    let resolved_color = gs.fill_color.to_rgb(&gs.fill_color_space);
+                    (
+                        glyphs.clone(),
+                        self.current_font_name.clone(),
+                        self.text_state.font_size,
+                        Color::RGB(resolved_color[0], resolved_color[1], resolved_color[2]),
+                        gs.blend_mode,
+                        gs.fill_alpha as f32,
+                    )
+                };
+                self.push_op(DrawOp::DrawText {
+                    glyphs: glyphs_out,
+                    font_id,
+                    size: font_size,
+                    color: color_out,
+                    blend_mode,
+                    alpha,
                 });
             }
+        }
+        Ok(())
+    }
+
+    fn handle_t_star(&mut self, _op: &Operation) -> PdfResult<()> {
+        let leading = self.text_state.leading;
+        self.text_state.move_text(0.0, -leading);
+        Ok(())
+    }
+
+    fn handle_quote(&mut self, op: &Operation) -> PdfResult<()> {
+        self.handle_t_star(&Operation { operands: vec![], operator: b"T*".to_vec() })?;
+        self.handle_tj(op)
+    }
+
+    fn handle_double_quote(&mut self, op: &Operation) -> PdfResult<()> {
+        if op.operands.len() >= 3 {
+            if let Some(tw) = op.operands.get(0) {
+                let tw_f = match tw {
+                    Object::Real(r) => *r,
+                    Object::Integer(i) => *i as f64,
+                    _ => 0.0,
+                };
+                self.text_state.word_spacing = tw_f;
+            }
+            if let Some(tc) = op.operands.get(1) {
+                let tc_f = match tc {
+                    Object::Real(r) => *r,
+                    Object::Integer(i) => *i as f64,
+                    _ => 0.0,
+                };
+                self.text_state.char_spacing = tc_f;
+            }
+            let string_op = Operation { operands: vec![op.operands[2].clone()], operator: b"Tj".to_vec() };
+            self.handle_t_star(&Operation { operands: vec![], operator: b"T*".to_vec() })?;
+            self.handle_tj(&string_op)?;
         }
         Ok(())
     }
@@ -436,20 +566,49 @@ impl<'a> Processor<'a> {
             loop_count += 1;
             if loop_count > 10_000 { break; }
 
-            let len = self.current_font.as_ref()
+            let mut len = self.current_font.as_ref()
                 .and_then(|f| f.encoding_cmap.as_ref())
                 .map_or(1, |cmap| cmap.code_length(&bytes[i..]));
             
+            // DYNAMIC PROBE: If 1-byte decode yields nothing but 2-byte yields a glyph, join them
+            if len == 1 && bytes.len() - i >= 2 {
+                if let Some(ref font) = self.current_font {
+                    // Only probe if it's a known multi-byte font OR if the 1-byte lookup fails
+                    let looks_multi = font.is_multi_byte();
+                    if looks_multi {
+                        let single_path = font.get_glyph_path(&bytes[i..i+1]).ok().flatten();
+                        if single_path.is_none() {
+                            let double_path = font.get_glyph_path(&bytes[i..i+2]).ok().flatten();
+                            if double_path.is_some() {
+                                len = 2;
+                            }
+
+                        }
+                    }
+                }
+            }
+
+
+
+
             let char_code = bytes[i..i+len].to_vec();
             let width = self.current_font.as_ref()
                 .map_or(0.0, |f| f.char_width(&char_code));
             
             let is_space = char_code == [32];
-            let (_, matrix_before) = self.text_state.advance_glyph(is_space, width, 0.0);
+            let v_metrics = self.current_font.as_ref().map(|f| f.char_vertical_metrics(&char_code).0);
+            let (_, matrix_before) = self.text_state.advance_glyph(is_space, width, v_metrics, 0.0, true);
             
+            // Calculate BBox and Path in page space
             let (bbox, path) = self.calculate_glyph_data(&char_code, matrix_before);
             
-            glyphs.push(GlyphInstance { char_code, x_advance: width, bbox, path });
+            glyphs.push(GlyphInstance { 
+                char_code, 
+                point: kurbo::Point::new(matrix_before.translation().x, matrix_before.translation().y),
+                x_advance: width, 
+                bbox, 
+                path 
+            });
             i += len;
         }
     }
@@ -460,34 +619,79 @@ impl<'a> Processor<'a> {
             None => return (kurbo::Rect::ZERO, None),
         };
 
+        // 1. Get font metrics and path
         let glyph_bbox = font.glyph_bbox(char_code);
-        let glyph_path = font.get_glyph_path(char_code).ok().flatten();
+        let path_info = font.get_glyph_path(char_code).ok().flatten();
+        let glyph_path = path_info.as_ref().map(|(p, _)| p.clone());
+        let native_width = path_info.as_ref().map(|(_, nw)| *nw);
         
         let fs = self.text_state.font_size;
         let th = self.text_state.horizontal_scaling / 100.0;
         let rise = self.text_state.text_rise;
         
-        let text_extra = Affine::new([fs * th, 0.0, 0.0, fs, 0.0, rise]);
-        let glyph_to_text = tm * text_extra * Affine::scale(0.001);
+        // 2. Vertical mode adjustment (ISO 32000-2 Clause 9.7.4.3)
+        let mut path_offset = Affine::IDENTITY;
+        if self.text_state.wmode == 1 {
+            let (_w1y, vx, vy) = font.char_vertical_metrics(char_code);
+            path_offset = Affine::translate((-vx, -vy));
+        }
         
-        let ctm = self.gs_stack.current().map(|gs| gs.ctm).unwrap_or(Affine::IDENTITY);
-        let total_matrix = ctm * glyph_to_text;
+        // 3. Width Synchronization (Enforce PDF-specified widths)
+        let expected_width = font.char_width(char_code);
+        let mut glyph_scale = Affine::IDENTITY;
+        if let Some(nw) = native_width {
+            if nw > 0.001 && expected_width.abs() > 0.001 {
+                // Scale native glyph to match the PDF's expected width in 1000-unit space.
+                // For CID fonts, this reconciles system/fallback font metrics with the W array.
+                glyph_scale = Affine::scale_non_uniform(expected_width / nw, 1.0);
+            }
+        }
 
-        let res_bbox = total_matrix.transform_rect_bbox(glyph_bbox);
+        // 4. Matrix Composition
+        // text_extra handles font size, horizontal scaling, and the Y-flip for coordinate normalization.
+        let text_extra = Affine::new([fs * th, 0.0, 0.0, -fs, 0.0, rise]);
+        let font_matrix = Affine::new(font.font_matrix);
+        
+        // total_matrix = Tm * TextExtra * FontMatrix
+        let total_matrix = tm * text_extra * font_matrix;
+        
+        // Final transformation for the glyph: [Local Space -> 1000-unit Space -> User Space]
+        let glyph_space_transform = path_offset * glyph_scale;
+        let final_transform = total_matrix * glyph_space_transform;
+
+        // 5. Update BBox and Path
+        let res_bbox = final_transform.transform_rect_bbox(glyph_bbox);
         let res_path = glyph_path.map(|mut p| {
-            p.apply_affine(total_matrix);
+            p.apply_affine(final_transform);
             Arc::new(p)
         });
 
         (res_bbox, res_path)
     }
 
-    fn apply_text_adjustment(&mut self, d: f64, glyphs: &mut Vec<GlyphInstance>) {
-        let (_, _) = self.text_state.advance_glyph(false, 0.0, d);
-        if let Some(last) = glyphs.last_mut() {
-            last.x_advance -= d / 1000.0;
-            // Note: BBox is calculated based on TM *before* advancement.
-            // Adjustments like Tj typically move the cursor for the *next* glyph.
+    fn apply_text_adjustment(&mut self, d: f64, _glyphs: &mut Vec<GlyphInstance>) {
+        let fs = self.text_state.font_size;
+        let th = self.text_state.horizontal_scaling / 100.0;
+        
+        if self.text_state.wmode == 0 {
+            let adj = -d * 0.001 * fs * th;
+            let coeffs = self.text_state.matrix.as_coeffs();
+            self.text_state.matrix = Affine::new([
+                coeffs[0], coeffs[1], coeffs[2], coeffs[3], 
+                coeffs[4] + adj * coeffs[0], 
+                coeffs[5] + adj * coeffs[1]
+            ]);
+        } else {
+            // Vertical mode: adjustment is subtracted from the vertical displacement
+            // ty' = (w1 - Tj/1000) * fs + Tc + Tw
+            // So we move by -d * 0.001 * fs along the second column
+            let adj = -d * 0.001 * fs;
+            let coeffs = self.text_state.matrix.as_coeffs();
+            self.text_state.matrix = Affine::new([
+                coeffs[0], coeffs[1], coeffs[2], coeffs[3], 
+                coeffs[4] + adj * coeffs[2], 
+                coeffs[5] + adj * coeffs[3]
+            ]);
         }
     }
 
@@ -511,6 +715,80 @@ impl<'a> Processor<'a> {
         let v = self.extract_f64_operands(&op.operands, 6);
         if v.len() == 6 {
             std::sync::Arc::make_mut(&mut self.gs_stack.current_mut()?.current_path).curve_to((v[0], v[1]), (v[2], v[3]), (v[4], v[5]));
+        }
+        Ok(())
+    }
+
+    fn handle_v(&mut self, op: &Operation) -> PdfResult<()> {
+        let v = self.extract_f64_operands(&op.operands, 4);
+        if v.len() == 4 {
+            let current = self.gs_stack.current()?.current_path.elements().last().map(|el| match el {
+                kurbo::PathEl::MoveTo(p) | kurbo::PathEl::LineTo(p) | kurbo::PathEl::CurveTo(_, _, p) | kurbo::PathEl::QuadTo(_, p) => *p,
+                kurbo::PathEl::ClosePath => kurbo::Point::ORIGIN,
+            }).unwrap_or(kurbo::Point::ORIGIN);
+            std::sync::Arc::make_mut(&mut self.gs_stack.current_mut()?.current_path).curve_to((current.x, current.y), (v[0], v[1]), (v[2], v[3]));
+        }
+        Ok(())
+    }
+
+    fn handle_y(&mut self, op: &Operation) -> PdfResult<()> {
+        let v = self.extract_f64_operands(&op.operands, 4);
+        if v.len() == 4 {
+            std::sync::Arc::make_mut(&mut self.gs_stack.current_mut()?.current_path).curve_to((v[0], v[1]), (v[2], v[3]), (v[2], v[3]));
+        }
+        Ok(())
+    }
+
+    fn handle_re(&mut self, op: &Operation) -> PdfResult<()> {
+        let v = self.extract_f64_operands(&op.operands, 4);
+        if v.len() == 4 {
+            let rect = kurbo::Rect::new(v[0], v[1], v[0] + v[2], v[1] + v[3]);
+            std::sync::Arc::make_mut(&mut self.gs_stack.current_mut()?.current_path).move_to((rect.x0, rect.y0));
+            std::sync::Arc::make_mut(&mut self.gs_stack.current_mut()?.current_path).line_to((rect.x1, rect.y0));
+            std::sync::Arc::make_mut(&mut self.gs_stack.current_mut()?.current_path).line_to((rect.x1, rect.y1));
+            std::sync::Arc::make_mut(&mut self.gs_stack.current_mut()?.current_path).line_to((rect.x0, rect.y1));
+            std::sync::Arc::make_mut(&mut self.gs_stack.current_mut()?.current_path).close_path();
+        }
+        Ok(())
+    }
+
+    fn handle_w_linewidth(&mut self, op: &Operation) -> PdfResult<()> {
+        if let Some(v) = self.extract_f64_operands(&op.operands, 1).first() {
+            self.gs_stack.current_mut()?.line_width = *v;
+        }
+        Ok(())
+    }
+
+    fn handle_j_cap(&mut self, op: &Operation) -> PdfResult<()> {
+        if let Some(v) = self.extract_f64_operands(&op.operands, 1).first() {
+            self.gs_stack.current_mut()?.line_cap = *v as i32;
+        }
+        Ok(())
+    }
+
+    fn handle_j_join(&mut self, op: &Operation) -> PdfResult<()> {
+        if let Some(v) = self.extract_f64_operands(&op.operands, 1).first() {
+            self.gs_stack.current_mut()?.line_join = *v as i32;
+        }
+        Ok(())
+    }
+
+    fn handle_m_miter(&mut self, op: &Operation) -> PdfResult<()> {
+        if let Some(v) = self.extract_f64_operands(&op.operands, 1).first() {
+            self.gs_stack.current_mut()?.miter_limit = *v;
+        }
+        Ok(())
+    }
+
+    fn handle_d_dash(&mut self, op: &Operation) -> PdfResult<()> {
+        if op.operands.len() >= 2 {
+            let dash_array = if let Object::Array(arr) = &op.operands[0] {
+                self.extract_f64_operands(arr, arr.len())
+            } else { Vec::new() };
+            let phase = if let Some(v) = self.extract_f64_operands(&op.operands[1..2], 1).first() {
+                *v
+            } else { 0.0 };
+            self.gs_stack.current_mut()?.dash_pattern = (dash_array, phase);
         }
         Ok(())
     }
@@ -541,6 +819,27 @@ impl<'a> Processor<'a> {
     fn handle_form_xobject(&self, xobj: &RawXObject) -> PdfResult<Option<Vec<ContentNode>>> {
         let mut nodes = parse_content_stream(&xobj.data)?;
         
+        let mut group_attrs = None;
+        if let Some(Object::Dictionary(group_dict)) = xobj.dictionary.get(b"Group".as_ref()) {
+            if let Some(Object::Name(s)) = group_dict.get(b"S".as_ref()) {
+                if s.as_slice() == b"Transparency" {
+                    let isolated = match group_dict.get(b"I".as_ref()) {
+                        Some(Object::Boolean(b)) => *b,
+                        _ => false,
+                    };
+                    let knockout = match group_dict.get(b"K".as_ref()) {
+                        Some(Object::Boolean(b)) => *b,
+                        _ => false,
+                    };
+                    group_attrs = Some(crate::graphics::GroupAttributes {
+                        isolated,
+                        knockout,
+                        color_space: None, // Simplified
+                    });
+                }
+            }
+        }
+
         if let Some(Object::Array(m_arr)) = xobj.dictionary.get(b"Matrix".as_ref()) {
             let v = self.extract_f64_operands(m_arr, 6);
             if v.len() == 6 {
@@ -550,6 +849,10 @@ impl<'a> Processor<'a> {
                 };
                 nodes.insert(0, ContentNode::Operation(cm_op));
             }
+        }
+
+        if let Some(attrs) = group_attrs {
+            return Ok(Some(vec![ContentNode::TransparencyGroup(attrs, nodes)]));
         }
         
         Ok(Some(nodes))
@@ -569,15 +872,19 @@ impl<'a> Processor<'a> {
         let decoded_data = crate::filter::decode_stream(&xobj.dictionary, &xobj.data)?;
         let rect = kurbo::Rect::new(0.0, 0.0, 1.0, 1.0);
 
-        let gs = self.gs_stack.current()?;
-        self.display_list.push(DrawOp::DrawImage {
+        let (blend_mode, alpha) = {
+            let gs = self.gs_stack.current()?;
+            (gs.blend_mode, gs.fill_alpha as f32)
+        };
+        
+        self.push_op(DrawOp::DrawImage {
             data: Arc::new(decoded_data),
             width,
             height,
             components,
             rect,
-            blend_mode: gs.blend_mode,
-            alpha: gs.fill_alpha as f32,
+            blend_mode,
+            alpha,
         });
         Ok(())
     }
@@ -600,14 +907,31 @@ impl<'a> Processor<'a> {
 
     fn handle_s_stroke(&mut self, _op: &Operation) -> PdfResult<()> {
         if !self.current_visibility() { return Ok(()); }
-        let gs = self.gs_stack.current()?;
-        let resolved_color = gs.stroke_color.to_rgb(&gs.stroke_color_space);
-        self.display_list.push(DrawOp::StrokePath {
-            path: std::sync::Arc::clone(&gs.current_path),
-            color: Color::RGB(resolved_color[0], resolved_color[1], resolved_color[2]),
-            width: gs.line_width,
-            blend_mode: gs.blend_mode,
-            alpha: gs.stroke_alpha as f32,
+        let (path, color_out, width, line_cap, line_join, miter_limit, dash_pattern, blend_mode, alpha) = {
+            let gs = self.gs_stack.current()?;
+            let resolved_color = gs.stroke_color.to_rgb(&gs.stroke_color_space);
+            (
+                std::sync::Arc::clone(&gs.current_path),
+                Color::RGB(resolved_color[0], resolved_color[1], resolved_color[2]),
+                gs.line_width,
+                gs.line_cap,
+                gs.line_join,
+                gs.miter_limit,
+                gs.dash_pattern.clone(),
+                gs.blend_mode,
+                gs.stroke_alpha as f32,
+            )
+        };
+        self.push_op(DrawOp::StrokePath {
+            path,
+            color: color_out,
+            width,
+            line_cap,
+            line_join,
+            miter_limit,
+            dash_pattern,
+            blend_mode,
+            alpha,
         });
         Ok(())
     }
@@ -630,14 +954,22 @@ impl<'a> Processor<'a> {
 
     fn handle_f_fill(&mut self, _op: &Operation) -> PdfResult<()> {
         if !self.current_visibility() { return Ok(()); }
-        let gs = self.gs_stack.current()?;
-        let resolved_color = gs.fill_color.to_rgb(&gs.fill_color_space);
-        self.display_list.push(DrawOp::FillPath {
-            path: std::sync::Arc::clone(&gs.current_path),
-            color: Color::RGB(resolved_color[0], resolved_color[1], resolved_color[2]),
+        let (path, color_out, blend_mode, alpha) = {
+            let gs = self.gs_stack.current()?;
+            let resolved_color = gs.fill_color.to_rgb(&gs.fill_color_space);
+            (
+                std::sync::Arc::clone(&gs.current_path),
+                Color::RGB(resolved_color[0], resolved_color[1], resolved_color[2]),
+                gs.blend_mode,
+                gs.fill_alpha as f32,
+            )
+        };
+        self.push_op(DrawOp::FillPath {
+            path,
+            color: color_out,
             rule: ClippingRule::NonZeroWinding,
-            blend_mode: gs.blend_mode,
-            alpha: gs.fill_alpha as f32,
+            blend_mode,
+            alpha,
         });
         Ok(())
     }
@@ -648,13 +980,16 @@ impl<'a> Processor<'a> {
             return Ok(());
         }
         self.apply_pending_clipping()?;
-        let gs = self.gs_stack.current()?;
-        self.display_list.push(DrawOp::FillPath {
-            path: Arc::clone(&gs.current_path),
-            color: gs.fill_color.clone(),
+        let (path, color, blend_mode, alpha) = {
+            let gs = self.gs_stack.current()?;
+            (Arc::clone(&gs.current_path), gs.fill_color.clone(), gs.blend_mode, gs.fill_alpha as f32)
+        };
+        self.push_op(DrawOp::FillPath {
+            path,
+            color,
             rule: ClippingRule::EvenOdd,
-            blend_mode: gs.blend_mode,
-            alpha: gs.fill_alpha as f32,
+            blend_mode,
+            alpha,
         });
         self.gs_stack.current_mut()?.current_path = Arc::new(BezPath::new());
         Ok(())
@@ -678,20 +1013,39 @@ impl<'a> Processor<'a> {
             return Ok(());
         }
         self.apply_pending_clipping()?;
-        let gs = self.gs_stack.current()?;
-        self.display_list.push(DrawOp::FillPath {
-            path: Arc::clone(&gs.current_path),
-            color: gs.fill_color.clone(),
+        let (path, fill_color, stroke_color, line_width, line_cap, line_join, miter_limit, dash_pattern, blend_mode, fill_alpha, stroke_alpha) = {
+            let gs = self.gs_stack.current()?;
+            (
+                Arc::clone(&gs.current_path),
+                gs.fill_color.clone(),
+                gs.stroke_color.clone(),
+                gs.line_width,
+                gs.line_cap,
+                gs.line_join,
+                gs.miter_limit,
+                gs.dash_pattern.clone(),
+                gs.blend_mode,
+                gs.fill_alpha as f32,
+                gs.stroke_alpha as f32,
+            )
+        };
+        self.push_op(DrawOp::FillPath {
+            path: Arc::clone(&path),
+            color: fill_color,
             rule: ClippingRule::EvenOdd,
-            blend_mode: gs.blend_mode,
-            alpha: gs.fill_alpha as f32,
+            blend_mode,
+            alpha: fill_alpha,
         });
-        self.display_list.push(DrawOp::StrokePath {
-            path: Arc::clone(&gs.current_path),
-            color: gs.stroke_color.clone(),
-            width: gs.line_width,
-            blend_mode: gs.blend_mode,
-            alpha: gs.stroke_alpha as f32,
+        self.push_op(DrawOp::StrokePath {
+            path,
+            color: stroke_color,
+            width: line_width,
+            line_cap,
+            line_join,
+            miter_limit,
+            dash_pattern,
+            blend_mode,
+            alpha: stroke_alpha,
         });
         self.gs_stack.current_mut()?.current_path = Arc::new(BezPath::new());
         Ok(())
@@ -837,10 +1191,46 @@ impl<'a> Processor<'a> {
     }
 
     fn handle_scn(&mut self, op: &Operation) -> PdfResult<()> {
-        self.handle_sc(op) // For now, similar to sc unless pattern
+        let is_pattern = self.gs_stack.current()?.stroke_color_space.is_pattern();
+        if is_pattern {
+            if let Some(Object::Name(name)) = op.operands.last() {
+                if let Some(ref res) = self.resources {
+                    if let Some(pattern_obj) = res.get_pattern(name) {
+                        let actual_pattern = if let Object::Reference(r) = pattern_obj {
+                            res.resolver.resolve(&r)?
+                        } else { pattern_obj };
+
+                        if let Object::Stream(dict, data) = actual_pattern {
+                            let tiling = crate::graphics::TilingPattern::from_stream(&dict, data);
+                            self.gs_stack.current_mut()?.stroke_color = Color::Pattern(Some(Arc::new(tiling)));
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+        }
+        self.handle_sc(op)
     }
 
     fn handle_scn_upper(&mut self, op: &Operation) -> PdfResult<()> {
+        let is_pattern = self.gs_stack.current()?.fill_color_space.is_pattern();
+        if is_pattern {
+            if let Some(Object::Name(name)) = op.operands.last() {
+                if let Some(ref res) = self.resources {
+                    if let Some(pattern_obj) = res.get_pattern(name) {
+                        let actual_pattern = if let Object::Reference(r) = pattern_obj {
+                            res.resolver.resolve(&r)?
+                        } else { pattern_obj };
+
+                        if let Object::Stream(dict, data) = actual_pattern {
+                            let tiling = crate::graphics::TilingPattern::from_stream(&dict, data);
+                            self.gs_stack.current_mut()?.fill_color = Color::Pattern(Some(Arc::new(tiling)));
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+        }
         self.handle_sc_upper(op)
     }
 
@@ -858,7 +1248,7 @@ impl<'a> Processor<'a> {
             Arc::make_mut(&mut gs.clipping_path).extend(path.iter());
             gs.pending_clipping_rule = None;
             // Emit clip command
-            self.display_list.push(DrawOp::Clip(path, r));
+            self.push_op(DrawOp::Clip(path, r));
         }
         Ok(())
     }
@@ -906,7 +1296,7 @@ impl<'a> Processor<'a> {
                 if let Some(sh_dict) = res.get_shading(name) {
                     let gs = self.gs_stack.current()?;
                     let shading = crate::graphics::Shading::from_dict(&sh_dict, res.resolver)?;
-                     self.display_list.push(DrawOp::DrawShading {
+                     self.push_op(DrawOp::DrawShading {
                          shading: Arc::new(shading),
                          blend_mode: gs.blend_mode,
                          alpha: gs.fill_alpha as f32,
@@ -918,8 +1308,23 @@ impl<'a> Processor<'a> {
     }
 
     fn handle_bdc(&mut self, op: &Operation) -> PdfResult<()> {
+        let mut oc_ref = None;
         if op.operands.len() >= 2 && op.operands[0] == Object::new_name(b"OC".to_vec()) {
             let properties = &op.operands[1];
+            
+            // Extract OCG reference
+            oc_ref = match properties {
+                Object::Reference(r) => Some(*r),
+                Object::Name(n) => {
+                    if let Some(ref res) = self.resources {
+                        if let Some(Object::Reference(r)) = res.get_properties(n) {
+                            Some(r)
+                        } else { None }
+                    } else { None }
+                }
+                _ => None,
+            };
+
             let visible = if let Some(ref ctx) = self.oc_context {
                 if let Some(ref res) = self.resources {
                      let actual_props = match properties {
@@ -937,6 +1342,7 @@ impl<'a> Processor<'a> {
         } else {
             self.visibility_stack.push(self.current_visibility());
         }
+        self.oc_stack.push(oc_ref);
         Ok(())
     }
 
@@ -944,11 +1350,15 @@ impl<'a> Processor<'a> {
         if self.visibility_stack.len() > 1 {
             self.visibility_stack.pop();
         }
+        if self.oc_stack.len() > 1 {
+            self.oc_stack.pop();
+        }
         Ok(())
     }
 
     fn handle_bmc(&mut self, _op: &Operation) -> PdfResult<()> {
         self.visibility_stack.push(self.current_visibility());
+        self.oc_stack.push(None); // BMC doesn't have properties
         Ok(())
     }
 

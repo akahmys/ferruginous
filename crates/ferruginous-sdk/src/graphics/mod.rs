@@ -1,7 +1,7 @@
 //! Graphics state and path construction management.
 //! (ISO 32000-2:2020 Clause 8.4)
 
-use crate::core::Object;
+use crate::core::{Object, Reference};
 pub use kurbo::{Affine, BezPath, Rect};
 use serde::Serialize;
 use std::sync::Arc;
@@ -34,7 +34,7 @@ pub enum Color {
     /// Specialized color value (e.g. for Separation/DeviceN).
     Special(Vec<f32>),
     /// Pattern color.
-    Pattern(Option<Vec<u8>>),
+    Pattern(Option<Arc<TilingPattern>>),
 }
 
 impl Color {
@@ -69,6 +69,83 @@ pub struct Shading {
     pub bbox: Option<kurbo::Rect>,
     /// Anti-aliasing flag.
     pub anti_alias: bool,
+    /// Coordinates [x0 y0 x1 y1] for Axial (Type 2) or [x0 y0 r0 x1 y1 r1] for Radial (Type 3).
+    pub coords: Vec<f64>,
+    /// Function object(s) defining the color gradient.
+    pub function: Arc<Vec<Object>>,
+    /// Extend flags (extend at start, extend at end).
+    pub extend: [bool; 2],
+}
+
+/// Represents a Tiling Pattern (Clause 8.7.3).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct TilingPattern {
+    /// Paint type: 1 (colored), 2 (uncolored).
+    pub paint_type: i32,
+    /// Tiling type: 1, 2, or 3.
+    pub tiling_type: i32,
+    /// Bounding box in the pattern's coordinate system.
+    pub bbox: kurbo::Rect,
+    /// Horizontal step between tiles.
+    pub x_step: f32,
+    /// Vertical step between tiles.
+    pub y_step: f32,
+    /// Transformation from pattern space to the shading's coordinate system.
+    pub matrix: kurbo::Affine,
+    /// Resources used by the pattern's content stream.
+    pub resources: Option<Object>,
+    /// The pattern's content stream data.
+    pub data: Arc<Vec<u8>>,
+}
+
+impl TilingPattern {
+    /// Creates a TilingPattern from a stream object.
+    pub fn from_stream(dict: &BTreeMap<Vec<u8>, Object>, data: Arc<Vec<u8>>) -> Self {
+        let paint_type = match dict.get(b"PaintType".as_ref()) {
+            Some(Object::Integer(i)) => *i as i32,
+            _ => 1,
+        };
+        let tiling_type = match dict.get(b"TilingType".as_ref()) {
+            Some(Object::Integer(i)) => *i as i32,
+            _ => 1,
+        };
+        let bbox = match dict.get(b"BBox".as_ref()) {
+            Some(Object::Array(arr)) if arr.len() == 4 => {
+                let v: Vec<f64> = arr.iter().filter_map(|o| if let Object::Real(f) = o { Some(*f) } else if let Object::Integer(i) = o { Some(*i as f64) } else { None }).collect();
+                if v.len() == 4 { kurbo::Rect::new(v[0], v[1], v[2], v[3]) } else { kurbo::Rect::new(0.0, 0.0, 100.0, 100.0) }
+            }
+            _ => kurbo::Rect::new(0.0, 0.0, 100.0, 100.0),
+        };
+        let x_step = match dict.get(b"XStep".as_ref()) {
+            Some(Object::Real(f)) => *f as f32,
+            Some(Object::Integer(i)) => *i as f32,
+            _ => 100.0,
+        };
+        let y_step = match dict.get(b"YStep".as_ref()) {
+            Some(Object::Real(f)) => *f as f32,
+            Some(Object::Integer(i)) => *i as f32,
+            _ => 100.0,
+        };
+        let matrix = match dict.get(b"Matrix".as_ref()) {
+            Some(Object::Array(arr)) if arr.len() == 6 => {
+                let v: Vec<f64> = arr.iter().filter_map(|o| if let Object::Real(f) = o { Some(*f) } else if let Object::Integer(i) = o { Some(*i as f64) } else { None }).collect();
+                if v.len() == 6 { kurbo::Affine::new([v[0], v[1], v[2], v[3], v[4], v[5]]) } else { kurbo::Affine::IDENTITY }
+            }
+            _ => kurbo::Affine::IDENTITY,
+        };
+        let resources = dict.get(b"Resources".as_ref()).cloned();
+
+        Self {
+            paint_type,
+            tiling_type,
+            bbox,
+            x_step,
+            y_step,
+            matrix,
+            resources,
+            data,
+        }
+    }
 }
 
 impl Shading {
@@ -77,6 +154,26 @@ impl Shading {
         let st = match dict.get(b"ShadingType".as_ref()) {
             Some(Object::Integer(i)) => ShadingType::from_int(*i as i32),
             _ => ShadingType::Axial,
+        };
+
+        let coords = match dict.get(b"Coords".as_ref()) {
+            Some(Object::Array(arr)) => arr.iter().filter_map(|o| if let Object::Real(f) = o { Some(*f) } else if let Object::Integer(i) = o { Some(*i as f64) } else { None }).collect(),
+            _ => Vec::new(),
+        };
+
+        let function = match dict.get(b"Function".as_ref()) {
+            Some(Object::Array(arr)) => arr.clone(),
+            Some(obj) => Arc::new(vec![obj.clone()]),
+            _ => Arc::new(Vec::new()),
+        };
+
+        let extend = match dict.get(b"Extend".as_ref()) {
+            Some(Object::Array(arr)) if arr.len() >= 2 => {
+                let e0 = if let Object::Boolean(b) = arr[0] { b } else { false };
+                let e1 = if let Object::Boolean(b) = arr[1] { b } else { false };
+                [e0, e1]
+            }
+            _ => [false, false],
         };
 
         let cs = match dict.get(b"ColorSpace".as_ref()) {
@@ -90,6 +187,9 @@ impl Shading {
             background: None,
             bbox: None,
             anti_alias: false,
+            coords,
+            function,
+            extend,
         })
     }
 }
@@ -175,12 +275,23 @@ impl Default for BlendMode {
 pub struct GlyphInstance {
     /// Glyph ID or character code.
     pub char_code: Vec<u8>,
+    /// Individual glyph position in page space.
+    pub point: kurbo::Point,
     /// Horizontal advance (glyph space).
     pub x_advance: f64,
     /// Bounding box in page space.
     pub bbox: Rect,
-    /// Actual glyph outline path (in page space).
+    /// Actual glyph outline path (relative to point).
     pub path: Option<Arc<BezPath>>,
+}
+
+/// A single drawing command, combining an operation with its metadata (e.g., OCG layer).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct DrawCommand {
+    /// The actual drawing operation.
+    pub op: DrawOp,
+    /// Optional reference to the Optional Content Group (OCG) this command belongs to.
+    pub oc: Option<Reference>,
 }
 
 /// A high-level drawing operation for the rendering bridge.
@@ -214,6 +325,14 @@ pub enum DrawOp {
         color: Color, 
         /// Line width.
         width: f64,
+        /// Line cap style.
+        line_cap: i32,
+        /// Line join style.
+        line_join: i32,
+        /// Miter limit.
+        miter_limit: f64,
+        /// Dash pattern [array, phase].
+        dash_pattern: (Vec<f64>, f64),
         /// Blend mode for this operation.
         blend_mode: BlendMode,
         /// Alpha transparency (0.0 - 1.0).
@@ -264,6 +383,28 @@ pub enum DrawOp {
     DrawPath(Arc<BezPath>, Color, f64),
     /// Intersect the current clipping path (W/W*).
     Clip(Arc<BezPath>, ClippingRule),
+    /// Push a transparency group layer.
+    PushLayer {
+        /// Group attributes (Isolated/Knockout).
+        attrs: GroupAttributes,
+        /// Blend mode for the entire group.
+        blend_mode: BlendMode,
+        /// Group-level alpha.
+        alpha: f32,
+    },
+    /// Pop the current transparency group layer.
+    PopLayer,
+}
+
+/// Attributes for Transparency Groups (ISO 32000-2 Clause 11.4.7).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct GroupAttributes {
+    /// Is the group isolated from its backdrop?
+    pub isolated: bool,
+    /// Is the group a knockout group?
+    pub knockout: bool,
+    /// Group's color space.
+    pub color_space: Option<crate::colorspace::ColorSpace>,
 }
 
 /// ISO 32000-2:2020 Clause 8.4.2 - Graphics State

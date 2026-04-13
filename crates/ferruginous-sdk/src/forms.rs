@@ -61,11 +61,11 @@ impl FormField {
     }
 
     /// Validates the `FormField` against the Arlington PDF Model.
-    pub fn validate<P: AsRef<Path>>(&self, arlington_root: P) -> PdfResult<()> {
+    pub fn validate<P: AsRef<Path>>(&self, arlington_root: P, resolver: &dyn Resolver) -> PdfResult<()> {
         let tsv_path = arlington_root.as_ref().join("Field.tsv");
         let model = ArlingtonModel::from_tsv(tsv_path)
             .map_err(|e| PdfError::ResourceError(format!("Failed to load Arlington model: {e}")))?;
-        model.validate(&self.dictionary, None)
+        model.validate(&self.dictionary, resolver, 2.0, None)
     }
 
     /// Returns `true` if this is a Button field (/Btn).
@@ -202,7 +202,7 @@ impl<'a> AcroForm<'a> {
         let tsv_path = arlington_root.as_ref().join("AcroForm.tsv");
         let model = ArlingtonModel::from_tsv(tsv_path)
             .map_err(|e| PdfError::ResourceError(format!("Failed to load Arlington model: {e}")))?;
-        model.validate(&self.dictionary, None)
+        model.validate(&self.dictionary, self.resolver, 2.0, None)
     }
 
     /// Retrieves the calculation order (/CO) if present.
@@ -298,7 +298,7 @@ impl<'a> AcroForm<'a> {
             Vec::new() 
         };
 
-        let mut full_name = node.parent_name.clone();
+        let mut full_name = node.parent_name;
         if !local_name.is_empty() {
             let mut name_vec = (*full_name).clone();
             if !name_vec.is_empty() { name_vec.push(b'.'); }

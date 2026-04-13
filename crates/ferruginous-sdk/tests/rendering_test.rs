@@ -17,7 +17,7 @@ fn test_draw_op_generation_basic() {
     // 2. StrokePath
     assert_eq!(dl.len(), 2);
     
-    match &dl[0] {
+    match &dl[0].op {
         DrawOp::SetTransform(m) => {
             let c = m.as_coeffs();
             assert_eq!(c[0], 1.0); // a
@@ -27,7 +27,7 @@ fn test_draw_op_generation_basic() {
         _ => panic!("Expected SetTransform at index 0"),
     }
     
-    match &dl[1] {
+    match &dl[1].op {
         DrawOp::StrokePath { path, color, width, .. } => {
             assert_eq!(path.elements().len(), 2);
             assert_eq!(*color, Color::RGB(0.0, 0.0, 0.0));
@@ -52,10 +52,10 @@ fn test_draw_op_state_stack() {
     // 3. StrokePath (S)
     // 4. PopState (Q)
     assert_eq!(dl.len(), 4);
-    assert!(matches!(dl[0], DrawOp::PushState));
-    assert!(matches!(dl[1], DrawOp::SetTransform(_)));
-    assert!(matches!(dl[2], DrawOp::StrokePath { .. }));
-    assert!(matches!(dl[3], DrawOp::PopState));
+    assert!(matches!(dl[0].op, DrawOp::PushState));
+    assert!(matches!(dl[1].op, DrawOp::SetTransform(_)));
+    assert!(matches!(dl[2].op, DrawOp::StrokePath { .. }));
+    assert!(matches!(dl[3].op, DrawOp::PopState));
 }
 
 #[test]
@@ -68,7 +68,7 @@ fn test_draw_op_fill_rules() {
     
     let dl = processor.display_list;
     
-    match &dl[0] {
+    match &dl[0].op {
         DrawOp::FillPath { rule, .. } => {
             assert_eq!(*rule, ClippingRule::EvenOdd);
         }

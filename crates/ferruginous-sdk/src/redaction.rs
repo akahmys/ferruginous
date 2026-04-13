@@ -22,7 +22,7 @@ impl RedactionRegion {
         nodes.retain_mut(|node| {
             match node {
                 ContentNode::Operation(op) => self.should_keep_op(op),
-                ContentNode::Block(_, children) => {
+                ContentNode::Block(_, children) | ContentNode::TransparencyGroup(_, children) => {
                     self.apply(children);
                     !children.is_empty()
                 }

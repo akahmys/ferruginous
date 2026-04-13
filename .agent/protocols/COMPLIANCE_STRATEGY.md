@@ -7,7 +7,7 @@
 
 - **規約**: Arlington Model による文法検証、VeraPDF による構造検証、および他エンジンとの比較レンダリングを統合せよ。
 - **目的**: PDF 規格の膨大な仕様に対して、多角的な自動検証による裏付けを行う。
-- **判定基準**: `scripts/safety_vitals.sh` および `cargo test` が全項目パスしていること。
+- **判定基準**: `scripts/verify_compliance.sh` および `cargo test` が全項目パスしていること。
 
 ## 2. 品質ゲート (Zero-Warning Gate)
 
@@ -17,7 +17,7 @@
 
 ## 3. 証跡と Clause 紐付け (Evidence & Clauses)
 
-- **規約**: 実装およびテストに ISO 32000-2:2020 の該当 Clause 番号を明記し、`walkthrough.md` にエビデンスを記録せよ。
+- **規約**: 実装およびテストに ISO 32000-2:2020 の該当 Clause 番号を明記し、`.agent/session/walkthrough.md` にエビデンスを記録せよ。
 - **目的**: どのコードが規格のどの部分を実装しているかを明文化し、監査を容易にする。
 - **判定基準**: 全ての公開 API または重要なロジックに Clause 番号のコメントが含まれていること。
 

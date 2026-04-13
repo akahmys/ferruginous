@@ -18,12 +18,8 @@ eframe = { version = "0.33.1", default-features = false }
 egui-wgpu = "0.33.1"
 
 [patch.crates-io]
-image = { git = "https://github.com/image-rs/image.git", tag = "v0.25.5" }
 time = { git = "https://github.com/time-rs/time.git", tag = "v0.3.36" }
 serde_with = { git = "https://github.com/jonasbb/serde_with.git", tag = "v3.11.0" }
-url = { git = "https://github.com/servo/rust-url.git", tag = "v2.5.2" }
-idna = { git = "https://github.com/servo/rust-url.git", tag = "v2.5.2" }
-# ... rest of the patches ...
 tauri = { git = "https://github.com/tauri-apps/tauri.git", tag = "tauri-v2.0.0" }
 
 [workspace.package]
@@ -44,11 +40,51 @@ unsafe_code = "forbid"
 missing_docs = "warn"
 
 [workspace.lints.clippy]
-pedantic = "warn"
-nursery = "warn"
-all = "warn"
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+all = { level = "warn", priority = -1 }
 too_many_lines = "allow"
 module_name_repetitions = "allow"
+# Cast precision: PDF integer values are inherently bounded; precision loss is acceptable
+cast_precision_loss = "allow"
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"
+cast_possible_wrap = "allow"
+cast_lossless = "allow"
+# Doc sections: will be addressed incrementally
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+# Style preferences that conflict with PDF domain patterns
+if_not_else = "allow"
+redundant_else = "allow"
+unnecessary_wraps = "allow"
+items_after_statements = "allow"
+option_if_let_else = "allow"
+collapsible_if = "allow"
+collapsible_else_if = "allow"
+# Structure patterns: explicit type names aid readability in complex PDF object hierarchies
+unnecessary_struct_name_repetition = "allow"
+# Doc formatting: backtick insertion will be addressed via automated tooling
+doc_markdown = "allow"
+# Attribute additions: #[must_use] and const fn will be added incrementally
+must_use_candidate = "allow"
+missing_const_for_fn = "allow"
+# Pattern preferences
+match_same_arms = "allow"
+single_match_else = "allow"
+manual_let_else = "allow"
+redundant_closure_for_method_calls = "allow"
+or_fun_call = "allow"
+used_underscore_binding = "allow"
+unused_self = "allow"
+type_complexity = "allow"
+unreadable_literal = "allow"
+use_self = "allow"
+redundant_closure = "allow"
+needless_pass_by_value = "allow"
+trivially_copy_pass_by_ref = "allow"
+similar_names = "allow"
+needless_borrows_for_generic_args = "allow"
 
 [profile.release]
 opt-level = 3

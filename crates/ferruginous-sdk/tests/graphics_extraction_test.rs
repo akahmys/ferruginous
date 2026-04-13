@@ -112,7 +112,7 @@ fn test_text_bbox_extraction() {
     // Look for DrawText operation
     let mut found_text = false;
     for op in display_list {
-        if let DrawOp::DrawText { glyphs, .. } = op {
+        if let DrawOp::DrawText { glyphs, .. } = op.op {
             found_text = true;
             assert_eq!(glyphs.len(), 1);
             let g = &glyphs[0];

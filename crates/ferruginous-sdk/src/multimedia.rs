@@ -20,15 +20,15 @@ impl<'a> RichMedia<'a> {
         Self { dictionary, reference, resolver }
     }
 
-    /// Returns the RichMediaSettings dictionary (Clause 13.2.1).
-    pub fn settings(&self) -> Option<std::sync::Arc<BTreeMap<Vec<u8>, Object>>> {
+    /// Returns the `RichMediaSettings` dictionary (Clause 13.2.1).
+    #[must_use] pub fn settings(&self) -> Option<std::sync::Arc<BTreeMap<Vec<u8>, Object>>> {
         self.dictionary.get(b"RichMediaSettings".as_ref())
             .and_then(|obj| self.resolver.resolve_if_ref(obj).ok())
             .and_then(|obj| obj.as_dict_arc())
     }
 
-    /// Returns the RichMediaContent dictionary (Clause 13.2.1).
-    pub fn content(&self) -> Option<std::sync::Arc<BTreeMap<Vec<u8>, Object>>> {
+    /// Returns the `RichMediaContent` dictionary (Clause 13.2.1).
+    #[must_use] pub fn content(&self) -> Option<std::sync::Arc<BTreeMap<Vec<u8>, Object>>> {
         self.dictionary.get(b"RichMediaContent".as_ref())
             .and_then(|obj| self.resolver.resolve_if_ref(obj).ok())
             .and_then(|obj| obj.as_dict_arc())
@@ -59,7 +59,7 @@ impl<'a> Annotation3D<'a> {
     }
 
     /// Returns the 3D view dictionary (Clause 13.6.4).
-    pub fn initial_view(&self) -> Option<std::sync::Arc<BTreeMap<Vec<u8>, Object>>> {
+    #[must_use] pub fn initial_view(&self) -> Option<std::sync::Arc<BTreeMap<Vec<u8>, Object>>> {
         self.dictionary.get(b"3DV".as_ref())
             .and_then(|obj| self.resolver.resolve_if_ref(obj).ok())
             .and_then(|obj| obj.as_dict_arc())

@@ -12,9 +12,8 @@ workspace = true
 [dependencies]
 ferruginous-sdk = { path = "../ferruginous-sdk" }
 ferruginous-render = { path = "../ferruginous-render" }
-eframe = { workspace = true, features = ["wgpu"] }
-vello = "0.7.0"
-wgpu = { version = "27.0.1", features = ["metal"] }
+eframe = { workspace = true, features = ["wgpu", "glow"] }
+wgpu = { version = "27.0.1", features = ["metal", "vulkan", "gles"] }
 rfd = "0.15"
 tauri = "=2.0.0"
 serde = { version = "1.0", features = ["derive"] }

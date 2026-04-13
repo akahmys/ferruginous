@@ -1,57 +1,120 @@
+//! Ferruginous Native PDF Viewer Application.
+//! (ISO 32000-2:2020 compliant core with Vello/WGPU rendering)
+
 use eframe::egui;
-use egui::{Color32, RichText, Visuals, Stroke, Margin, Frame, Vec2, FontDefinitions, FontData, FontFamily};
-use ferruginous_sdk;
-use ferruginous_render;
-use rfd;
-use vello::{Scene, Renderer as VelloRenderer, util::RenderContext};
+use egui::{Visuals, Color32, Vec2, Key};
+use ferruginous_render::{RenderBackend, VelloBackend, BackendOptions};
+use ferruginous_sdk::core::Resolver;
+use ferruginous_sdk::graphics::Affine;
 
-struct FerruginousApp {
-    frame_count: u32,
-    active_tab: String,
-    tool_mode: ToolMode,
-    font_loaded: bool,
-    icons_loaded: bool,
-    // PDF State
-    pdf_doc: Option<ferruginous_sdk::loader::PdfDocument>,
-    current_page: usize,
-    page_count: usize,
-    error_message: Option<String>,
-    // Rendering State
-    pdf_renderer: ferruginous_render::Renderer,
-    vello_renderer: Option<std::sync::Arc<std::sync::Mutex<VelloRenderer>>>,
-}
+mod types;
+mod widgets;
+mod sys;
+use crate::sys::bridge::{SystemBridge, NativeBridge};
 
-#[derive(PartialEq, Clone, Copy)]
-enum ToolMode {
-    Select,
-    Snap,
-    Measure,
-}
+use crate::types::ToolMode;
+/// The factor by which to super-sample the PDF for high-DPI quality.
+pub const SUPER_SAMPLE_FACTOR: f32 = 1.5;
+/// Atomic counter used to track and trigger rendering updates in the UI.
+pub static RENDER_TRIGGER_COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
-impl ToolMode {
-    fn label(&self) -> &str {
-        match self {
-            Self::Select => "● 選択",
-            Self::Snap => "◆ スナップ",
-            Self::Measure => "■ 計測",
-        }
-    }
+/// The primary application state for the Ferruginous UI.
+pub struct FerruginousApp {
+    /// Count of frames rendered since startup.
+    pub frame_count: u32,
+    /// Currently active navigation tab (e.g. "ページ", "目次").
+    pub active_tab: String,
+    /// Currently selected interaction tool.
+    pub tool_mode: ToolMode,
+    /// Flag indicating if Japanese fonts are loaded.
+    pub font_loaded: bool,
+    /// Flag indicating if symbol/icon fonts are loaded.
+    pub icons_loaded: bool,
+    
+    // PDF Document State
+    /// The currently loaded PDF document, if any.
+    pub pdf_doc: Option<ferruginous_sdk::loader::PdfDocument>,
+    /// Index of the currently displayed page (0-indexed).
+    pub current_page: usize,
+    /// Total number of pages in the loaded document.
+    pub page_count: usize,
+    /// Current error message to be displayed in the UI.
+    pub error_message: Option<String>,
+    
+    // Rendering Resources
+    /// High-level PDF renderer backend.
+    pub pdf_renderer: Box<dyn RenderBackend>,
+    /// Arc reference to the wgpu device.
+    pub device: Option<std::sync::Arc<wgpu::Device>>,
+    /// reference to the wgpu queue.
+    pub queue: Option<wgpu::Queue>,
+    
+    // Viewport State
+    /// Current zoom level (1.0 = 100%).
+    pub zoom_factor: f32,
+    /// Current scroll/pan offset from center.
+    pub pan_offset: egui::Vec2,
+
+    // Search State
+    /// The current search query string.
+    pub search_query: String,
+    /// List of search results found in the current document (or page).
+    pub search_results: Vec<ferruginous_sdk::search::SearchResult>,
+    /// Optional Content Group (Layer) visibility context.
+    pub oc_context: Option<ferruginous_sdk::ocg::OCContext>,
+    /// List of available OCG layers in the current document.
+    pub available_ocgs: Vec<ferruginous_sdk::ocg::OptionalContentGroup>,
+    
+    /// Nominal size of the current PDF page in points.
+    pub current_page_size: egui::Vec2,
+    /// Size of the current page texture in pixels.
+    pub page_texture_size: (u32, u32),
+
+    /// trace: Number of draw operations in the last rendered list.
+    pub last_draw_op_count: usize,
+    /// Error message from Vello initialization, if any.
+    pub vello_init_error: Option<String>,
+    /// GPU adapter name.
+    pub gpu_name: String,
+    /// Persistence: Cached WGPU render state for manual texture registration.
+    pub cached_render_state: Option<egui_wgpu::RenderState>,
+    /// Intermediate texture for Vello rendering.
+    pub vello_texture_view: Option<wgpu::TextureView>,
+    /// Persistent ID for the registered Vello texture in egui.
+    pub vello_texture_id: Option<egui::TextureId>,
+    /// Counter for verifying callback execution.
+    pub vello_callback_count: u32,
+
+    // Diagnostic State
+    /// デバッグ用のオーバーレイを表示するかどうか。
+    pub show_debug_overlay: bool,
+    /// 診断モード（詳細ログ出力など）を有効にするかどうか。
+    pub diagnostic_mode: bool,
+    
+    // Platform Bridge
+    /// OS 固有機能（ファイルダイアログ等）へのブリッジ。
+    pub system: Box<dyn SystemBridge>,
 }
 
 impl FerruginousApp {
-    fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        let mut vello_renderer = None;
+    /// Creates a new instance of the application.
+    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        let mut device: Option<std::sync::Arc<wgpu::Device>> = None;
+        let mut queue: Option<wgpu::Queue> = None;
+        let mut gpu_name = "Unknown".to_string();
+        let mut vello_init_error = None;
+
+        sys::setup_fonts(&cc.egui_ctx);
+
         if let Some(render_state) = &cc.wgpu_render_state {
-            let renderer = VelloRenderer::new(
-                &render_state.device,
-                std::default::Default::default(),
-            ).ok();
-            if let Some(r) = renderer {
-                vello_renderer = Some(std::sync::Arc::new(std::sync::Mutex::new(r)));
-            }
+            device = Some(render_state.device.clone().into());
+            queue = Some(render_state.queue.clone());
+            gpu_name = render_state.adapter.get_info().name.clone();
+        } else {
+            vello_init_error = Some("WGPU Render State missing".to_string());
         }
 
-        let mut app = Self {
+        Self {
             frame_count: 0,
             active_tab: "ページ".to_string(),
             tool_mode: ToolMode::Select,
@@ -61,359 +124,324 @@ impl FerruginousApp {
             current_page: 0,
             page_count: 0,
             error_message: None,
-            pdf_renderer: ferruginous_render::Renderer::new(),
-            vello_renderer,
-        };
-
-        app.setup_fonts(&cc.egui_ctx);
-        app
+            pdf_renderer: Box::new(VelloBackend::new()),
+            device,
+            queue,
+            zoom_factor: 1.0,
+            pan_offset: egui::Vec2::ZERO,
+            search_query: String::new(),
+            search_results: Vec::new(),
+            oc_context: None,
+            available_ocgs: Vec::new(),
+            current_page_size: egui::vec2(800.0, 1100.0), // Default until load
+            page_texture_size: (0, 0),
+            last_draw_op_count: 0,
+            vello_init_error,
+            gpu_name,
+            cached_render_state: cc.wgpu_render_state.clone(),
+            vello_texture_view: None,
+            vello_texture_id: None,
+            vello_callback_count: 0,
+            show_debug_overlay: true,
+            diagnostic_mode: false,
+            system: Box::new(NativeBridge),
+        }
     }
 
-    fn open_pdf(&mut self) {
-        self.error_message = None; // Reset error on new attempt
-        if let Some(path) = rfd::FileDialog::new()
-            .add_filter("PDF", &["pdf"])
-            .pick_file() 
-        {
-            println!("Opening PDF: {:?}", path);
+    /// Loads an initial PDF file from a path (CLI support).
+    pub fn load_initial_file(&mut self, path: String) {
+        if let Ok(data) = std::fs::read(&path) {
+            match ferruginous_sdk::loader::load_document_structure(&data) {
+                Ok(doc) => { 
+                    eprintln!("[TRACE][UI] Loading initial file from CLI: {}", path);
+                    self.process_loaded_doc(doc); 
+                }
+                Err(e) => { 
+                    eprintln!("[ERROR][UI] Failed to load initial file: {:?}", e);
+                    self.error_message = Some(format!("PDFロード失敗: {:?}", e)); 
+                }
+            }
+        }
+    }
+
+    /// Opens a file dialog to select and load a PDF document.
+    pub fn open_pdf(&mut self) {
+        self.error_message = None;
+        if let Some(path) = self.system.pick_file("Open PDF", &[("PDF", &["pdf"])]) {
             if let Ok(data) = std::fs::read(&path) {
                 match ferruginous_sdk::loader::load_document_structure(&data) {
-                    Ok(doc) => {
-                        let tree = match doc.page_tree() {
-                            Ok(t) => t,
-                            Err(e) => {
-                                self.error_message = Some(format!("ページツリーの解析に失敗: {:?}", e));
-                                return;
-                            }
-                        };
-                        self.page_count = tree.get_count();
-                        self.pdf_doc = Some(doc.clone());
-                        self.current_page = 0;
+                    Ok(doc) => { self.process_loaded_doc(doc); }
+                    Err(e) => { self.error_message = Some(format!("PDFロード失敗: {:?}", e)); }
+                }
+            }
+        }
+    }
 
-                        // Initial render of page 0
-                        if self.page_count > 0 {
-                            if let Ok(page) = tree.get_page(0) {
-                                if let Ok(list) = page.get_display_list() {
-                                    self.pdf_renderer.clear();
-                                    self.pdf_renderer.render_display_list(&list, vello::kurbo::Affine::IDENTITY);
-                                    println!("Page 0 rendered to scene: {} ops", list.len());
-                                }
-                            }
+    fn process_loaded_doc(&mut self, doc: ferruginous_sdk::loader::PdfDocument) {
+        let tree = match doc.page_tree() {
+            Ok(t) => t,
+            Err(e) => {
+                self.error_message = Some(format!("ページツリー解析エラー: {:?}", e));
+                return;
+            }
+        };
+        self.page_count = tree.get_count();
+        self.pdf_doc = Some(doc.clone());
+        self.current_page = 0;
+        self.pan_offset = Vec2::ZERO;
+
+        // Extract OCG Layers if available
+        if let Ok(catalog) = doc.catalog() {
+            if let Some(ocp) = catalog.oc_properties() {
+                self.oc_context = Some(ferruginous_sdk::ocg::OCContext::new(ocp.default_state()));
+                self.available_ocgs.clear();
+                for &r in &ocp.ocgs {
+                    if let Ok(ferruginous_sdk::core::Object::Dictionary(d)) = doc.resolver().resolve(&r) {
+                        if let Some(ferruginous_sdk::core::Object::String(n)) = d.get(b"Name".as_ref()) {
+                            self.available_ocgs.push(ferruginous_sdk::ocg::OptionalContentGroup {
+                                reference: r, name: n.to_vec(), intent: Vec::new(),
+                            });
                         }
-                        
-                        println!("PDF Loaded: {} pages", self.page_count);
-                    }
-                    Err(e) => {
-                        let msg = format!("エラー: {:?}", e);
-                        self.error_message = Some(msg.clone());
-                        println!("Failed to load PDF structure: {}", msg);
                     }
                 }
-            } else {
-                self.error_message = Some(format!("ファイルを読み込めませんでした: {:?}", path));
+            }
+        }
+        
+        // Update current page size
+        if let Ok(tree) = doc.page_tree() {
+            if let Ok(page) = tree.get_page(self.current_page) {
+                if let Some(bbox) = page.media_box_array() {
+                    self.current_page_size = egui::vec2((bbox[2] - bbox[0]).abs() as f32, (bbox[3] - bbox[1]).abs() as f32);
+                }
+            }
+        }
+
+        self.update_rendering();
+    }
+
+    /// Updates the Vello scene based on the current document and page state.
+    pub fn update_rendering(&mut self) {
+        // Sync page size from document
+        if let Some(doc) = &self.pdf_doc {
+            if let Ok(tree) = doc.page_tree() {
+                if let Ok(page) = tree.get_page(self.current_page) {
+                    if let Some(bbox) = page.media_box_array() {
+                        self.current_page_size = egui::vec2((bbox[2] - bbox[0]).abs() as f32, (bbox[3] - bbox[1]).abs() as f32);
+                        eprintln!("[DEBUG] Updated page size: {:?}", self.current_page_size);
+                    }
+                }
+            }
+        }
+
+        // PDF points (1/72 inch) to pixels. 1.0 zoom = 1.0 points.
+        // We add a slight scale boost to standard resolution for high-DPI quality.
+        // The SDK's DisplayList already includes a normalization transform (flip/shift) 
+        // as its first command, so we only apply the root scaling here.
+        let render_transform = Affine::scale(self.zoom_factor as f64 * SUPER_SAMPLE_FACTOR as f64);
+        
+        eprintln!("[DEBUG] Root Render Scale: {:?}", render_transform);
+
+        self.pdf_renderer.clear();
+        
+        // Ensure texture is initialized if we have a render state
+        if self.vello_texture_view.is_none() {
+            if let Some(state) = &self.cached_render_state {
+                let size = wgpu::Extent3d { width: 2048, height: 2048, depth_or_array_layers: 1 };
+                let texture = state.device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("Vello Target"),
+                    size,
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                    usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+                    view_formats: &[],
+                });
+                self.vello_texture_view = Some(texture.create_view(&wgpu::TextureViewDescriptor::default()));
+
+                // Register the texture with egui renderer
+                if let Some(view) = &self.vello_texture_view {
+                    let mut egui_renderer = state.renderer.write();
+                    self.vello_texture_id = Some(egui_renderer.register_native_texture(
+                        &state.device,
+                        view,
+                        wgpu::FilterMode::Linear,
+                    ));
+                }
+            }
+        }
+
+        if let Some(doc) = &self.pdf_doc {
+            if let Ok(tree) = doc.page_tree() {
+                if let Ok(page) = tree.get_page(self.current_page) {
+                    match page.get_display_list() {
+                        Ok(list) => {
+                            self.last_draw_op_count = list.len();
+                            eprintln!("[DEBUG] Display list updated, commands: {}", list.len());
+                            self.pdf_renderer.render_display_list(
+                                &list, 
+                                render_transform, 
+                                self.oc_context.as_ref()
+                            );
+                        }
+                        Err(e) => {
+                            eprintln!("[DEBUG] get_display_list() failed: {:?}", e);
+                        }
+                    }
+                }
             }
         }
     }
 
-    fn setup_fonts(&mut self, ctx: &egui::Context) {
-        let mut fonts = FontDefinitions::default();
-        
-        // macOS Japanese and Icon font paths
-        let jp_font_path = "/System/Library/Fonts/Hiragino Sans GB.ttc";
-        let icon_font_path = "/System/Library/Fonts/Apple Symbols.ttf";
-        
-        let mut loaded_count = 0;
-
-        // Load Japanese Font
-        if let Ok(font_data) = std::fs::read(jp_font_path) {
-            fonts.font_data.insert(
-                "japanese_font".to_owned(),
-                FontData::from_owned(font_data).into(),
-            );
-            loaded_count += 1;
-            self.font_loaded = true;
-        }
-
-        // Load Icon/Symbol Font
-        if let Ok(icon_data) = std::fs::read(icon_font_path) {
-            fonts.font_data.insert(
-                "icon_font".to_owned(),
-                FontData::from_owned(icon_data).into(),
-            );
-            loaded_count += 1;
-            self.icons_loaded = true;
-        }
-
-        if loaded_count > 0 {
-            // Setup Proportional fallbacks: Japanese -> Symbols -> Standard
-            if let Some(family) = fonts.families.get_mut(&FontFamily::Proportional) {
-                if self.icons_loaded { family.insert(0, "icon_font".to_owned()); }
-                if self.font_loaded { family.insert(0, "japanese_font".to_owned()); }
-            }
-
-            // Setup Monospace fallbacks
-            if let Some(mono) = fonts.families.get_mut(&FontFamily::Monospace) {
-                if self.font_loaded { mono.push("japanese_font".to_owned()); }
-                if self.icons_loaded { mono.push("icon_font".to_owned()); }
-            }
-
-            ctx.set_fonts(fonts);
-            println!("Fonts loaded: JP={}, Icon={}", self.font_loaded, self.icons_loaded);
-        }
-    }
-
-    fn setup_theme(&self, ctx: &egui::Context) {
+    fn apply_theme(&self, ctx: &egui::Context) {
         let mut visuals = Visuals::light();
-        
         let primary_rust = Color32::from_rgb(183, 65, 14);
-        let bg_off_white = Color32::from_rgb(248, 248, 248);
-        let border_light = Color32::from_rgb(230, 230, 230);
-        let text_dark = Color32::from_rgb(45, 45, 45);
+        let bg_premium = Color32::from_rgb(249, 249, 251);
+        let text_dark = Color32::from_rgb(28, 28, 30);
+        let border_subtle = Color32::from_rgb(220, 220, 225);
 
-        visuals.panel_fill = bg_off_white;
+        visuals.panel_fill = bg_premium;
         visuals.window_fill = Color32::WHITE;
+        visuals.window_corner_radius = egui::CornerRadius::same(4);
+        
+        // Buttons
         visuals.widgets.active.bg_fill = primary_rust;
-        visuals.widgets.hovered.bg_fill = Color32::from_rgb(210, 80, 30);
-        visuals.widgets.inactive.bg_fill = Color32::WHITE;
-        visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, text_dark);
-        visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, border_light);
+        visuals.widgets.active.corner_radius = egui::CornerRadius::same(4);
+        visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0, Color32::WHITE);
+        
+        visuals.widgets.hovered.bg_fill = Color32::from_rgb(235, 235, 240);
+        visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, primary_rust);
+        visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(4);
+        
+        visuals.widgets.inactive.bg_fill = Color32::TRANSPARENT;
+        visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.0, text_dark);
+        visuals.widgets.inactive.corner_radius = egui::CornerRadius::same(4);
+        
+        visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, border_subtle);
         
         visuals.override_text_color = Some(text_dark);
         ctx.set_visuals(visuals);
     }
-}
 
-struct VelloCallback {
-    vello_renderer: std::sync::Arc<std::sync::Mutex<VelloRenderer>>,
-    scene: Scene,
-    width: u32,
-    height: u32,
-}
+    fn handle_shortcuts(&mut self, ctx: &egui::Context) {
+        let mut trigger_update = false;
 
-impl egui_wgpu::CallbackTrait for VelloCallback {
-    fn prepare(
-        &self,
-        device: &wgpu::Device,
-        _queue: &wgpu::Queue,
-        _screen_descriptor: &egui_wgpu::ScreenDescriptor,
-        _egui_encoder: &mut wgpu::CommandEncoder,
-        _callback_resources: &mut egui_wgpu::CallbackResources,
-    ) -> Vec<wgpu::CommandBuffer> {
-        if let Ok(mut _renderer) = self.vello_renderer.lock() {
-            // Vello 0.7.0 preparation logic
-            // For simplicity in this restoration, we ensure the scene is ready.
-            // In a full production app, we'd call render_to_surface here.
+        ctx.input(|i| {
+            // Page Navigation
+            if i.key_pressed(Key::ArrowRight) && self.current_page + 1 < self.page_count {
+                self.current_page += 1;
+                self.pan_offset = Vec2::ZERO;
+                trigger_update = true;
+            }
+            if i.key_pressed(Key::ArrowLeft) && self.current_page > 0 {
+                self.current_page -= 1;
+                self.pan_offset = Vec2::ZERO;
+                trigger_update = true;
+            }
+
+            // Zoom
+            if i.key_pressed(Key::Plus) || i.key_pressed(Key::Equals) || i.modifiers.command && (i.key_pressed(Key::Plus) || i.key_pressed(Key::Equals)) {
+                self.zoom_factor = (self.zoom_factor + 0.1).min(10.0);
+                trigger_update = true;
+            }
+            if i.key_pressed(Key::Minus) || (i.modifiers.command && i.key_pressed(Key::Minus)) {
+                self.zoom_factor = (self.zoom_factor - 0.1).max(0.1);
+                trigger_update = true;
+            }
+
+            // View Resets
+            if i.key_pressed(Key::Num0) && i.modifiers.command {
+                self.zoom_factor = 1.0;
+                self.pan_offset = Vec2::ZERO;
+                trigger_update = true;
+            }
+        });
+
+        if trigger_update {
+            self.update_rendering();
         }
-        vec![]
-    }
-
-    fn finish_prepare(
-        &self,
-        _device: &wgpu::Device,
-        _queue: &wgpu::Queue,
-        _egui_encoder: &mut wgpu::CommandEncoder,
-        _callback_resources: &mut egui_wgpu::CallbackResources,
-    ) -> Vec<wgpu::CommandBuffer> {
-        vec![]
-    }
-
-    fn paint(
-        &self,
-        _info: egui::PaintCallbackInfo,
-        _render_pass: &mut wgpu::RenderPass<'_>,
-        _callback_resources: &egui_wgpu::CallbackResources,
-    ) {
-        // Vello rendering is compute-based and happens before the render pass.
-        // We've successfully bridged the state.
     }
 }
 
 impl eframe::App for FerruginousApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.frame_count += 1;
-        self.setup_theme(ctx);
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        // --- 1. Direct Vello Rendering ---
+        if let Some(render_state) = frame.wgpu_render_state() {
+            let device = &render_state.device;
+            let queue = &render_state.queue;
+            
+            if self.vello_texture_id.is_none() {
+                if let Some(view) = &self.vello_texture_view {
+                    let id = render_state.renderer.write().register_native_texture(
+                        device,
+                        view,
+                        wgpu::FilterMode::Linear
+                    );
+                    self.vello_texture_id = Some(id);
+                }
+            }
 
-        if self.frame_count < 5 || self.frame_count % 100 == 0 {
-            println!("Frame: {} (Font Loaded: {})", self.frame_count, self.font_loaded);
+                if let Some(target_view) = &self.vello_texture_view {
+                    let width = (self.current_page_size.x * SUPER_SAMPLE_FACTOR) as u32;
+                    let height = (self.current_page_size.y * SUPER_SAMPLE_FACTOR) as u32;
+
+                    // Initialize renderer if needed
+                    if self.frame_count == 0 || self.vello_callback_count == 0 {
+                         let _ = self.pdf_renderer.prepare_renderer(device, BackendOptions { use_cpu: false, antialiasing: true });
+                    }
+
+                    match self.pdf_renderer.render_to_texture(
+                        device,
+                        queue,
+                        target_view,
+                        width,
+                        height,
+                    ) {
+                        Ok(_) => {
+                            RENDER_TRIGGER_COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        }
+                        Err(e) => {
+                            eprintln!("[ERROR] Rendering failed: {}", e);
+                        }
+                    }
+                }
+        }
+        self.vello_callback_count = RENDER_TRIGGER_COUNT.load(std::sync::atomic::Ordering::SeqCst);
+
+        self.apply_theme(ctx);
+        self.handle_shortcuts(ctx);
+        
+        widgets::header::show_header(self, ctx);
+        widgets::sidebar::show_sidebar(self, ctx);
+        widgets::canvas::show_canvas(self, ctx);
+        widgets::debug::show_debug_overlay(self, ctx);
+
+        if self.frame_count == 1 && self.pdf_doc.is_some() {
+            eprintln!("[TRACE][UI] Initial render complete for document");
         }
 
-        let rust = Color32::from_rgb(183, 65, 14);
-        let border_color = Color32::from_rgb(230, 230, 230);
-
-        // --- HEADER ---
-        egui::TopBottomPanel::top("header_vfinal")
-            .frame(Frame::default()
-                .fill(Color32::WHITE)
-                .stroke(Stroke::new(1.0, border_color))
-                .inner_margin(Margin::same(10)))
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.add_space(8.0);
-                    ui.label(RichText::new("FERRUGINOUS").color(rust).strong().size(18.0).extra_letter_spacing(1.5));
-                    ui.add_space(20.0);
-                    
-                    ui.group(|ui| {
-                        for &mode in &[ToolMode::Select, ToolMode::Snap, ToolMode::Measure] {
-                            if ui.selectable_label(self.tool_mode == mode, mode.label()).clicked() {
-                                self.tool_mode = mode;
-                            }
-                        }
-                    });
-
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("保存").clicked() {}
-                        if ui.button("開く").clicked() {
-                            self.open_pdf();
-                        }
-                        ui.separator();
-                        let (status_text, color) = if let Some(err) = &self.error_message {
-                             (err.clone(), Color32::RED)
-                        } else if self.pdf_doc.is_some() {
-                             (format!("表示中: {} / {} ページ", self.current_page + 1, self.page_count), Color32::from_rgb(34, 139, 34))
-                        } else {
-                             ("ステータス: 待機中".to_string(), Color32::GRAY)
-                        };
-                        ui.label(RichText::new(status_text).color(color).size(10.0));
-                    });
-                });
-            });
-
-        // --- SIDEBAR ---
-        egui::SidePanel::left("sidebar_vfinal")
-            .default_width(260.0)
-            .frame(Frame::default()
-                .fill(Color32::WHITE)
-                .inner_margin(Margin::same(16)))
-            .show(ctx, |ui| {
-                ui.heading(RichText::new("ナビゲーション").strong().size(22.0));
-                ui.add_space(20.0);
-                
-                ui.horizontal(|ui| {
-                    for name in &["ページ", "レイヤー", "検索"] {
-                        if ui.selectable_label(self.active_tab == *name, *name).clicked() {
-                            self.active_tab = name.to_string();
-                        }
-                    }
-                });
-                
-                ui.add_space(10.0);
-                ui.separator();
-                ui.add_space(10.0);
-
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    match self.active_tab.as_str() {
-                        "ページ" => {
-                            if self.pdf_doc.is_some() {
-                                ui.label(format!("全 {} ページ", self.page_count));
-                                for i in 1..=self.page_count.min(20) {
-                                    ui.add_space(10.0);
-                                    Frame::canvas(ui.style())
-                                        .fill(Color32::from_rgb(240, 240, 240))
-                                        .corner_radius(4)
-                                        .show(ui, |ui| {
-                                            ui.set_min_size(Vec2::new(180.0, 120.0));
-                                            ui.centered_and_justified(|ui| { ui.label(format!("ページ {}", i)); });
-                                        });
-                                }
-                                if self.page_count > 20 {
-                                    ui.label("...");
-                                }
-                            } else {
-                                ui.label("■ PDF を開くとここに表示されます");
-                            }
-                        }
-                        "レイヤー" => {
-                            ui.label("● レイヤーリスト (OCG)");
-                            ui.checkbox(&mut true, "テキストコンテンツ");
-                            ui.checkbox(&mut true, "グラフィック");
-                            ui.checkbox(&mut false, "コメント");
-                        }
-                        "検索" => {
-                            ui.label("◆ 文書内検索は準備中です...");
-                        }
-                        _ => {}
-                    }
-                });
-            });
-
-        // --- CENTRAL PANEL: Render Canvas ---
-        egui::CentralPanel::default()
-            .frame(Frame::default().fill(Color32::from_rgb(235, 235, 235)))
-            .show(ctx, |ui| {
-                egui::ScrollArea::both().show(ui, |ui| {
-                    ui.centered_and_justified(|ui| {
-                        let (rect, _response) = ui.allocate_at_least(Vec2::new(595.0, 842.0), egui::Sense::hover());
-                        
-                        Frame::default()
-                            .fill(Color32::WHITE)
-                            .corner_radius(0)
-                            .outer_margin(Margin::same(40))
-                            .shadow(egui::Shadow {
-                                color: Color32::from_black_alpha(30),
-                                offset: [0, 8],
-                                blur: 16,
-                                spread: 0,
-                            })
-                            .show(ui, |ui| {
-                                ui.set_min_size(Vec2::new(595.0, 842.0)); // A4 Ratio
-                                
-                                if let Some(v_mutex) = &self.vello_renderer {
-                                    if let Ok(v_mutex_clone) = Ok::<_, ()>(v_mutex.clone()) {
-                                        let scene = self.pdf_renderer.scene().clone();
-                                        
-                                        ui.painter().add(egui_wgpu::Callback::new_paint_callback(
-                                            rect,
-                                            VelloCallback {
-                                                vello_renderer: v_mutex_clone,
-                                                scene,
-                                                width: rect.width() as u32,
-                                                height: rect.height() as u32,
-                                            }
-                                        ));
-                                    }
-                                } else if self.pdf_doc.is_some() {
-                                    ui.vertical_centered(|ui| {
-                                        ui.add_space(20.0);
-                                        ui.heading(RichText::new("● PDF 正常にロードされました").color(Color32::from_rgb(0, 150, 0)).size(24.0).strong());
-                                        ui.label(RichText::new(format!("ページ 1 / {} を解析完了", self.page_count)).size(16.0));
-                                        ui.separator();
-                                        ui.label("Renderer Not Available (WGPU Initialization Failed)");
-                                        ui.add_space(300.0);
-                                    });
-                                } else {
-                                    ui.vertical_centered(|ui| {
-                                        ui.add_space(100.0);
-                                        ui.label(RichText::new("PDF 描画キャンバス").size(28.0).weak());
-                                        ui.label("Ferruginous レンダラーがここで動作します");
-                                        ui.add_space(40.0);
-                                        ui.label(RichText::new(format!("現在のモード: {}", self.tool_mode.label())).size(16.0).color(rust));
-                                    });
-                                }
-                            });
-                    });
-                });
-            });
-
+        self.frame_count += 1;
         ctx.request_repaint();
     }
 }
 
 fn main() -> eframe::Result {
-    let mut native_options = eframe::NativeOptions::default();
-    
-    // Intel Mac Stability Tuning
-    native_options.wgpu_options.present_mode = eframe::wgpu::PresentMode::Fifo;
+    let mut native_options = sys::get_native_options();
     
     native_options.viewport = egui::ViewportBuilder::default()
         .with_inner_size([1200.0, 850.0])
         .with_title("Ferruginous PDF Tool")
-        .with_transparent(false)
-        .with_active(true)
-        .with_visible(true);
+        .with_active(true);
         
     eframe::run_native(
-        "ferruginous-final-ui",
+        "ferruginous-pdf-ui",
         native_options,
-        Box::new(|cc| Ok(Box::new(FerruginousApp::new(cc)))),
+        Box::new(|cc| {
+            let mut app = FerruginousApp::new(cc);
+            if let Some(arg) = std::env::args().nth(1) {
+                app.load_initial_file(arg);
+            }
+            Ok(Box::new(app))
+        }),
     )
 }

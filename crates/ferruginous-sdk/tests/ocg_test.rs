@@ -98,7 +98,7 @@ fn test_ocg_visibility_filtering() -> PdfResult<()> {
     let dl = &processor.display_list;
     
     // Only one StrokePath should exist
-    let stroke_count = dl.iter().filter(|op| matches!(op, ferruginous_sdk::graphics::DrawOp::StrokePath { .. })).count();
+    let stroke_count = dl.iter().filter(|op| matches!(op.op, ferruginous_sdk::graphics::DrawOp::StrokePath { .. })).count();
     assert_eq!(stroke_count, 1, "Only visible layer should emit DrawOp");
     
     Ok(())

@@ -49,7 +49,10 @@ impl Resolver for LayeredResolver<'_> {
         }
 
         // 2. Fall back to base resolver
-        self.base.resolve(reference)
+        let res = self.base.resolve(reference);
+        if let Ok(ref obj) = res {
+        }
+        res
     }
 }
 
@@ -59,6 +62,7 @@ impl Resolver for PdfResolver<'_> {
         if let Some(obj) = self.cache.lock().map_err(|_| PdfError::ResourceError("Resolver cache mutex poisoned".into()))?.get(reference) {
             return Ok(obj.clone());
         }
+
 
         let entry = self.index.get(reference.id)
             .ok_or(PdfError::ObjectNotFound(*reference))?;

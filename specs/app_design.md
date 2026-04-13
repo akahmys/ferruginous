@@ -24,7 +24,7 @@
 4. **Transform**: PDF ユーザ空間から `kurbo::Affine` でデバイス座標へ変換。
 5. **State Update**: `GraphicsState` スタック更新。
 6. **Issue**: `DrawOp` を `DisplayList` へ蓄積。
-7. **Render**: `vello` 側で命令を GPU 描画。
+7. **Render**: `RenderBackend` インターフェース経由で、バックエンド（Vello 等）が命令を GPU 描画。
 
 ### 2.2 技術スタック
 
@@ -48,9 +48,10 @@ $$P_{screen} = M_{zoom} \cdot M_{pan} \cdot M_{pdf\_to\_screen} \cdot P_{user}$$
 
 ## 5. UI 構成 (ferruginous-ui)
 
-- **Canvas**: `vello` を用いて、PDF ベクトルデータと動的オーバーレイ（計測線、スナップ点など）を統合描画。
+- **Canvas**: `RenderBackend` を用いて、PDF ベクトルデータと動的オーバーレイ（計測線、スナップ点など）を統合描画。
 - **Control**: `egui` によるモードレスなフローティングメニュー。
 - **Inspector**: Arlington 検証結果と Tag 構造の視覚化エディタ。
+- **System Bridge**: `SystemBridge` トレイトを通じ、OS 依存のファイル操作等を抽象化。
 - **Editor Bridge**: UI での破壊的操作を SDK の `PdfEditor` へ伝搬し、インクリメンタル保存。
 
 ## 6. 品質ガードレール
