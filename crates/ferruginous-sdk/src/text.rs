@@ -2,6 +2,7 @@ use kurbo::Affine;
 use crate::core::Object;
 
 /// ISO 32000-2:2020 Clause 9.3 - Text State Parameters
+///
 /// Manages font, font size, matrices, and spacing for text operations.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TextState {
@@ -58,7 +59,7 @@ impl TextState {
     /// Td - Clause 9.4.2 (Move Text)
     pub fn move_text(&mut self, tx: f64, ty: f64) {
         let translation = Affine::translate((tx, ty));
-        self.line_matrix = self.line_matrix * translation;
+        self.line_matrix *= translation;
         self.matrix = self.line_matrix;
     }
 
@@ -74,7 +75,7 @@ impl TextState {
     pub fn advance_glyph(&mut self, is_space: bool, glyph_width: f64, v_adv: Option<f64>, tj_adj: f64, char_rendered: bool) -> (f64, Affine) {
         let fs = self.font_size;
         let tc = if char_rendered { self.char_spacing } else { 0.0 };
-        let tw = if is_space && char_rendered && self.wmode == 0 { self.word_spacing } else { 0.0 };
+        let tw = if is_space && char_rendered { self.word_spacing } else { 0.0 };
         let th = self.horizontal_scaling / 100.0;
         
         let matrix_before = self.matrix;
@@ -91,15 +92,30 @@ impl TextState {
             (tx, matrix_before)
         } else {
             let w1 = v_adv.unwrap_or(-1000.0);
-            let ty = ((w1 - tj_adj) / 1000.0).mul_add(fs, tc) + tw;
+            // ty = (w1 - adj)/1000 * fs + Tc + Tw
+            // In PDF vertical mode, Tc and Tw are ADDED to the displacement. (Clause 9.3.2)
+            // But if w1 is negative (-1000), adding positive Tc makes ty 'less negative',
+            // which would bunch characters if we don't handle the Tm inversion.
+            let ty = ((w1 - tj_adj) / 1000.0).mul_add(fs, -tc) - tw;
+            
             let coeffs = self.matrix.as_coeffs();
-            // Move along the second column (vertical direction)
+            // MOVE DOWN logic: Conventional PDF vertical text moves down.
+            // If Tm has d < 0 (inverted), moving by ty (negative) results in +Y movement (UP).
+            // We force the displacement to be downward in user space if d is negative.
+            let mut dy = ty;
+            if coeffs[3] < 0.0 && ty < 0.0 {
+                // If Tm is flipped and ty is negative, we need to flip ty to move DOWN in user space.
+                dy = -ty;
+            }
+
             self.matrix = Affine::new([
                 coeffs[0], coeffs[1], coeffs[2], coeffs[3], 
-                coeffs[4] + ty * coeffs[2], 
-                coeffs[5] + ty * coeffs[3]
+                coeffs[4] + dy * coeffs[2], 
+                coeffs[5] + dy * coeffs[3]
             ]);
-            (ty, matrix_before)
+            println!("[DIAG] Adv(V): ty={:.2}, dy={:.2}, Tm_post=[{:.2}, {:.2}]", 
+                ty, dy, self.matrix.as_coeffs()[4], self.matrix.as_coeffs()[5]);
+            (dy, matrix_before)
         }
     }
 }

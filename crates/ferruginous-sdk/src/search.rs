@@ -1,4 +1,5 @@
 //! Text search engine for the PDF text layer.
+//!
 //! (ISO 32000-2:2020 Clause 9.10 - Extraction of Text Content)
 
 use kurbo::Rect;

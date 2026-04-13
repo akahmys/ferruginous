@@ -1,4 +1,5 @@
 //! Arlington Expression Evaluator
+//!
 //! (ISO 32000-2:2020 Clause 7.1 Arlington PDF Model)
 
 use std::collections::BTreeMap;
@@ -87,7 +88,7 @@ fn lookup_key(dict: &BTreeMap<Vec<u8>, Object>, key: &str, resolver: &dyn Resolv
 fn evaluate_function(name: &str, args: &[Expression], ctx: &EvalContext) -> EvalValue {
     match name {
         "SinceVersion" => {
-            if args.len() >= 1 {
+            if !args.is_empty() {
                 if let EvalValue::Real(v) = evaluate(&args[0], ctx) {
                     return EvalValue::Boolean(ctx.version >= v);
                 }
@@ -95,7 +96,7 @@ fn evaluate_function(name: &str, args: &[Expression], ctx: &EvalContext) -> Eval
             EvalValue::Boolean(false)
         }
         "Deprecated" => {
-            if args.len() >= 1 {
+            if !args.is_empty() {
                 if let EvalValue::Real(v) = evaluate(&args[0], ctx) {
                     return EvalValue::Boolean(ctx.version >= v);
                 }
@@ -103,7 +104,7 @@ fn evaluate_function(name: &str, args: &[Expression], ctx: &EvalContext) -> Eval
             EvalValue::Boolean(false)
         }
         "Required" => {
-            if args.len() >= 1 {
+            if !args.is_empty() {
                 let val = evaluate(&args[0], ctx);
                 return EvalValue::Boolean(val != EvalValue::Null);
             }

@@ -1,3 +1,6 @@
+#![allow(clippy::all, missing_docs)]
+//! Test module
+
 use ferruginous_sdk::core::Object;
 use ferruginous_sdk::lexer::parse_object;
 use ferruginous_sdk::writer::write_object;

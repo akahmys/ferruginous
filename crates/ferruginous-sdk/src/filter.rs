@@ -1,15 +1,18 @@
 //! Stream filter (compression/decompression) management.
+//!
 //! (ISO 32000-2:2020 Clause 7.4)
 
 use std::collections::BTreeMap;
 use crate::core::{Object, PdfError, PdfResult, ParseErrorVariant};
 
 /// ISO 32000-2:2020 Clause 7.4.4 - `FlateDecode` Filter
+///
 /// Standard limits to prevent Zip Bomb style attacks
 const MAX_DECOMPRESSED_SIZE: usize = 256 * 1024 * 1024; // 256 MB
 const MAX_FILTER_LAYERS: usize = 3;
 
 /// Decodes a stream according to its /Filter and /`DecodeParms` entries.
+///
 /// (ISO 32000-2:2020 Clause 7.4)
 pub fn decode_stream(
     dict: &BTreeMap<Vec<u8>, Object>,
@@ -279,7 +282,7 @@ fn decode_png_row(
             0 => row[i], // None
             1 => row[i].wrapping_add(left), // Sub
             2 => row[i].wrapping_add(up), // Up
-            3 => row[i].wrapping_add(((u16::from(left) + u16::from(up)) / 2) as u8), // Average
+            3 => row[i].wrapping_add(u16::midpoint(u16::from(left), u16::from(up)) as u8), // Average
             4 => row[i].wrapping_add(paeth_predictor(left, up, upper_left)), // Paeth
             _ => return Err(PdfError::ParseError(ParseErrorVariant::InvalidPngFilter { filter_type, offset: 0 })),
         };

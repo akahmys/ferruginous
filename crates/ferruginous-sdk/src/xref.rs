@@ -1,4 +1,5 @@
 //! Cross-reference (`XRef`) table and stream parsing.
+//!
 //! (ISO 32000-2:2020 Clause 7.5.4)
 
 use std::collections::BTreeMap;

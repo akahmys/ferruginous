@@ -1,3 +1,7 @@
+#![allow(clippy::all, missing_docs)]
+//! Test module
+
+//! Integration tests for PDF document editor.
 use ferruginous_sdk::core::{Object, Reference, Resolver};
 use ferruginous_sdk::loader::PdfDocument;
 use ferruginous_sdk::editor::PdfEditor;
@@ -101,8 +105,8 @@ fn test_save_incremental_integrity() {
     
     // Resolve new object from reloaded doc
     let resolver = ferruginous_sdk::resolver::PdfResolver {
-        data: Box::leak(Box::new(result_data.clone())),
-        index: std::sync::Arc::new(reloaded_doc.xref_index.clone()),
+        data: Box::leak(Box::new(result_data)),
+        index: std::sync::Arc::new(reloaded_doc.xref_index),
         security: None,
         cache: std::sync::Mutex::new(std::collections::BTreeMap::new()),
     };

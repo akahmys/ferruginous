@@ -1,4 +1,5 @@
 //! Page Tree and Page object management.
+//!
 //! (ISO 32000-2:2020 Clause 7.7.3)
 
 use crate::core::{Object, Reference, Resolver, PdfError, PdfResult, ContentErrorVariant};

@@ -1,4 +1,8 @@
-use ferruginous_sdk::content::{Processor, Operation, ContentNode, parse_content_stream};
+#![allow(clippy::all, missing_docs)]
+//! Test module
+
+//! Integration tests for text extraction from PDF content streams.
+use ferruginous_sdk::content::{Processor, parse_content_stream};
 use ferruginous_sdk::core::{Object, Resolver, PdfResult};
 use ferruginous_sdk::font::Font;
 use ferruginous_sdk::resources::Resources;
@@ -19,7 +23,7 @@ fn test_extraction_simple() {
     font_dict.insert(b"Subtype".to_vec(), Object::new_name(b"Type1".to_vec()));
     font_dict.insert(b"BaseFont".to_vec(), Object::new_name(b"Helvetica".to_vec()));
     
-    let font = Font::from_dict(&font_dict, &MockResolver).unwrap();
+    let _font = Font::from_dict(&font_dict, &MockResolver).unwrap();
     let mut fonts = BTreeMap::new();
     fonts.insert(b"F1".to_vec(), Object::new_dict(font_dict));
     

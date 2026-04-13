@@ -1,3 +1,6 @@
+#![allow(clippy::all, missing_docs)]
+//! Test module
+
 use ferruginous_sdk::core::{Object, Reference};
 use ferruginous_sdk::loader::PdfDocument;
 use ferruginous_sdk::editor::PdfEditor;

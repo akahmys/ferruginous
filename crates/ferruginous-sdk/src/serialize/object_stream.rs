@@ -46,7 +46,7 @@ impl ObjectStreamBuilder {
         // Pass 2: Create header (id offset pairs)
         for (id, offset) in offsets {
              use std::io::Write;
-             write!(&mut header, "{} {} ", id, offset)
+             write!(&mut header, "{id} {offset} ")
                  .map_err(PdfError::from)?;
         }
 

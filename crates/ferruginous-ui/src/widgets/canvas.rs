@@ -12,7 +12,7 @@ pub fn show_canvas(app: &mut FerruginousApp, ctx: &egui::Context) {
         });
 }
 
-fn render_page_surface(app: &mut FerruginousApp, ui: &mut egui::Ui) {
+fn render_page_surface(app: &mut FerruginousApp, ui: &egui::Ui) {
     let rect = ui.available_rect_before_wrap();
     
     // Calculate paper size with zoom
@@ -50,7 +50,7 @@ fn render_page_surface(app: &mut FerruginousApp, ui: &mut egui::Ui) {
     handle_canvas_interactions(app, ui, rect);
 }
 
-fn handle_canvas_interactions(app: &mut FerruginousApp, ui: &mut egui::Ui, rect: Rect) {
+fn handle_canvas_interactions(app: &mut FerruginousApp, ui: &egui::Ui, rect: Rect) {
     let response = ui.interact(rect, ui.id(), egui::Sense::drag());
 
     if response.dragged() {
@@ -61,7 +61,7 @@ fn handle_canvas_interactions(app: &mut FerruginousApp, ui: &mut egui::Ui, rect:
     let scroll_delta = ui.input(|i| i.smooth_scroll_delta.y);
     if scroll_delta != 0.0 {
         let old_zoom = app.zoom_factor;
-        app.zoom_factor = (app.zoom_factor + scroll_delta * 0.001).clamp(0.1, 10.0);
+        app.zoom_factor = scroll_delta.mul_add(0.001, app.zoom_factor).clamp(0.1, 10.0);
         
         // Adjust pan to zoom towards mouse or center
         if let Some(mouse_pos) = ui.input(|i| i.pointer.latest_pos()) {

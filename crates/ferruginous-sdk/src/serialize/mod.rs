@@ -28,7 +28,7 @@ pub fn write_xref_section<W: Write>(
     for (start_id, entries) in subsections {
         writeln!(writer, "{} {}", start_id, entries.len()).map_err(PdfError::from)?;
         for entry in entries {
-            entry.write_20byte(writer).map_err(PdfError::from)?;
+            entry.write_20byte(writer)?;
         }
     }
     Ok(())

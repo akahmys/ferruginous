@@ -50,7 +50,7 @@ impl Resolver for LayeredResolver<'_> {
 
         // 2. Fall back to base resolver
         let res = self.base.resolve(reference);
-        if let Ok(ref obj) = res {
+        if let Ok(ref _obj) = res {
         }
         res
     }
@@ -130,8 +130,9 @@ impl PdfResolver<'_> {
             let mut current_input = &decoded_data[..std::cmp::min(first, decoded_data.len())];
             let mut found_offset = None;
             for _ in 0..std::cmp::min(n, 10000) {
-                if current_input.is_empty() { break; }
-                let (rem, oid) = nom::character::complete::digit1::<&[u8], nom::error::Error<&[u8]>>(current_input)
+                let (rem, _) = nom::character::complete::multispace0::<&[u8], nom::error::Error<&[u8]>>(current_input).unwrap_or((current_input, &[]));
+                if rem.is_empty() { break; }
+                let (rem, oid) = nom::character::complete::digit1::<&[u8], nom::error::Error<&[u8]>>(rem)
                     .map_err(|_| PdfError::ParseError(ParseErrorVariant::general(0, "Failed to parse obj id")))?;
                 let (rem, _) = nom::character::complete::multispace1::<&[u8], nom::error::Error<&[u8]>>(rem).map_err(|_| PdfError::ParseError(ParseErrorVariant::general(0, "Space required")))?;
                 let (rem, ooff) = nom::character::complete::digit1::<&[u8], nom::error::Error<&[u8]>>(rem).map_err(|_| PdfError::ParseError(ParseErrorVariant::general(0, "Failed to parse offset")))?;
@@ -150,7 +151,7 @@ impl PdfResolver<'_> {
                     .map_err(|e| PdfError::ParseError(ParseErrorVariant::general(abs_offset as u64, format!("Compressed parse error: {e:?}"))))?;
                 Ok(obj)
             } else { Err(PdfError::ObjectNotFound(*r)) }
-        } else { Err(PdfError::InvalidType { expected: "Stream".to_string(), found: format!("{:?}", container_obj) }) }
+        } else { Err(PdfError::InvalidType { expected: "Stream".to_string(), found: format!("{container_obj:?}") }) }
     }
 
     fn decrypt_resolved_object(

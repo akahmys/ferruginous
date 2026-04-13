@@ -1,7 +1,8 @@
+#![allow(clippy::all, missing_docs)]
+//! Example module
+
 use ferruginous_sdk::loader::load_document_structure;
 use ferruginous_sdk::content::{Processor, parse_content_stream};
-use ferruginous_sdk::resources::Resources;
-use ferruginous_sdk::core::Object;
 
 fn main() {
     println!("Dumping page traces...");
@@ -16,7 +17,7 @@ fn main() {
     
     let doc_bytes = std::fs::read(path).unwrap();
     let doc = load_document_structure(&doc_bytes).unwrap();
-    let resolver = doc.resolver();
+    let _resolver = doc.resolver();
     
     let pages = doc.page_tree().unwrap();
     match pages.get_page(page_idx - 1) {

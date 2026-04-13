@@ -1,3 +1,7 @@
+#![allow(clippy::all, missing_docs)]
+//! Example module
+
+//! Example: Preparing a sample PDF file.
 use ferruginous_sdk::core::{Object, Reference, PdfResult};
 use ferruginous_sdk::serialize::{write_indirect_object, write_xref_section, write_trailer};
 use ferruginous_sdk::xref::XRefEntry;
@@ -7,7 +11,7 @@ use std::io::Write;
 
 fn main() -> PdfResult<()> {
     let mut data = Vec::new();
-    data.extend(b"%PDF-1.7\n%\xE2\xE3\xCF\xD3\n");
+    data.extend(b"%PDF-2.0\n%\xE2\xE3\xCF\xD3\n");
 
     let mut offsets = BTreeMap::new();
     write_body(&mut data, &mut offsets)?;
@@ -15,11 +19,11 @@ fn main() -> PdfResult<()> {
     let xref_start = data.len() as u64;
     write_meta(&mut data, &offsets, xref_start)?;
 
-    std::fs::create_dir_all("samples").map_err(ferruginous_sdk::core::PdfError::from)?;
-    let mut file = File::create("samples/text-sample.pdf").map_err(ferruginous_sdk::core::PdfError::from)?;
+    std::fs::create_dir_all("../../samples/legacy").map_err(ferruginous_sdk::core::PdfError::from)?;
+    let mut file = File::create("../../samples/legacy/text-sample.pdf").map_err(ferruginous_sdk::core::PdfError::from)?;
     file.write_all(&data).map_err(ferruginous_sdk::core::PdfError::from)?;
     
-    println!("Generated: samples/text-sample.pdf");
+    println!("Generated: ../../samples/legacy/text-sample.pdf");
     Ok(())
 }
 

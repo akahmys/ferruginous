@@ -1,3 +1,6 @@
+#![allow(clippy::all, missing_docs)]
+//! Test module
+
 use ferruginous_sdk::core::{Object, Reference};
 use ferruginous_sdk::loader::PdfDocument;
 use ferruginous_sdk::editor::PdfEditor;
@@ -26,7 +29,7 @@ fn test_add_text_annotation() {
     data.extend_from_slice(obj3);
     
     let doc = PdfDocument {
-        data: data.to_vec(),
+        data: data.clone(),
         xref_index: index,
         last_trailer: ferruginous_sdk::trailer::TrailerInfo { 
             last_xref_offset: 0, 

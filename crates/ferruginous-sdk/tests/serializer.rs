@@ -1,4 +1,7 @@
-use ferruginous_sdk::core::{Object, Reference, PdfResult};
+#![allow(clippy::all, missing_docs)]
+//! Test module
+
+use ferruginous_sdk::core::{Object, Reference};
 use ferruginous_sdk::serialize as writer;
 use ferruginous_sdk::serialize::object_stream::ObjectStreamBuilder;
 use ferruginous_sdk::editor::PdfEditor;

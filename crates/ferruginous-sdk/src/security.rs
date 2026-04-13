@@ -1,4 +1,5 @@
 //! PDF Security (Encryption) handlers.
+//!
 //! (ISO 32000-2:2020 Clause 7.6)
 
 use sha2::{Digest, Sha256};
@@ -9,6 +10,7 @@ use std::collections::BTreeMap;
 use crate::core::{Object, PdfError, PdfResult};
 
 /// ISO 32000-2:2020 Clause 7.6 - Security and Encryption.
+///
 /// Handles standard security handler logic (Password-based).
 pub struct SecurityHandler {
     /// Derived encryption key.

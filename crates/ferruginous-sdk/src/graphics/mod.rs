@@ -1,4 +1,5 @@
 //! Graphics state and path construction management.
+//!
 //! (ISO 32000-2:2020 Clause 8.4)
 
 use crate::core::{Object, Reference};
@@ -39,10 +40,12 @@ pub enum Color {
 
 impl Color {
     /// Converts this color to RGB (0.0 to 1.0) given the active color space.
+    #[allow(clippy::many_single_char_names)]
     pub fn to_rgb(&self, space: &crate::colorspace::ColorSpace) -> [f32; 3] {
         match self {
             Self::Gray(g) => [*g, *g, *g],
             Self::RGB(r, g, b) => [*r, *g, *b],
+            #[allow(clippy::many_single_char_names)]
             Self::CMYK(c, m, y, k) => {
                 let r = (1.0 - c) * (1.0 - k);
                 let g = (1.0 - m) * (1.0 - k);
@@ -237,8 +240,10 @@ impl Default for Color {
 
 /// PDF 2.0 Blend Modes (Clause 11.3.5, Table 138-139).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Default)]
 pub enum BlendMode {
     /// Normal (default).
+    #[default]
     Normal,
     /// Multiply.
     Multiply,
@@ -264,11 +269,6 @@ pub enum BlendMode {
     Exclusion,
 }
 
-impl Default for BlendMode {
-    fn default() -> Self {
-        Self::Normal
-    }
-}
 
 /// A glyph instance with its position and bounding box.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -408,8 +408,10 @@ pub struct GroupAttributes {
 }
 
 /// ISO 32000-2:2020 Clause 8.4.2 - Graphics State
+///
 /// Contains parameters that control the appearance of graphics and text on a page.
 #[derive(Debug, Clone, PartialEq)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct GraphicsState {
     /// Current Transformation Matrix (Clause 8.3.3).
     pub ctm: Affine,
@@ -586,13 +588,14 @@ mod tests {
         let mut gss = GraphicsStateStack::new();
         gss.current_mut().expect("test").line_width = 2.0;
         
-        gss.push().unwrap();
-        assert_eq!(gss.current().expect("test").line_width, 2.0);
+        gss.push().expect("push failed");
+        const EPSILON: f64 = 0.000_1;
+        assert!((gss.current().expect("test").line_width - 2.0).abs() < EPSILON);
         
         gss.current_mut().expect("test").line_width = 3.0;
-        assert_eq!(gss.current().expect("test").line_width, 3.0);
+        assert!((gss.current().expect("test").line_width - 3.0).abs() < EPSILON);
         
-        gss.pop().unwrap();
-        assert_eq!(gss.current().expect("test").line_width, 2.0);
+        gss.pop().expect("pop failed");
+        assert!((gss.current().expect("test").line_width - 2.0).abs() < EPSILON);
     }
 }

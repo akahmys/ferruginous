@@ -1,5 +1,9 @@
+#![allow(clippy::all, missing_docs)]
+//! Test module
+
+//! Tests for color space parsing and validation.
+
 use ferruginous_sdk::colorspace::ColorSpace;
-use std::sync::Arc;
 use ferruginous_sdk::core::{Object, Resolver, Reference, PdfResult};
 use std::collections::BTreeMap;
 
@@ -40,10 +44,13 @@ fn test_parse_calibrated_gray() {
     
     let cs = ColorSpace::from_object(&cs_obj, &resolver).unwrap();
     if let ColorSpace::CalGray { white_point, gamma, .. } = cs {
-        assert_eq!(white_point, [1.0, 1.0, 1.0]);
-        assert_eq!(gamma, 2.2);
+        const EPSILON: f32 = 0.000_1;
+        assert!((white_point[0] - 1.0).abs() < EPSILON);
+        assert!((white_point[1] - 1.0).abs() < EPSILON);
+        assert!((white_point[2] - 1.0).abs() < EPSILON);
+        assert!((gamma - 2.2).abs() < EPSILON);
     } else {
-        panic!("Expected CalGray, got {:?}", cs);
+        panic!("Expected CalGray, got {cs:?}");
     }
 }
 
@@ -71,6 +78,6 @@ fn test_parse_icc_based() {
         assert_eq!(profile.data.len(), 132);
         assert_eq!(profile.alternate, Some(Box::new(ColorSpace::DeviceRGB)));
     } else {
-        panic!("Expected ICCBased, got {:?}", cs);
+        panic!("Expected ICCBased, got {cs:?}");
     }
 }

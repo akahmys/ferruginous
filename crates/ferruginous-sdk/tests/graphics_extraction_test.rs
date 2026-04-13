@@ -1,3 +1,7 @@
+#![allow(clippy::all, missing_docs)]
+//! Test module for graphics extraction.
+#![allow(clippy::float_cmp, missing_docs)]
+
 use ferruginous_sdk::core::{Object, Reference, Resolver};
 use ferruginous_sdk::loader::{PdfDocument, load_document_structure};
 use ferruginous_sdk::page::Page;

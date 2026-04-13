@@ -1,3 +1,6 @@
+#![allow(clippy::all, missing_docs)]
+//! Example module
+
 use ferruginous_sdk::PdfDocument;
 use std::path::{Path, PathBuf};
 use std::fs;

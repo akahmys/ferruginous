@@ -210,7 +210,6 @@ impl VelloBackend {
                             let fill_rect = shading.bbox.unwrap_or(Rect::new(-10000.0, -10000.0, 10000.0, 10000.0));
                             scene.fill(Fill::NonZero, transform, &brush, None, &fill_rect);
                         }
-                        scene.pop_layer();
                     } else {
                         // Fallback to tessellation for mesh types or complex shadings
                         let triangles = ferruginous_sdk::shading_tess::tessellate_shading(shading);
@@ -224,8 +223,8 @@ impl VelloBackend {
                             let color = VelloColor::new([tri.v[0].color[0], tri.v[0].color[1], tri.v[0].color[2], tri.v[0].color[3]]);
                             scene.fill(Fill::NonZero, transform, color, None, &path);
                         }
-                        scene.pop_layer();
                     }
+                    scene.pop_layer();
                 }
                 DrawOp::DrawPath(path, color, width) => {
                     let brush = to_vello_brush(color);
@@ -315,6 +314,7 @@ impl RenderBackend for VelloBackend {
     }
 }
 
+#[allow(clippy::many_single_char_names)]
 fn to_vello_brush(color: &Color) -> Brush {
     match color {
         Color::Gray(g) => Brush::Solid(VelloColor::new([(*g), (*g), (*g), 1.0])),

@@ -36,7 +36,7 @@ impl PdfEditor<'_> {
         let editor = Self {
             document: doc,
             resolver: LayeredResolver::new(base_resolver),
-            next_object_id: max_id.checked_add(1).unwrap_or(u32::MAX),
+            next_object_id: max_id.saturating_add(1),
             oc_context: None,
         };
         
@@ -123,7 +123,7 @@ impl PdfEditor<'_> {
             new_entries.insert(id, XRefEntry::InUse { offset, generation: 0 });
             for (index, &id) in compressed_ids.iter().enumerate() {
                 new_entries.insert(id, XRefEntry::Compressed {
-                    container_id: Some(id).unwrap_or(0), // Final ID will be obj_stm_id
+                    container_id: id, // Final ID will be obj_stm_id
                     index: index as u32,
                 });
             }
@@ -168,7 +168,7 @@ impl PdfEditor<'_> {
         };
 
         // Changing ID for this incremental session
-        for (id, _) in &new_entries {
+        for id in new_entries.keys() {
             hasher.update(id.to_be_bytes());
         }
         let changing_id = Object::new_string(hasher.finalize().to_vec());
@@ -299,7 +299,7 @@ impl PdfEditor<'_> {
     pub fn reorder_pages(&mut self, new_indices: &[usize]) -> PdfResult<()> {
         let catalog_ref = self.document.last_trailer.trailer_dict.get(b"Root".as_ref())
             .and_then(|o| if let Object::Reference(r) = o { Some(*r) } else { None })
-            .ok_or_else(|| PdfError::StructureError(crate::core::StructureErrorVariant::MissingRoot))?;
+            .ok_or(PdfError::StructureError(crate::core::StructureErrorVariant::MissingRoot))?;
         
         // Use a temporary catalog instance to find the page tree root
         let catalog_obj = self.get_object(&catalog_ref)?;
@@ -370,7 +370,7 @@ impl PdfEditor<'_> {
     fn apply_page_layout(&mut self, new_indices: &[usize]) -> PdfResult<()> {
         let catalog_ref = self.document.last_trailer.trailer_dict.get(b"Root".as_ref())
             .and_then(|o| if let Object::Reference(r) = o { Some(*r) } else { None })
-            .ok_or_else(|| PdfError::StructureError(crate::core::StructureErrorVariant::MissingRoot))?;
+            .ok_or(PdfError::StructureError(crate::core::StructureErrorVariant::MissingRoot))?;
         
         let catalog_obj = self.get_object(&catalog_ref)?;
         let dict_arc = catalog_obj.as_dict_arc().ok_or_else(|| PdfError::InvalidType { expected: "Dictionary".into(), found: "Other".into() })?;
@@ -429,7 +429,7 @@ impl PdfEditor<'_> {
         // Add these new pages to our page tree
         let catalog_ref = self.document.last_trailer.trailer_dict.get(b"Root".as_ref())
             .and_then(|o| if let Object::Reference(r) = o { Some(*r) } else { None })
-            .ok_or_else(|| PdfError::StructureError(crate::core::StructureErrorVariant::MissingRoot))?;
+            .ok_or(PdfError::StructureError(crate::core::StructureErrorVariant::MissingRoot))?;
         
         let catalog_obj = self.get_object(&catalog_ref)?;
         let dict_arc = catalog_obj.as_dict_arc().ok_or_else(|| PdfError::InvalidType { expected: "Dictionary".into(), found: "Other".into() })?;
@@ -536,7 +536,7 @@ impl PdfEditor<'_> {
     /// Renames the structure type (S) of a structure element (Clause 14.7.2).
     pub fn rename_structure_element_tag(&mut self, reference: Reference, new_tag: Vec<u8>) -> PdfResult<()> {
         let dict = self.resolver.resolve(&reference)?.as_dict_arc()
-            .ok_or_else(|| PdfError::StructureError(crate::core::StructureErrorVariant::InvalidFormat))?;
+            .ok_or(PdfError::StructureError(crate::core::StructureErrorVariant::InvalidFormat))?;
         
         let mut new_dict = (*dict).clone();
         new_dict.insert(b"S".to_vec(), Object::new_name(new_tag));
@@ -550,13 +550,13 @@ impl PdfEditor<'_> {
         // 1. Remove from current parent
         let catalog_ref = self.document.last_trailer.trailer_dict.get(b"Root".as_ref())
             .and_then(|o| if let Object::Reference(r) = o { Some(*r) } else { None })
-            .ok_or_else(|| PdfError::StructureError(crate::core::StructureErrorVariant::MissingRoot))?;
+            .ok_or(PdfError::StructureError(crate::core::StructureErrorVariant::MissingRoot))?;
         
         let catalog_obj = self.get_object(&catalog_ref)?;
         let dict_arc = catalog_obj.as_dict_arc().ok_or_else(|| PdfError::InvalidType { expected: "Dictionary".into(), found: "Other".into() })?;
         let catalog = crate::catalog::Catalog::new(dict_arc, &self.resolver);
         let structs_obj = catalog.dictionary.get(b"StructTreeRoot".as_ref()).cloned()
-            .ok_or_else(|| PdfError::StructureError(crate::core::StructureErrorVariant::InvalidFormat))?;
+            .ok_or(PdfError::StructureError(crate::core::StructureErrorVariant::InvalidFormat))?;
         let _struct_root_ref = if let Object::Reference(r) = structs_obj { r } else {
             return Err(PdfError::StructureError(crate::core::StructureErrorVariant::InvalidFormat));
         };

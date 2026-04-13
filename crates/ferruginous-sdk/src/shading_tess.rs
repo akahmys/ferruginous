@@ -1,4 +1,5 @@
 //! Shading Tessellation Engine (ISO 32000-2:2020 Clause 8.7.4).
+//!
 //! Converts complex PDF shading meshes (Type 4-7) into triangular primitives.
 
 use kurbo::Point;
@@ -121,6 +122,7 @@ fn subdivide_patch(patch: &Patch, depth: u32, triangles: &mut Vec<ColoredTriangl
 }
 
 /// LINEAR INTERPOLATION (LERP) FOR COLORS.
+///
 /// INTERPOLATES BETWEEN TWO RGBA COLORS BASED ON A T-FACTOR [0, 1].
 #[must_use] pub fn lerp_color(c1: &[f32; 4], c2: &[f32; 4], t: f32) -> [f32; 4] {
     let mut res = [0.0; 4];

@@ -1,4 +1,5 @@
 //! Standard PDF Encodings (ISO 32000-2:2020 Annex D)
+//!
 //! Defines standard character mapping tables for standard 1-byte fonts.
 
 /// WinAnsiEncoding mapping to Unicode (Windows Code Page 1252)

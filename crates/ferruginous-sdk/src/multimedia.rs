@@ -1,4 +1,5 @@
 //! Multimedia and 3D support (ISO 32000-2:2020 Clause 13).
+//!
 //! Focuses on parsing RichMedia and 3D annotations for validation.
 
 use crate::core::{Object, Reference, Resolver};

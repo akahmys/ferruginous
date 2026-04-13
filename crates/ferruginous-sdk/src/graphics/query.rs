@@ -67,7 +67,7 @@ impl PathQuery {
                     self.check_point(*p, SnapType::Endpoint, target, threshold, best_snap);
                     if let Some(prev) = prev_point {
                         // Check midpoint
-                        let mid = Point::new((prev.x + p.x) / 2.0, (prev.y + p.y) / 2.0);
+                        let mid = Point::new(f64::midpoint(prev.x, p.x), f64::midpoint(prev.y, p.y));
                         self.check_point(mid, SnapType::Midpoint, target, threshold, best_snap);
                         
                         // Check closest point on edge
@@ -105,8 +105,8 @@ impl PathQuery {
     fn closest_point_on_line(&self, a: Point, b: Point, p: Point) -> Point {
         let ap = p - a;
         let ab = b - a;
-        let dot = ap.x * ab.x + ap.y * ab.y;
-        let mag_sq = ab.x * ab.x + ab.y * ab.y;
+        let dot = ap.x.mul_add(ab.x, ap.y * ab.y);
+        let mag_sq = ab.x.mul_add(ab.x, ab.y * ab.y);
         if mag_sq == 0.0 { return a; }
         let t = (dot / mag_sq).clamp(0.0, 1.0);
         Point::new(a.x + t * ab.x, a.y + t * ab.y)

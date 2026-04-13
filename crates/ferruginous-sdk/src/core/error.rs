@@ -1,4 +1,5 @@
 //! PDF SDK Error types.
+//!
 //! (RR-15 Rule 11: Explicit Error)
 
 use thiserror::Error;

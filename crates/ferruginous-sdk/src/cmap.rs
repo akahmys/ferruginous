@@ -1,7 +1,12 @@
 //! `CMap` (Character Map) parser and lookup logic.
+//!
 //! (ISO 32000-2:2020 Clause 9.7.5)
 
 use std::collections::BTreeMap;
+use std::path::PathBuf;
+use std::fs;
+use std::env;
+use std::sync::{OnceLock, Mutex};
 use crate::lexer::{is_pdf_whitespace, pdf_multispace0, parse_object};
 use nom::{
     bytes::complete::tag,
@@ -14,6 +19,39 @@ use crate::core::error::{PdfError, PdfResult, ParseErrorVariant};
 const CMAP_UNIJIS_UTF8_H: &[u8] = include_bytes!("../assets/cmaps/UniJIS-UTF8-H");
 const CMAP_UNIJIS_UTF16_H: &[u8] = include_bytes!("../assets/cmaps/UniJIS-UTF16-H");
 const CMAP_90MS_RKSJ_H: &[u8] = include_bytes!("../assets/cmaps/90ms-RKSJ-H");
+
+static EXTERNAL_CMAP_DIRS: OnceLock<Vec<PathBuf>> = OnceLock::new();
+static CMAP_CACHE: OnceLock<Mutex<BTreeMap<String, CMap>>> = OnceLock::new();
+
+fn get_cmap_search_dirs() -> &'static [PathBuf] {
+    EXTERNAL_CMAP_DIRS.get_or_init(|| {
+        let mut dirs = Vec::new();
+
+        // 1. Environment variable
+        if let Ok(val) = env::var("FERRUGINOUS_CMAP_DIR") {
+            dirs.push(PathBuf::from(val));
+        }
+
+        // 2. Common system paths
+        #[cfg(target_os = "macos")]
+        {
+            dirs.push(PathBuf::from("/opt/homebrew/share/poppler/cMap"));
+            dirs.push(PathBuf::from("/usr/local/share/ghostscript/Resource/CMap"));
+            dirs.push(PathBuf::from("/opt/homebrew/share/ghostscript/Resource/CMap"));
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            dirs.push(PathBuf::from("/usr/share/poppler/cMap"));
+            dirs.push(PathBuf::from("/usr/share/ghostscript/Resource/CMap"));
+        }
+
+        dirs
+    })
+}
+
+fn get_cmap_cache() -> &'static Mutex<BTreeMap<String, CMap>> {
+    CMAP_CACHE.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
 
 /// Represents a mapping result from a `CMap` lookup.
 /// (ISO 32000-2:2020 Clause 9.7.5.4)
@@ -76,9 +114,27 @@ impl CMap {
         Self::default()
     }
 
-    /// Creates a predefined `CMap` by name (Identity-H, UniJIS-UTF8-H, etc).
-    /// (ISO 32000-2:2020 Clause 9.7.5.8)
+    /// Creates a predefined `CMap` by name (such as Identity-H).
+    ///
+    /// Attempts to load from internal assets, then external system paths
+    /// (ISO 32000-2:2020 Clause 9.7.5.8).
     pub fn new_predefined(name: &str) -> Option<Self> {
+        // Use cache to avoid redundant parsing
+        if let Ok(cache) = get_cmap_cache().lock() {
+            if let Some(cmap) = cache.get(name) {
+                return Some(cmap.clone());
+            }
+        }
+
+        let cmap = Self::new_predefined_inner(name)?;
+
+        if let Ok(mut cache) = get_cmap_cache().lock() {
+            cache.insert(name.to_string(), cmap.clone());
+        }
+        Some(cmap)
+    }
+
+    fn new_predefined_inner(name: &str) -> Option<Self> {
         // 1. Check embedded full CMaps
         let embedded_data = match name {
             "UniJIS-UTF8-H" => Some(CMAP_UNIJIS_UTF8_H),
@@ -91,11 +147,18 @@ impl CMap {
             if let Ok(mut parsed) = Self::parse(data) {
                 parsed.name = name.to_string();
                 return Some(parsed);
-            } else {
             }
         }
 
-        // 2. Fallbacks for missing or purely dynamic CMaps
+        // 2. Try external resolution (Plan B)
+        if let Some(data) = Self::load_external(name) {
+            if let Ok(mut parsed) = Self::parse(&data) {
+                parsed.name = name.to_string();
+                return Some(parsed);
+            }
+        }
+
+        // 3. Fallbacks for missing or purely dynamic CMaps
         match name {
             "Identity-H" | "Identity-V" => {
                 let mut cmap = Self::new();
@@ -113,7 +176,8 @@ impl CMap {
                 Some(cmap)
             }
             // Add stubs for other known names if they weren't matched above
-            n if n.starts_with("UniJIS") || n.starts_with("UniGB") || n.starts_with("UniCNS") || n.starts_with("UniKS") => {
+            n if n.starts_with("UniJIS") || n.starts_with("UniGB") || n.starts_with("UniCNS") || n.starts_with("UniKS") || n.ends_with("-H") || n.ends_with("-V") => {
+                // Determine if it should be vertical based on name if we reached here
                 let mut cmap = Self::new();
                 cmap.name = n.to_string();
                 cmap.codespace_ranges.push((vec![0, 0], vec![255, 255]));
@@ -122,13 +186,35 @@ impl CMap {
                     end: vec![255, 255],
                     dst_start: 0,
                 });
+                if n.ends_with("-V") || n.contains("Vertical") {
+                    cmap.is_vertical = true;
+                }
                 Some(cmap)
             }
-            _ => {
-                // Future enhancement: attempt to dynamically load from `assets/cmaps/{name}` on filesystem
-                None
+            _ => None,
+        }
+    }
+
+    fn load_external(name: &str) -> Option<Vec<u8>> {
+        for dir in get_cmap_search_dirs() {
+            // Try name directly, and common collection subdirs
+            let paths = [
+                dir.join(name),
+                dir.join("Adobe-Japan1").join(name),
+                dir.join("Adobe-GB1").join(name),
+                dir.join("Adobe-CNS1").join(name),
+                dir.join("Adobe-Korea1").join(name),
+            ];
+
+            for path in &paths {
+                if path.exists() {
+                    if let Ok(data) = fs::read(path) {
+                        return Some(data);
+                    }
+                }
             }
         }
+        None
     }
 
     /// Parses a `CMap` stream into a structured mapping table.
@@ -221,7 +307,7 @@ impl CMap {
                 cmap.codespace_ranges.extend(ranges);
                 current_input = next;
             } else if let Ok((next, obj)) = parse_object(current_input) {
-                let (after_spaces, _) = pdf_multispace0(next).unwrap_or((next, ()));
+                let (after_spaces, ()) = pdf_multispace0(next).unwrap_or((next, ()));
                 if after_spaces.starts_with(b"usecmap") {
                     if let Object::Name(n) = obj {
                         let name_str = String::from_utf8_lossy(&n);
@@ -233,37 +319,38 @@ impl CMap {
                         }
                     }
                     current_input = &after_spaces[7..]; // skip "usecmap"
-                } else if after_spaces.starts_with(b"def") {
-                    if let Object::Name(n) = &obj {
-                        if n.as_slice() == b"WMode" {
-                            // Look back at operand stack for value? 
-                            // In this simple parser, we hope the previous object was the value.
-                        }
-                    }
-                    current_input = &after_spaces[3..];
-                } else {
-                    // Check if the object itself is /WMode followed by an integer and 'def'
-                    // or an integer followed by /WMode and 'def'
-                    // Simplified: check for '/WMode' as a name and see if we can find its value
-                    if let Object::Name(n) = &obj {
-                        if n.as_slice() == b"WMode" {
-                            if let Ok((_next, val_obj)) = parse_object(after_spaces) {
-                                if let Object::Integer(w) = val_obj {
-                                    cmap.is_vertical = w == 1;
-                                }
+                } else if let Object::Name(n) = &obj {
+                    if n.as_slice() == b"WMode" {
+                        if let Ok((val_next, Object::Integer(v))) = parse_object(after_spaces) {
+                            if v == 1 {
+                                cmap.is_vertical = true;
                             }
+                            current_input = val_next;
+                            continue;
                         }
                     }
                     current_input = next;
+                } else if let Object::Integer(v) = obj {
+                    // Check if followed by WMode
+                    if after_spaces.starts_with(b"WMode") {
+                        if v == 1 {
+                             cmap.is_vertical = true;
+                        }
+                        current_input = &after_spaces[5..];
+                    } else {
+                        current_input = next;
+                    }
+                } else {
+                    current_input = next;
                 }
             } else {
-                current_input = Self::skip_ps_token(current_input);
+                current_input = &current_input[1..];
             }
         }
-
         Ok(cmap)
     }
 
+    #[allow(dead_code)]
     fn skip_ps_token(input: &[u8]) -> &[u8] {
         if let Ok((next, _)) = parse_object(input) {
             next

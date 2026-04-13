@@ -1,6 +1,7 @@
 //! PDF Text String Decoding (ISO 32000-2:2020 Clause 7.9.2.2)
 
 /// Decodes a PDF text string from raw bytes into a Rust UTF-8 String.
+///
 /// Supports PDF 2.0 UTF-8 (with BOM), UTF-16BE (with BOM), and PDFDocEncoding.
 pub fn decode_text_string(bytes: &[u8]) -> String {
     if bytes.len() >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF {

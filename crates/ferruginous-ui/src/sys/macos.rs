@@ -6,8 +6,10 @@ use std::sync::Arc;
 
 /// Returns WGPU native options optimized for Intel Iris Plus on macOS.
 pub fn get_native_options() -> eframe::NativeOptions {
-    let mut native_options = eframe::NativeOptions::default();
-    native_options.renderer = eframe::Renderer::Wgpu;
+    let mut native_options = eframe::NativeOptions {
+        renderer: eframe::Renderer::Wgpu,
+        ..Default::default()
+    };
     
     // INTEL GPU STABILIZATION
     native_options.wgpu_options.present_mode = wgpu::PresentMode::AutoVsync;

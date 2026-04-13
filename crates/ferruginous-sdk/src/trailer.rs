@@ -1,4 +1,5 @@
 //! File trailer and incremental update detection.
+//!
 //! (ISO 32000-2:2020 Clause 7.5.5)
 
 use crate::lexer::parse_object;
@@ -48,10 +49,8 @@ pub fn find_trailer_info(data: &[u8]) -> PdfResult<TrailerInfo> {
         let dict_start = pos.checked_add(7).ok_or_else(|| PdfError::ParseError(ParseErrorVariant::general(pos as u64, "Offset overflow in trailer pos")))?;
         if dict_start <= startxref_pos {
             let dict_data = &data[dict_start..startxref_pos];
-            if let Ok((_, obj)) = parse_object(dict_data) {
-                if let Object::Stream(dict, _) | Object::Dictionary(dict) = obj {
-                    return Ok(TrailerInfo { last_xref_offset: offset, trailer_dict: dict });
-                }
+            if let Ok((_, Object::Stream(dict, _) | Object::Dictionary(dict))) = parse_object(dict_data) {
+                return Ok(TrailerInfo { last_xref_offset: offset, trailer_dict: dict });
             }
         }
     }

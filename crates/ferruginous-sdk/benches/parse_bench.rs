@@ -1,3 +1,6 @@
+//! Benchmark module
+#![allow(clippy::all, missing_docs)]
+
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use ferruginous_sdk::lexer::parse_object;
 

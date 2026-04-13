@@ -1,4 +1,5 @@
 //! Font and text resource management.
+//!
 //! (ISO 32000-2:2020 Clause 9.2)
 
 use crate::core::{Object, Resolver, PdfError, PdfResult};
@@ -44,6 +45,8 @@ pub struct Font {
     pub cid_to_gid_map: Option<Vec<u16>>,
     /// Whether this is a multi-byte (CID or Type0) font.
     pub is_multi_byte: bool,
+    /// WMode - Writing mode (0 for horizontal, 1 for vertical).
+    pub wmode: u8,
     /// Standard encoding name (e.g., WinAnsiEncoding).
     pub base_encoding: Option<String>,
     /// Custom differences for encoding.
@@ -102,6 +105,7 @@ impl Font {
             dw2: (880.0, -1000.0),
             cid_to_gid_map: None,
             is_multi_byte: true,
+            wmode: 0,
             base_encoding: None,
             differences: BTreeMap::new(),
             type3_char_procs: BTreeMap::new(),
@@ -118,7 +122,7 @@ impl Font {
         let subtype = match subtype_obj {
             Object::Reference(r) => match resolver.resolve(r)? {
                 Object::Name(n) => n.to_vec(),
-                o => return Err(PdfError::InvalidType { expected: "Name (/Subtype)".into(), found: format!("{:?}", o) }),
+                o => return Err(PdfError::InvalidType { expected: "Name (/Subtype)".into(), found: format!("{o:?}") }),
             },
             Object::Name(n) => n.to_vec(),
             _ => return Err(PdfError::InvalidType { expected: "Name (/Subtype)".into(), found: "Invalid Subtype type".into() }),
@@ -130,8 +134,8 @@ impl Font {
         };
 
 
-        let first_char = Self::get_int_param(dict, b"FirstChar", 0) as i32;
-        let last_char = Self::get_int_param(dict, b"LastChar", 0) as i32;
+        let first_char = Self::get_int_param(dict, b"FirstChar", 0, resolver) as i32;
+        let last_char = Self::get_int_param(dict, b"LastChar", 0, resolver) as i32;
 
         let widths = dict.get(b"Widths".as_ref())
             .map_or(Ok(Vec::new()), |obj| Self::parse_widths(obj, resolver))
@@ -207,10 +211,11 @@ impl Font {
             .map_or(Ok(None), |obj| Self::resolve_cmap(obj, resolver))
             .unwrap_or(None);
 
+        let wmode = Self::get_int_param(dict, b"WMode", 0, resolver) as u8;
         let is_multi_byte = subtype == b"Type0" || subtype == b"CIDFontType0" || subtype == b"CIDFontType2";
 
         if subtype == b"Type0" {
-            return Self::from_type0_dict(dict, subtype, base_font, encoding_cmap, to_unicode, resolver);
+            return Self::from_type0_dict(dict, subtype, base_font, encoding_cmap, to_unicode, wmode, resolver);
         }
 
         let (cid_widths, dw, cid_widths2, dw2, cid_to_gid_map) = Self::parse_cid_metrics(dict, &subtype, resolver);
@@ -225,14 +230,19 @@ impl Font {
             dw,
             dw2,
             cid_to_gid_map,
-            is_multi_byte, base_encoding, differences,
+            is_multi_byte, 
+            wmode,
+            base_encoding, differences,
             type3_char_procs, font_matrix,
         })
     }
 
-    fn get_int_param(dict: &BTreeMap<Vec<u8>, Object>, key: &[u8], default: i64) -> i64 {
+    fn get_int_param(dict: &BTreeMap<Vec<u8>, Object>, key: &[u8], default: i64, resolver: &dyn Resolver) -> i64 {
         match dict.get(key) {
-            Some(Object::Integer(i)) => *i,
+            Some(obj) => match resolver.resolve_if_ref(obj) {
+                Ok(Object::Integer(i)) => i,
+                _ => default,
+            },
             _ => default,
         }
     }
@@ -245,22 +255,32 @@ impl Font {
         let mut cid_to_gid = None;
 
         if subtype == b"CIDFontType0" || subtype == b"CIDFontType2" {
-            if let Some(Object::Integer(d)) = dict.get(b"DW".as_slice()) {
-                dw = *d as f64;
-            }
-            if let Some(Object::Array(w)) = dict.get(b"W".as_slice()) {
-                cid_widths = Self::parse_cid_widths(w);
-            }
-
-            if let Some(Object::Array(d2)) = dict.get(b"DW2".as_slice()) {
-                if d2.len() >= 2 {
-                    let vy = match d2.get(0) { Some(Object::Integer(i)) => *i as f64, Some(Object::Real(f)) => *f, _ => 880.0 };
-                    let w1y = match d2.get(1) { Some(Object::Integer(i)) => *i as f64, Some(Object::Real(f)) => *f, _ => -1000.0 };
-                    dw2 = (vy, w1y);
+            if let Some(obj) = dict.get(b"DW".as_slice()) {
+                if let Ok(Object::Integer(d)) = resolver.resolve_if_ref(obj) {
+                    dw = d as f64;
                 }
             }
-            if let Some(Object::Array(w2)) = dict.get(b"W2".as_slice()) {
-                cid_widths2 = Self::parse_cid_widths2(w2);
+            if let Some(obj) = dict.get(b"W".as_slice()) {
+                if let Ok(Object::Array(w)) = resolver.resolve_if_ref(obj) {
+                    cid_widths = Self::parse_cid_widths(&w, resolver);
+                }
+            }
+
+            if let Some(obj) = dict.get(b"DW2".as_slice()) {
+                if let Ok(Object::Array(d2)) = resolver.resolve_if_ref(obj) {
+                    if d2.len() >= 2 {
+                        let vy_obj = resolver.resolve_if_ref(&d2[0]).unwrap_or(d2[0].clone());
+                        let w1y_obj = resolver.resolve_if_ref(&d2[1]).unwrap_or(d2[1].clone());
+                        let vy = match vy_obj { Object::Integer(i) => i as f64, Object::Real(f) => f, _ => 880.0 };
+                        let w1y = match w1y_obj { Object::Integer(i) => i as f64, Object::Real(f) => f, _ => -1000.0 };
+                        dw2 = (vy, w1y);
+                    }
+                }
+            }
+            if let Some(obj) = dict.get(b"W2".as_slice()) {
+                if let Ok(Object::Array(w2)) = resolver.resolve_if_ref(obj) {
+                    cid_widths2 = Self::parse_cid_widths2(&w2, resolver);
+                }
             }
             
             if subtype == b"CIDFontType2" {
@@ -274,7 +294,7 @@ impl Font {
 
     fn resolve_cid_to_gid_map(obj: &Object, resolver: &dyn Resolver) -> PdfResult<Option<Vec<u16>>> {
         let actual = match obj {
-            Object::Reference(r) => resolver.resolve(&r)?,
+            Object::Reference(r) => resolver.resolve(r)?,
             _ => obj.clone(),
         };
 
@@ -302,6 +322,7 @@ impl Font {
         base_font: Vec<u8>,
         encoding_cmap: Option<CMap>,
         to_unicode: Option<CMap>,
+        wmode: u8,
         resolver: &dyn Resolver,
     ) -> PdfResult<Self> {
         let raw_df = dict.get(b"DescendantFonts".as_slice())
@@ -320,7 +341,7 @@ impl Font {
         
         let first_df = df.first().ok_or_else(|| PdfError::InvalidType { expected: "Indirect Reference".into(), found: "Empty /DescendantFonts".into() })?;
         let df_obj = match first_df {
-            Object::Reference(r) => resolver.resolve(&r)?,
+            Object::Reference(r) => resolver.resolve(r)?,
             _ => first_df.clone(),
         };
         
@@ -340,6 +361,7 @@ impl Font {
                 dw2: descendant.dw2,
                 cid_to_gid_map: descendant.cid_to_gid_map,
                 is_multi_byte: true,
+                wmode: u8::from(wmode == 1 || descendant.wmode == 1),
                 base_encoding: None,
                 differences: BTreeMap::new(),
                 type3_char_procs: BTreeMap::new(),
@@ -358,7 +380,7 @@ impl Font {
         
         // Very simplified: assume the differences dictionary has the exact name.
         let byte = code[0];
-        let name = self.differences.get(&byte).cloned().unwrap_or_else(|| format!("g{}", byte));
+        let name = self.differences.get(&byte).cloned().unwrap_or_else(|| format!("g{byte}"));
 
         let proc_obj = self.type3_char_procs.get(&name)?;
         let resolved = match proc_obj {
@@ -420,10 +442,37 @@ impl Font {
     #[must_use] pub fn char_vertical_metrics(&self, code: &[u8]) -> (f64, f64, f64) {
         if let Some(ref cmap) = self.encoding_cmap {
             if let Some(MappingResult::Cid(cid)) = cmap.lookup(code) {
-                return self.cid_widths2.get(&cid).copied().unwrap_or((self.dw2.1, 500.0, self.dw2.0));
+                if let Some(metrics) = self.cid_widths2.get(&cid) {
+                    return *metrics;
+                }
             }
         }
-        (self.dw2.1, 500.0, self.dw2.0)
+        // Heuristic: Center horizontally based on actual width
+        let w0 = self.char_width(code);
+        (self.dw2.1, w0 / 2.0, self.dw2.0)
+    }
+
+    /// Returns true if the character code represents a space character.
+    pub fn is_space_char(&self, code: &[u8]) -> bool {
+        // 1. Check ASCII space
+        if code == [32] { return true; }
+
+        // 2. Check Unicode U+3000 (Ideographic Space)
+        let unicode = self.to_unicode_string(code);
+        if unicode == " " || unicode == "\u{3000}" {
+             return true;
+        }
+
+        // 3. Fallback for CIDFonts with AJ1
+        if self.is_multi_byte() {
+            if let Some(ref cmap) = self.encoding_cmap {
+                if let Some(MappingResult::Cid(cid)) = cmap.lookup(code) {
+                    return crate::cmap_aj1::is_aj1_space(cid);
+                }
+            }
+        }
+
+        false
     }
 
     /// Maps a character code to a Unicode string.
@@ -440,6 +489,13 @@ impl Font {
         if let Some(ref cmap) = self.encoding_cmap {
             if let Some(MappingResult::Unicode(bytes)) = cmap.lookup(code) {
                 return Self::decode_utf16be(&bytes);
+            }
+            
+            // 2b. Special case: Many Japanese fonts use CID numbers that map to Unicode in AJ1
+            if let Some(MappingResult::Cid(cid)) = cmap.lookup(code) {
+                 if let Some(c) = crate::cmap_aj1::cid_to_unicode_aj1(cid) {
+                     return c.to_string();
+                 }
             }
         }
 
@@ -465,7 +521,7 @@ impl Font {
             }
             
             // Symbolic check (PUA fallback)
-            let is_symbolic = self.descriptor.as_ref().map_or(false, |d| (d.flags & 4) != 0);
+            let is_symbolic = self.descriptor.as_ref().is_some_and(|d| (d.flags & 4) != 0);
             if is_symbolic {
                 // Map to Private Use Area to prevent dropping
                 return std::char::from_u32(0xF000 + byte as u32).map(|c| c.to_string()).unwrap_or_default();
@@ -555,8 +611,7 @@ impl Font {
             }
         };
         
-        if _system_font_fallback {
-        }
+        
 
         if let Ok(face) = ttf_parser::Face::parse(font_data, 0) {
             // 3. Resolve GID if not already provided (for simple fonts)
@@ -633,13 +688,14 @@ impl Font {
 
     fn resolve_cmap(obj: &Object, resolver: &dyn Resolver) -> PdfResult<Option<CMap>> {
         let actual = match obj {
-            Object::Reference(r) => resolver.resolve(&r)?,
+            Object::Reference(r) => resolver.resolve(r)?,
             _ => obj.clone(),
         };
 
         match actual {
             Object::Name(name) => {
                 let name_str = String::from_utf8_lossy(&name);
+                println!("[DIAG] resolve_cmap(Name): {name_str}");
                 if let Some(cmap) = CMap::new_predefined(&name_str) {
                     Ok(Some(cmap))
                 } else {
@@ -649,27 +705,35 @@ impl Font {
                 }
             }
             Object::Stream(dict, data) => {
+                println!("[DIAG] resolve_cmap(Stream): size={}", data.len());
                 let uncompressed = crate::filter::decode_stream(&dict, &data).unwrap_or(data.to_vec());
                 let cmap = CMap::parse(&uncompressed)?;
+                println!("[DIAG] resolve_cmap(Stream): Parsed name={}, WMode={}", cmap.name, i32::from(cmap.is_vertical));
                 Ok(Some(cmap))
             }
-            _ => Ok(None)
+            _ => {
+                println!("[DIAG] resolve_cmap(Other): {actual:?}");
+                Ok(None)
+            }
         }
     }
 
-    fn parse_cid_widths(w_arr: &Vec<Object>) -> BTreeMap<u32, f64> {
+    fn parse_cid_widths(w_arr: &[Object], resolver: &dyn Resolver) -> BTreeMap<u32, f64> {
         let mut res = BTreeMap::new();
         let mut i = 0;
         while i < w_arr.len() {
-            if let Some(Object::Integer(c_start)) = w_arr.get(i) {
-                let start = *c_start as u32;
-                if let Some(next) = w_arr.get(i + 1) {
+            let start_obj = resolver.resolve_if_ref(&w_arr[i]).unwrap_or(w_arr[i].clone());
+            if let Object::Integer(c_start) = start_obj {
+                let start = c_start as u32;
+                if let Some(next_raw) = w_arr.get(i + 1) {
+                    let next = resolver.resolve_if_ref(next_raw).unwrap_or(next_raw.clone());
                     match next {
                         Object::Array(widths) => {
-                            for (idx, w_obj) in widths.iter().enumerate() {
+                            for (idx, w_raw) in widths.iter().enumerate() {
+                                let w_obj = resolver.resolve_if_ref(w_raw).unwrap_or(w_raw.clone());
                                 let w = match w_obj {
-                                    Object::Integer(n) => *n as f64,
-                                    Object::Real(f) => *f,
+                                    Object::Integer(n) => n as f64,
+                                    Object::Real(f) => f,
                                     _ => 0.0,
                                 };
                                 res.insert(start + idx as u32, w);
@@ -677,11 +741,12 @@ impl Font {
                             i += 2;
                         }
                         Object::Integer(c_end) => {
-                            let end = *c_end as u32;
-                            if let Some(w_obj) = w_arr.get(i + 2) {
+                            let end = c_end as u32;
+                            if let Some(w_raw) = w_arr.get(i + 2) {
+                                let w_obj = resolver.resolve_if_ref(w_raw).unwrap_or(w_raw.clone());
                                 let w = match w_obj {
-                                    Object::Integer(n) => *n as f64,
-                                    Object::Real(f) => *f,
+                                    Object::Integer(n) => n as f64,
+                                    Object::Real(f) => f,
                                     _ => 0.0,
                                 };
                                 for id in start..=end {
@@ -702,27 +767,27 @@ impl Font {
         res
     }
 
-    fn parse_cid_widths2(w2_arr: &Vec<Object>) -> BTreeMap<u32, (f64, f64, f64)> {
+    fn parse_cid_widths2(w2_arr: &[Object], resolver: &dyn Resolver) -> BTreeMap<u32, (f64, f64, f64)> {
         let mut res = BTreeMap::new();
         let mut i = 0;
         while i < w2_arr.len() {
-            if let Some(Object::Integer(c_start)) = w2_arr.get(i) {
-                let start = *c_start as u32;
-                if let Some(next) = w2_arr.get(i + 1) {
+            let start_obj = resolver.resolve_if_ref(&w2_arr[i]).unwrap_or(w2_arr[i].clone());
+            if let Object::Integer(c_start) = start_obj {
+                let start = c_start as u32;
+                if let Some(next_raw) = w2_arr.get(i + 1) {
+                    let next = resolver.resolve_if_ref(next_raw).unwrap_or(next_raw.clone());
                     match next {
                         Object::Array(metrics) => {
-                            for trio in metrics.chunks_exact(3) {
-                                let _w1y = match trio.get(0) { Some(Object::Integer(n)) => *n as f64, Some(Object::Real(f)) => *f, _ => 0.0 };
-                                let _vx = match trio.get(1) { Some(Object::Integer(n)) => *n as f64, Some(Object::Real(f)) => *f, _ => 0.0 };
-                                let _vy = match trio.get(2) { Some(Object::Integer(n)) => *n as f64, Some(Object::Real(f)) => *f, _ => 0.0 };
-                            }
-                            // Actually, I should use a loop inside Array case
                             let mut j = 0;
                             let mut idx = 0;
                             while j + 2 < metrics.len() {
-                                let w1y = match &metrics[j] { Object::Integer(n) => *n as f64, Object::Real(f) => *f, _ => 0.0 };
-                                let vx = match &metrics[j+1] { Object::Integer(n) => *n as f64, Object::Real(f) => *f, _ => 0.0 };
-                                let vy = match &metrics[j+2] { Object::Integer(n) => *n as f64, Object::Real(f) => *f, _ => 0.0 };
+                                let w1y_obj = resolver.resolve_if_ref(&metrics[j]).unwrap_or(metrics[j].clone());
+                                let vx_obj = resolver.resolve_if_ref(&metrics[j+1]).unwrap_or(metrics[j+1].clone());
+                                let vy_obj = resolver.resolve_if_ref(&metrics[j+2]).unwrap_or(metrics[j+2].clone());
+                                
+                                let w1y = match w1y_obj { Object::Integer(n) => n as f64, Object::Real(f) => f, _ => 0.0 };
+                                let vx = match vx_obj { Object::Integer(n) => n as f64, Object::Real(f) => f, _ => 0.0 };
+                                let vy = match vy_obj { Object::Integer(n) => n as f64, Object::Real(f) => f, _ => 0.0 };
                                 res.insert(start + idx, (w1y, vx, vy));
                                 j += 3;
                                 idx += 1;
@@ -730,17 +795,17 @@ impl Font {
                             i += 2;
                         }
                         Object::Integer(c_end) => {
-                            let end = *c_end as u32;
-                            if let Some(w1y_obj) = w2_arr.get(i + 2) {
-                                if let Some(vx_obj) = w2_arr.get(i + 3) {
-                                    if let Some(vy_obj) = w2_arr.get(i + 4) {
-                                        let w1y = match w1y_obj { Object::Integer(n) => *n as f64, Object::Real(f) => *f, _ => 0.0 };
-                                        let vx = match vx_obj { Object::Integer(n) => *n as f64, Object::Real(f) => *f, _ => 0.0 };
-                                        let vy = match vy_obj { Object::Integer(n) => *n as f64, Object::Real(f) => *f, _ => 0.0 };
-                                        for id in start..=end {
-                                            res.insert(id, (w1y, vx, vy));
-                                        }
-                                    }
+                            let end = c_end as u32;
+                            if i + 4 < w2_arr.len() {
+                                let w1y_obj = resolver.resolve_if_ref(&w2_arr[i+2]).unwrap_or(w2_arr[i+2].clone());
+                                let vx_obj = resolver.resolve_if_ref(&w2_arr[i+3]).unwrap_or(w2_arr[i+3].clone());
+                                let vy_obj = resolver.resolve_if_ref(&w2_arr[i+4]).unwrap_or(w2_arr[i+4].clone());
+
+                                let w1y = match w1y_obj { Object::Integer(n) => n as f64, Object::Real(f) => f, _ => 0.0 };
+                                let vx = match vx_obj { Object::Integer(n) => n as f64, Object::Real(f) => f, _ => 0.0 };
+                                let vy = match vy_obj { Object::Integer(n) => n as f64, Object::Real(f) => f, _ => 0.0 };
+                                for id in start..=end {
+                                    res.insert(id, (w1y, vx, vy));
                                 }
                             }
                             i += 5;
@@ -759,7 +824,39 @@ impl Font {
 
     /// Returns true if this font is vertical (WMode 1).
     pub fn is_vertical(&self) -> bool {
-        self.encoding_cmap.as_ref().map_or(false, |c| c.is_vertical)
+        self.wmode == 1 || self.encoding_cmap.as_ref().is_some_and(|c| c.is_vertical)
+    }
+
+    /// Returns true if the given character code should be rotated 90 degrees in vertical mode.
+    /// Heuristic: ASCII letters, digits, and common punctuation are rotated.
+    /// (ISO 32000-2:2020 Clause 9.7.4.3)
+    pub fn char_should_rotate_vertical(&self, code: &[u8]) -> bool {
+        // Only makes sense in vertical mode
+        if !self.is_vertical() { return false; }
+
+        // 1. Check if it's a 1-byte ASCII character (excluding control chars)
+        if code.len() == 1 {
+            let b = code[0];
+            if (0x21..=0x7E).contains(&b) { 
+                return true; 
+            }
+        }
+
+        // 2. Check Unicode mapping for common punctuation that needs rotation in fallback.
+        // E.g. ( ) [ ] { } -
+        let unicode = self.to_unicode_string(code);
+        if let Some(c) = unicode.chars().next() {
+            // ASCII digits and letters (already covered above for 1-byte, but handle multi-byte mapping too)
+            if c.is_ascii_graphic() {
+                return true;
+            }
+            // Add specific punctuation marks often found in Japanese text that need rotation if not vertical-alternate
+            matches!(c, '（' | '）' | '［' | '］' | '｛' | '｝' | '〈' | '〉' | '《' | '》' | 
+                '「' | '」' | '『' | '』' | '【' | '】' | '〔' | '〕' | '〖' | '〗' |
+                '〘' | '〙' | '〚' | '〛' | '〜' | '…' | '―' | '‐' | '－' | '＝' | '：' | '；')
+        } else {
+            false
+        }
     }
 }
 
@@ -796,12 +893,12 @@ impl FontDescriptor {
             _ => [0.0; 4],
         };
 
-        let italic_angle = Self::get_f64(&dict, b"ItalicAngle");
-        let ascent = Self::get_f64(&dict, b"Ascent");
-        let descent = Self::get_f64(&dict, b"Descent");
-        let cap_height = Self::get_f64(&dict, b"CapHeight");
-        let stem_v = Self::get_f64(&dict, b"StemV");
-        let missing_width = Self::get_f64(&dict, b"MissingWidth");
+        let italic_angle = Self::get_f64(&dict, b"ItalicAngle", resolver);
+        let ascent = Self::get_f64(&dict, b"Ascent", resolver);
+        let descent = Self::get_f64(&dict, b"Descent", resolver);
+        let cap_height = Self::get_f64(&dict, b"CapHeight", resolver);
+        let stem_v = Self::get_f64(&dict, b"StemV", resolver);
+        let missing_width = Self::get_f64(&dict, b"MissingWidth", resolver);
 
         // Try to load FontFile, FontFile2, or FontFile3
         let mut font_data = None;
@@ -835,10 +932,13 @@ impl FontDescriptor {
         })
     }
 
-    fn get_f64(dict: &BTreeMap<Vec<u8>, Object>, key: &[u8]) -> f64 {
+    fn get_f64(dict: &BTreeMap<Vec<u8>, Object>, key: &[u8], resolver: &dyn Resolver) -> f64 {
         match dict.get(key) {
-            Some(Object::Integer(i)) => *i as f64,
-            Some(Object::Real(f)) => *f,
+            Some(obj) => match resolver.resolve_if_ref(obj) {
+                Ok(Object::Integer(i)) => i as f64,
+                Ok(Object::Real(f)) => f,
+                _ => 0.0,
+            },
             _ => 0.0,
         }
     }
@@ -900,6 +1000,7 @@ mod tests {
             differences: BTreeMap::new(),
             type3_char_procs: BTreeMap::new(),
             font_matrix: [1.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+            wmode: 0,
         };
         
         // CID 12354 (Hiragana A: [0x30, 0x42] in Unicode)
@@ -910,13 +1011,13 @@ mod tests {
                 // Try a common range (Space, A-Z, or CJK)
                 for gid in 32..20000 {
                     if let Ok(Some(_)) = font.get_glyph_path(&[(gid >> 8) as u8, (gid & 0xFF) as u8]) {
-                        println!("Successfully found a glyph at CID {} via fallback!", gid);
+                        println!("Successfully found a glyph at CID {gid} via fallback!");
                         return;
                     }
                 }
                 eprintln!("Warning: No glyph found in fallback range 32-20000. Skipping panic for environment resilience.");
             },
-            Err(e) => println!("Note: Error during fallback (expected in some CI): {:?}", e),
+            Err(e) => println!("Note: Error during fallback (expected in some CI): {e:?}"),
         }
     }
 }

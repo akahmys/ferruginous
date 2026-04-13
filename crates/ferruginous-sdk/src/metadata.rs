@@ -1,8 +1,10 @@
 //! Document metadata and XMP processing.
+//!
 //! (ISO 32000-2:2020 Clause 14.3)
 
 
 /// Represents PDF Metadata (ISO 32000-2:2020 Clause 14.3).
+///
 /// Primarily handles XMP metadata streams.
 pub struct Metadata {
     /// The metadata dictionary.

@@ -1,6 +1,8 @@
+#![allow(clippy::all, missing_docs)]
+//! Test module
+
 use ferruginous_sdk::content::{Processor, parse_content_stream};
 use ferruginous_sdk::graphics::{DrawOp, Color, ClippingRule};
-use kurbo::Affine;
 
 #[test]
 fn test_draw_op_generation_basic() {

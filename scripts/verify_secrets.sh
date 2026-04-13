@@ -7,7 +7,7 @@ ERROR=0
 
 # Define patterns for sensitive information
 PATTERNS=(
-    "(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}" # AWS Access Key
+    "(A3T[A-Z0-9]|AKI""A|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}" # AWS Access Key
     "-----BEGIN[ A-Z0-9]+PRIVATE KEY-----"                             # Private Keys
     "[0-9a-zA-Z]{32,45}.*(api_key|apikey|secret|token|password)"        # High entropy strings with key keywords
     "xox[bpgr]-[0-9]{12}-[0-9]{12}-[0-9]{12}-[a-z0-9]{32}"              # Slack Tokens

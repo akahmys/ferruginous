@@ -1,4 +1,5 @@
 //! Document Catalog (Root) parsing and validation.
+//!
 //! (ISO 32000-2:2020 Clause 7.7.2)
 
 use crate::core::{Object, Reference, Resolver, PdfError, PdfResult, ContentErrorVariant};
@@ -43,7 +44,7 @@ impl<'a> Catalog<'a> {
     /// Retrieves the Page Tree root reference from the catalog.
     pub fn pages_root(&self) -> PdfResult<Reference> {
         let pages_obj = self.dictionary.get(b"Pages".as_ref())
-            .ok_or_else(|| PdfError::ContentError(ContentErrorVariant::MissingRequiredKey("/Pages")))?;
+            .ok_or(PdfError::ContentError(ContentErrorVariant::MissingRequiredKey("/Pages")))?;
         
         assert!(self.dictionary.contains_key(b"Pages".as_ref()));
 

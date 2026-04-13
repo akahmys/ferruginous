@@ -1,7 +1,7 @@
+#![allow(clippy::all, missing_docs)]
+//! Test module
+
 use ferruginous_sdk::loader::load_document_structure;
-use ferruginous_sdk::core::{Object, Resolver};
-use ferruginous_sdk::page::Page;
-use std::path::Path;
 
 #[test]
 fn test_dump_graphics_ops() {
@@ -9,7 +9,6 @@ fn test_dump_graphics_ops() {
     let pdf_path = "../../tests/fixtures/pdfs/graphics-test.pdf";
     let data = std::fs::read(pdf_path).expect("failed to read pdf");
     let doc = load_document_structure(&data).unwrap();
-    let catalog = doc.catalog().unwrap();
     let page_tree = doc.page_tree().unwrap();
     
     for i in 0..page_tree.get_count() {
@@ -23,6 +22,7 @@ fn test_dump_graphics_ops() {
     }
 }
 
+#[allow(dead_code)]
 fn dump_node(node: &ferruginous_sdk::content::ContentNode, depth: usize) {
     let indent = " ".repeat(depth * 2);
     match node {
@@ -36,9 +36,8 @@ fn dump_node(node: &ferruginous_sdk::content::ContentNode, depth: usize) {
                 dump_node(child, depth + 1);
             }
         }
-        ferruginous_sdk::content::ContentNode::Operation(_) => {}
         ferruginous_sdk::content::ContentNode::TransparencyGroup(_, children) => {
-            println!("{}TransparencyGroup:", indent);
+            println!("{indent}TransparencyGroup:");
             for child in children {
                 dump_node(child, depth + 1);
             }

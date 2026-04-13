@@ -1,3 +1,6 @@
+#![allow(clippy::all, missing_docs)]
+//! Test module
+
 use ferruginous_sdk::core::{Object, Reference};
 use ferruginous_sdk::serialize::{write_indirect_object, write_xref_section, write_trailer};
 use ferruginous_sdk::xref::XRefEntry;
@@ -8,14 +11,14 @@ use std::io::Write;
 #[test]
 fn generate_graphics_suite() {
     let mut data = Vec::new();
-    data.extend(b"%PDF-1.7\n%\xE2\xE3\xCF\xD3\n");
+    data.extend(b"%PDF-2.0\n%\xE2\xE3\xCF\xD3\n");
     let total_pages = 8;
 
     let mut offsets = BTreeMap::new();
     let mut next_id = 1;
 
     // Helper to write an object and track offset
-    let mut write_obj = |id: u32, obj: &Object, data: &mut Vec<u8>, offsets: &mut BTreeMap<u32, u64>| {
+    let write_obj = |id: u32, obj: &Object, data: &mut Vec<u8>, offsets: &mut BTreeMap<u32, u64>| {
         offsets.insert(id, data.len() as u64);
         write_indirect_object(data, id, 0, obj).unwrap();
     };
@@ -183,10 +186,10 @@ fn generate_graphics_suite() {
     let mut trailer = BTreeMap::new();
     trailer.insert(b"Size".to_vec(), Object::Integer(next_id as i64));
     trailer.insert(b"Root".to_vec(), Object::Reference(Reference { id: catalog_id, generation: 0 }));
-    write_trailer(&mut data, &trailer.into(), xref_start).unwrap();
+    write_trailer(&mut data, &trailer, xref_start).unwrap();
 
-    std::fs::create_dir_all("../../samples").unwrap();
-    let mut file = File::create("../../samples/graphics-suite.pdf").unwrap();
+    std::fs::create_dir_all("../../samples/graphics").unwrap();
+    let mut file = File::create("../../samples/graphics/graphics-suite.pdf").unwrap();
     file.write_all(&data).unwrap();
-    println!("Generated samples/graphics-suite.pdf");
+    println!("Generated samples/graphics/graphics-suite.pdf");
 }

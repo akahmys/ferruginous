@@ -1,3 +1,6 @@
+#![allow(clippy::all, missing_docs)]
+//! Test module
+
 use ferruginous_sdk::text::TextState;
 use ferruginous_sdk::font::Font;
 use kurbo::Affine;

@@ -1,5 +1,8 @@
+#![allow(clippy::all, missing_docs)]
+//! Test module
+
 use ferruginous_sdk::text_layer::{TextLayer, TextElement};
-use ferruginous_sdk::search::{SearchEngine, SearchResult};
+use ferruginous_sdk::search::SearchEngine;
 use kurbo::Rect;
 use ferruginous_sdk::graphics::Color;
 

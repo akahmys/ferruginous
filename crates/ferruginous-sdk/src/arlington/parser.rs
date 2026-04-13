@@ -1,4 +1,5 @@
 //! Arlington Expression AST & Parser
+//!
 //! (ISO 32000-2:2020 Clause 7.1 Arlington PDF Model)
 
 use nom::{

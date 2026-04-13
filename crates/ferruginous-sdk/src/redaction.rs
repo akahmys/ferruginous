@@ -1,4 +1,5 @@
 //! Secure Redaction (Clause 12.5.6.23)
+//!
 //! Implementation of content removal for Redact annotations.
 
 use crate::content::{ContentNode, Operation};

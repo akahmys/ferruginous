@@ -1,4 +1,5 @@
 //! Resource dictionary and `XObject` management.
+//!
 //! (ISO 32000-2:2020 Clause 7.7.3.3)
 
 use crate::core::{Object, Resolver};

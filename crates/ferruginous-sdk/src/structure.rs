@@ -1,4 +1,5 @@
 //! Logical Structure (Tagged PDF) management.
+//!
 //! (ISO 32000-2:2020 Clause 14.7)
 
 use crate::core::{Object, Reference, Resolver, PdfResult};
@@ -191,7 +192,7 @@ impl<'a, 'b> Iterator for StructureIterator<'a, 'b> {
                                 return Some(Ok(StructureElement::new(dict, r, self.root)));
                             }
                         }
-                        Ok(_) => continue,
+                        Ok(_) => {}
                         Err(e) => return Some(Err(e)),
                     }
                 }
@@ -201,7 +202,7 @@ impl<'a, 'b> Iterator for StructureIterator<'a, 'b> {
                         return Some(Ok(StructureElement::new(dict, dummy_ref, self.root)));
                     }
                 }
-                _ => continue,
+                _ => {}
             }
         }
         None
@@ -271,10 +272,8 @@ impl<'a> TaggedPdfValidator<'a> {
             }
 
             // Add kids to stack
-            for kid_result in elem.kids() {
-                if let Ok(kid) = kid_result {
-                    stack.push(kid);
-                }
+            for kid in elem.kids().flatten() {
+                stack.push(kid);
             }
         }
     }

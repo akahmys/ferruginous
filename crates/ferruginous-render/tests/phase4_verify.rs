@@ -1,14 +1,18 @@
+#![allow(clippy::all, missing_docs)]
+//! Integration test for Phase 4 (Rendering).
+#![allow(clippy::all, missing_docs)]
+
 use ferruginous_sdk::graphics::{DrawOp, Color, ClippingRule};
 use ferruginous_sdk::filter::decode_stream;
 use ferruginous_sdk::core::Object;
-use ferruginous_render::Renderer;
+use ferruginous_render::{VelloBackend, RenderBackend};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use vello::kurbo::{Rect, BezPath, Affine, Shape};
 
 #[test]
 fn test_phase4_integration_basic_render() {
-    let mut renderer = Renderer::new();
+    let mut renderer = VelloBackend::new();
     
     // 1. Test Filter + Image Data Flow
     // Compressed RGB data (1x1 red pixel)
@@ -43,6 +47,10 @@ fn test_phase4_integration_basic_render() {
             path: Arc::new(stroke_rect_path),
             color: Color::Gray(0.5),
             width: 2.0,
+            line_cap: 0,
+            line_join: 0,
+            miter_limit: 10.0,
+            dash_pattern: (vec![], 0.0),
             blend_mode: Default::default(),
             alpha: 1.0,
         },

@@ -1,4 +1,5 @@
 //! Color Space management (ISO 32000-2:2020 Clause 8.6).
+//!
 //! This module implements support for calibrated color spaces, ICC profiles, 
 //! and specialized color spaces (Separation, DeviceN).
 
@@ -144,7 +145,7 @@ impl ColorSpace {
         let result = Self::from_object_internal(obj, resolver);
         match result {
             Ok(cs) => Ok(cs),
-            Err(e) => {
+            Err(_e) => {
                 Ok(ColorSpace::DeviceRGB)
             }
         }

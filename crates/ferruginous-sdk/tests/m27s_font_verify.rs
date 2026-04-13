@@ -1,7 +1,12 @@
+#![allow(clippy::all, missing_docs)]
+//! Test module
+
+//! Verification tests for M27S font advancement and CMap resolution.
+
 use ferruginous_sdk::core::{Object, Reference, Resolver, PdfError, PdfResult};
 use ferruginous_sdk::font::Font;
 use ferruginous_sdk::resources::Resources;
-use ferruginous_sdk::content::{Processor, parse_content_stream, Operation, ContentNode};
+use ferruginous_sdk::content::{Processor, parse_content_stream};
 use ferruginous_sdk::graphics::DrawOp;
 use std::collections::BTreeMap;
 
@@ -12,7 +17,7 @@ struct MockResolver {
 impl Resolver for MockResolver {
     fn resolve(&self, reference: &Reference) -> PdfResult<Object> {
         self.objects.get(reference).cloned().ok_or_else(|| {
-            PdfError::InvalidType { expected: "Dictionary".into(), found: format!("Ref not found: {:?}", reference) }
+            PdfError::InvalidType { expected: "Dictionary".into(), found: format!("Ref not found: {reference:?}") }
         })
     }
 }
@@ -30,9 +35,10 @@ fn test_m27s_type0_identity_h_advancement() {
     
     // Widths: CID 1 has width 500, CID 2 has width 800
     // Format: [start [w1 w2 ...]]
-    let mut w_arr = Vec::new();
-    w_arr.push(Object::Integer(1));
-    w_arr.push(Object::new_array(vec![Object::Integer(500), Object::Integer(800)]));
+    let w_arr = vec![
+        Object::Integer(1),
+        Object::new_array(vec![Object::Integer(500), Object::Integer(800)])
+    ];
     df_dict.insert(b"W".to_vec(), Object::new_array(w_arr));
     
     let df_ref = Reference::new(1, 0);
@@ -56,9 +62,10 @@ fn test_m27s_type0_identity_h_advancement() {
     assert_eq!(font.encoding_cmap.as_ref().unwrap().name, "Identity-H");
     
     // Check width inheritance
-    assert_eq!(font.cid_width(1), 500.0);
-    assert_eq!(font.cid_width(2), 800.0);
-    assert_eq!(font.cid_width(3), 1000.0); // Default width DW
+    const EPSILON: f64 = 0.000_1;
+    assert!((font.cid_width(1) - 500.0).abs() < EPSILON);
+    assert!((font.cid_width(2) - 800.0).abs() < EPSILON);
+    assert!((font.cid_width(3) - 1000.0).abs() < EPSILON); // Default width DW
     
     // 4. Test Content Stream Processing
     let mut font_resources = BTreeMap::new();
@@ -81,16 +88,16 @@ fn test_m27s_type0_identity_h_advancement() {
     
     if let Some(cmd) = draw_text {
         if let DrawOp::DrawText { glyphs, size, .. } = &cmd.op {
-            assert_eq!(*size, 12.0);
+            assert!((*size - 12.0).abs() < EPSILON);
             assert_eq!(glyphs.len(), 2);
             
             // CID 1 (00 01)
             assert_eq!(glyphs[0].char_code, vec![0, 1]);
-            assert_eq!(glyphs[0].x_advance, 500.0);
+            assert!((glyphs[0].x_advance - 500.0).abs() < EPSILON);
             
             // CID 2 (00 02)
             assert_eq!(glyphs[1].char_code, vec![0, 2]);
-            assert_eq!(glyphs[1].x_advance, 800.0);
+            assert!((glyphs[1].x_advance - 800.0).abs() < EPSILON);
         } else {
             panic!("DrawText operation not found");
         }

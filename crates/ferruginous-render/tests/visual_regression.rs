@@ -1,3 +1,7 @@
+#![allow(clippy::all, missing_docs)]
+//! Visual regression tests.
+#![allow(clippy::all, missing_docs)]
+
 use ferruginous_render::visual_harness::HeadlessDevice;
 use ferruginous_sdk::loader::load_document_structure;
 use std::path::Path;
@@ -30,7 +34,7 @@ fn run_visual_regression_test(pdf_path: &str, page_idx: usize, name: &str) {
     if !Path::new(&baseline_path).exists() || update_baselines {
         std::fs::create_dir_all(baseline_dir).expect("Failed to create baseline dir");
         captured.save(&baseline_path).expect("Failed to save baseline image");
-        println!("Baseline updated: {}", baseline_path);
+        println!("Baseline updated: {baseline_path}");
         return;
     }
 
@@ -38,7 +42,7 @@ fn run_visual_regression_test(pdf_path: &str, page_idx: usize, name: &str) {
         .expect("Failed to open baseline image")
         .to_rgba8();
 
-    assert_eq!(captured.dimensions(), baseline.dimensions(), "Image dimensions mismatch for {}", name);
+    assert_eq!(captured.dimensions(), baseline.dimensions(), "Image dimensions mismatch for {name}");
 
     let mut diff_count = 0;
     let mut diff_image = RgbaImage::new(width, height);

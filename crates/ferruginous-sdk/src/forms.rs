@@ -1,4 +1,5 @@
 //! Interactive Forms (`AcroForm`) management.
+//!
 //! (ISO 32000-2:2020 Clause 12.7)
 
 use crate::core::{Object, Resolver, Reference, PdfError, PdfResult, ParseErrorVariant, ContentErrorVariant};
@@ -8,6 +9,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 /// Represents an Interactive Form (`AcroForm`) in a PDF document.
+///
 /// (ISO 32000-2:2020 Clause 12.7)
 /// Interactive Form (Clause 12.7.2).
 pub struct AcroForm<'a> {
@@ -131,9 +133,9 @@ impl FormField {
     pub fn generate_appearance_stream(&mut self) -> PdfResult<()> {
         let rect = self.dictionary.get(b"Rect".as_ref())
             .and_then(|o| if let Object::Array(a) = o { Some(a) } else { None })
-            .ok_or_else(|| PdfError::ContentError(ContentErrorVariant::MissingRequiredKey("/Rect")))?;
+            .ok_or(PdfError::ContentError(ContentErrorVariant::MissingRequiredKey("/Rect")))?;
         
-        let width = match (rect.get(0), rect.get(2)) {
+        let width = match (rect.first(), rect.get(2)) {
             (Some(Object::Real(x0)), Some(Object::Real(x1))) => x1 - x0,
             (Some(Object::Integer(x0)), Some(Object::Integer(x1))) => (*x1 - *x0) as f64,
             _ => 100.0,
@@ -153,7 +155,7 @@ impl FormField {
                 Some(Object::String(s)) => String::from_utf8_lossy(s).into_owned(),
                 _ => String::new(),
             };
-            content.extend_from_slice(format!("q 0 0 {} {} re W n BT /He 12 Tf 2 5 Td ({}) Tj ET Q", width, height, val_str).as_bytes());
+            content.extend_from_slice(format!("q 0 0 {width} {height} re W n BT /He 12 Tf 2 5 Td ({val_str}) Tj ET Q").as_bytes());
         } else if self.is_button() {
              // Basic checkbox appearance
              let is_checked = match self.value.as_ref() {

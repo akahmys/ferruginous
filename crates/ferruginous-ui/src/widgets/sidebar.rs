@@ -83,7 +83,7 @@ fn show_pages_tab(app: &mut FerruginousApp, ui: &mut egui::Ui) {
     ui.label(format!("テクスチャID: {:?}", app.vello_texture_id));
     ui.label(format!("GPU: {}", app.gpu_name));
     if let Some(err) = &app.vello_init_error {
-        ui.label(RichText::new(format!("Velloエラー: {}", err)).color(Color32::RED));
+        ui.label(RichText::new(format!("Velloエラー: {err}")).color(Color32::RED));
     }
 }
 

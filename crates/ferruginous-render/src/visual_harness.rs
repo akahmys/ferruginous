@@ -1,3 +1,4 @@
+//! Headless GPU rendering harness for testing and automated capture.
 use std::sync::Arc;
 use wgpu::{
     BufferDescriptor, BufferUsages, CommandEncoderDescriptor, Device, Extent3d, TexelCopyBufferInfo,
@@ -35,8 +36,8 @@ impl HeadlessDevice {
                 label: Some("Headless Device"),
                 required_features: wgpu::Features::empty(),
                 required_limits: wgpu::Limits::default(),
-                memory_hints: Default::default(),
-                experimental_features: Default::default(),
+                memory_hints: wgpu::MemoryHints::default(),
+                experimental_features: wgpu::ExperimentalFeatures::default(),
                 trace: Trace::Off,
             },
         ))
@@ -73,7 +74,7 @@ impl HeadlessDevice {
             usage: TextureUsages::STORAGE_BINDING | TextureUsages::COPY_SRC,
             view_formats: &[],
         });
-        let view = texture.create_view(&Default::default());
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         // 2. 描画
         backend.render_display_list(commands, ferruginous_sdk::graphics::Affine::IDENTITY, None);

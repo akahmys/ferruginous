@@ -1,3 +1,7 @@
+//! Arlington PDF Model Validation Engine.
+//!
+//! (ISO 32000-2:2020 Clause 7.1)
+//!
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -10,6 +14,7 @@ use parser::parse_expression;
 use evaluator::{evaluate, EvalContext};
 
 /// The set of supported property types in the Arlington PDF Model.
+///
 /// (<https://github.com/pdf-association/arlington-pdf-model>)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ArlingtonType {
@@ -291,7 +296,7 @@ impl ArlingtonRegistry {
                 match resolver.resolve(r) {
                     Ok(o) => o,
                     Err(e) => {
-                        report.errors.push(format!("Failed to resolve reference {:?}: {}", r, e));
+                        report.errors.push(format!("Failed to resolve reference {r:?}: {e}"));
                         return;
                     }
                 }
@@ -303,7 +308,7 @@ impl ArlingtonRegistry {
             // Determine the best model for this dictionary
             let actual_model = if let Some(Object::Name(n)) = dict.get(b"Type".as_ref()) {
                 let type_name = String::from_utf8_lossy(n);
-                self.get(&type_name).map(|_| type_name.into_owned()).unwrap_or_else(|| model_name.to_string())
+                self.get(&type_name).map_or_else(|| model_name.to_string(), |_| type_name.into_owned())
             } else {
                 model_name.to_string()
             };
@@ -312,7 +317,7 @@ impl ArlingtonRegistry {
                 // RR-17: Using version 2.0 as the default for Arlington validation if not specified
                 let version = 2.0; 
                 if let Err(PdfError::Validation(ValidationErrorVariant::Arlington(errs))) = model.validate(dict, resolver, version, Some(self)) {
-                    report.errors.extend(errs.into_iter().map(|e| format!("[{}] {}", actual_model, e)));
+                    report.errors.extend(errs.into_iter().map(|e| format!("[{actual_model}] {e}")));
                 }
             }
 

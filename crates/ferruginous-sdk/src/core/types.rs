@@ -1,4 +1,5 @@
 //! Core PDF object types and trait definitions.
+//!
 //! (ISO 32000-2:2020 Clause 7.3)
 
 use std::collections::BTreeMap;
@@ -7,6 +8,7 @@ use serde::{Serialize, Deserialize};
 use crate::core::error::PdfResult;
 
 /// ISO 32000-2:2020 Clause 7.3.10 - Indirect Objects
+///
 /// Uniquely identifies an indirect object by its object ID and generation number.
 #[derive(Debug, Copy, Clone, PartialEq, PartialOrd, Eq, Ord, Hash, Serialize, Deserialize)]
 pub struct Reference {

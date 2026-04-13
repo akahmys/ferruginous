@@ -1,4 +1,5 @@
 //! High-level PDF document loader and entry point.
+//!
 //! (ISO 32000-2:2020 Clause 7.5.8)
 
 use crate::xref::{MemoryXRefIndex, parse_xref_section, parse_xref_stream_content};
@@ -126,7 +127,7 @@ fn resolve_xref_chain(data: &[u8], start_pos: usize, initial_offset: u64) -> Pdf
         } else { break; }
     }
     
-    let trailer_dict = primary_trailer_dict.ok_or_else(|| PdfError::StructureError(StructureErrorVariant::MissingRoot))?;
+    let trailer_dict = primary_trailer_dict.ok_or(PdfError::StructureError(StructureErrorVariant::MissingRoot))?;
     Ok((merged_index, trailer_dict))
 }
 
@@ -134,7 +135,7 @@ fn adjust_xref_offset(data: &[u8], start_pos: usize, offset: u64) -> PdfResult<u
     let mut offset_usize: usize = offset.try_into()
         .map_err(|_| PdfError::ParseError(ParseErrorVariant::InvalidOffset { offset: offset as usize }))?;
     
-    if offset_usize >= data.len() || (data.get(offset_usize..offset_usize+4) != Some(b"xref") && data.get(offset_usize).map(|b| !b.is_ascii_digit()).unwrap_or(true)) {
+    if offset_usize >= data.len() || (data.get(offset_usize..offset_usize+4) != Some(b"xref") && data.get(offset_usize).is_none_or(|b| !b.is_ascii_digit())) {
         let adjusted = offset_usize + start_pos;
         if adjusted < data.len() {
             offset_usize = adjusted;
@@ -183,7 +184,7 @@ impl PdfDocument {
         use std::sync::Arc;
         
         let root_ref = self.last_trailer.root()
-            .ok_or_else(|| PdfError::StructureError(StructureErrorVariant::MissingRoot))?;
+            .ok_or(PdfError::StructureError(StructureErrorVariant::MissingRoot))?;
         
         let resolver = PdfResolver {
             data: &self.data,
@@ -206,7 +207,7 @@ impl PdfDocument {
     /// Returns the `PageTree` for the document using the provided resolver.
     pub fn page_tree_at<'a, R: crate::core::Resolver + 'a>(&self, resolver: &'a R) -> PdfResult<crate::page::PageTree<'a>> {
         let root_ref = self.last_trailer.root()
-            .ok_or_else(|| PdfError::StructureError(StructureErrorVariant::MissingRoot))?;
+            .ok_or(PdfError::StructureError(StructureErrorVariant::MissingRoot))?;
         
         let obj = resolver.resolve(&root_ref)?;
         if let Object::Dictionary(dict) = obj {

@@ -35,7 +35,9 @@ pub mod resolver;
 pub mod resources;
 /// Text-specific state and operators.
 pub mod text;
+/// Trailer dictionary and document termination (Clause 7.5.5).
 pub mod trailer;
+/// Cross-reference table and stream management (Clause 7.5.4).
 pub mod xref;
 /// Navigation and outline management (Clause 12.3).
 pub mod navigation;
@@ -53,6 +55,8 @@ pub mod signature;
 pub mod redaction;
 /// ToUnicode CMaps and character mapping (Clause 9.10).
 pub mod cmap;
+/// Adobe-Japan1 CMap resources and character mapping.
+pub mod cmap_aj1;
 /// Physical PDF object serialization and file writing.
 pub mod serialize;
 /// Text layer extraction and management.

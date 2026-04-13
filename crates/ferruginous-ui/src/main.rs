@@ -19,6 +19,7 @@ pub const SUPER_SAMPLE_FACTOR: f32 = 1.5;
 pub static RENDER_TRIGGER_COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 /// The primary application state for the Ferruginous UI.
+#[allow(clippy::struct_excessive_bools)]
 pub struct FerruginousApp {
     /// Count of frames rendered since startup.
     pub frame_count: u32,
@@ -109,7 +110,7 @@ impl FerruginousApp {
         if let Some(render_state) = &cc.wgpu_render_state {
             device = Some(render_state.device.clone().into());
             queue = Some(render_state.queue.clone());
-            gpu_name = render_state.adapter.get_info().name.clone();
+            gpu_name = render_state.adapter.get_info().name;
         } else {
             vello_init_error = Some("WGPU Render State missing".to_string());
         }
@@ -153,12 +154,12 @@ impl FerruginousApp {
         if let Ok(data) = std::fs::read(&path) {
             match ferruginous_sdk::loader::load_document_structure(&data) {
                 Ok(doc) => { 
-                    eprintln!("[TRACE][UI] Loading initial file from CLI: {}", path);
+                    eprintln!("[TRACE][UI] Loading initial file from CLI: {path}");
                     self.process_loaded_doc(doc); 
                 }
                 Err(e) => { 
-                    eprintln!("[ERROR][UI] Failed to load initial file: {:?}", e);
-                    self.error_message = Some(format!("PDFロード失敗: {:?}", e)); 
+                    eprintln!("[ERROR][UI] Failed to load initial file: {e:?}");
+                    self.error_message = Some(format!("PDFロード失敗: {e:?}")); 
                 }
             }
         }
@@ -171,7 +172,7 @@ impl FerruginousApp {
             if let Ok(data) = std::fs::read(&path) {
                 match ferruginous_sdk::loader::load_document_structure(&data) {
                     Ok(doc) => { self.process_loaded_doc(doc); }
-                    Err(e) => { self.error_message = Some(format!("PDFロード失敗: {:?}", e)); }
+                    Err(e) => { self.error_message = Some(format!("PDFロード失敗: {e:?}")); }
                 }
             }
         }
@@ -181,7 +182,7 @@ impl FerruginousApp {
         let tree = match doc.page_tree() {
             Ok(t) => t,
             Err(e) => {
-                self.error_message = Some(format!("ページツリー解析エラー: {:?}", e));
+                self.error_message = Some(format!("ページツリー解析エラー: {e:?}"));
                 return;
             }
         };
@@ -239,7 +240,7 @@ impl FerruginousApp {
         // as its first command, so we only apply the root scaling here.
         let render_transform = Affine::scale(self.zoom_factor as f64 * SUPER_SAMPLE_FACTOR as f64);
         
-        eprintln!("[DEBUG] Root Render Scale: {:?}", render_transform);
+        eprintln!("[DEBUG] Root Render Scale: {render_transform:?}");
 
         self.pdf_renderer.clear();
         
@@ -285,7 +286,7 @@ impl FerruginousApp {
                             );
                         }
                         Err(e) => {
-                            eprintln!("[DEBUG] get_display_list() failed: {:?}", e);
+                            eprintln!("[DEBUG] get_display_list() failed: {e:?}");
                         }
                     }
                 }
@@ -397,11 +398,11 @@ impl eframe::App for FerruginousApp {
                         width,
                         height,
                     ) {
-                        Ok(_) => {
+                        Ok(()) => {
                             RENDER_TRIGGER_COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                         }
                         Err(e) => {
-                            eprintln!("[ERROR] Rendering failed: {}", e);
+                            eprintln!("[ERROR] Rendering failed: {e}");
                         }
                     }
                 }

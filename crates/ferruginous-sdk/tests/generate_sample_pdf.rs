@@ -1,3 +1,6 @@
+#![allow(clippy::all, missing_docs)]
+//! Test module
+
 use ferruginous_sdk::core::{Object, Reference};
 use ferruginous_sdk::serialize::{write_indirect_object, write_xref_section, write_trailer};
 use ferruginous_sdk::xref::XRefEntry;
@@ -8,7 +11,7 @@ use std::io::Write;
 #[test]
 fn simple_gen() {
     let mut data = Vec::new();
-    data.extend(b"%PDF-1.7\n%\xE2\xE3\xCF\xD3\n");
+    data.extend(b"%PDF-2.0\n%\xE2\xE3\xCF\xD3\n");
 
     let mut offsets = BTreeMap::new();
 
@@ -80,9 +83,9 @@ fn simple_gen() {
     let mut trailer = BTreeMap::new();
     trailer.insert(b"Size".to_vec(), Object::Integer(6));
     trailer.insert(b"Root".to_vec(), Object::Reference(Reference { id: 1, generation: 0 }));
-    write_trailer(&mut data, &trailer.into(), xref_start).unwrap();
+    write_trailer(&mut data, &trailer, xref_start).unwrap();
 
-    std::fs::create_dir_all("samples").unwrap();
-    let mut file = File::create("samples/simple.pdf").unwrap();
+    std::fs::create_dir_all("../../samples/legacy").unwrap();
+    let mut file = File::create("../../samples/legacy/simple.pdf").unwrap();
     file.write_all(&data).unwrap();
 }

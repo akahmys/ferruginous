@@ -1,14 +1,15 @@
 //! PDF content stream execution and graphics state processing.
+//!
 //! (ISO 32000-2:2020 Clause 7.8 and 8.4)
 
 use crate::graphics::{GraphicsStateStack, Color, DrawOp, DrawCommand, GlyphInstance, ClippingRule};
 use crate::resources::{Resources, RawXObject};
 use crate::text::TextState;
-use crate::core::{Object, Reference, PdfError, PdfResult, ParseErrorVariant};
+use crate::core::{Object, Reference, PdfError, PdfResult};
 use crate::text_layer::{TextLayer, TextElement};
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use kurbo::{Affine, BezPath};
+use kurbo::{Affine, BezPath, Shape};
 
 
 /// A single PDF content stream operation consisting of an operator and its operands.
@@ -147,7 +148,7 @@ impl<'a> Processor<'a> {
                     (gs.blend_mode, gs.fill_alpha as f32)
                 };
                 self.push_op(DrawOp::PushLayer {
-                    attrs: attrs.clone(),
+                    attrs,
                     blend_mode,
                     alpha,
                 });
@@ -197,7 +198,6 @@ impl<'a> Processor<'a> {
 
     /// Executes a single PDF graphics or text operation.
     pub fn execute_operation(&mut self, op: &Operation) -> PdfResult<Option<Vec<ContentNode>>> {
-        let op_name = String::from_utf8_lossy(&op.operator);
         match op.operator.as_slice() {
             b"cm" => self.handle_cm(op).map(|()| None),
             b"Td" => self.handle_td(op).map(|()| None),
@@ -281,7 +281,7 @@ impl<'a> Processor<'a> {
     fn handle_tm(&mut self, op: &Operation) -> PdfResult<()> {
         let v = self.extract_f64_operands(&op.operands, 6);
         if v.len() == 6 {
-            let m = Affine::new([v[0], v[1], v[2], v[3], v[4], v[5]]);
+            let _m = Affine::new([v[0], v[1], v[2], v[3], v[4], v[5]]);
             self.text_state.set_matrix(v[0], v[1], v[2], v[3], v[4], v[5]);
         }
         Ok(())
@@ -298,10 +298,15 @@ impl<'a> Processor<'a> {
                     if let Some(font_dict) = res.get_font(name) {
                         match crate::font::Font::from_dict(&font_dict, res.resolver) {
                             Ok(font) => {
-                                self.text_state.wmode = if font.is_vertical() { 1 } else { 0 };
+                                self.text_state.wmode = u8::from(font.is_vertical());
                                 self.current_font = Some(font);
+                                println!("[DIAG] Tf: Font={}, Size={}, WMode={}", 
+                                    String::from_utf8_lossy(name), 
+                                    self.text_state.font_size, 
+                                    self.text_state.wmode
+                                );
                             }
-                            Err(e) => {
+                            Err(_e) => {
                                 // HEURISTIC: If name suggests CID, still use 2-byte splitting
                                 let name_str = String::from_utf8_lossy(name);
                                 if name_str.starts_with("C2") || name_str.contains("Identity") || name_str.contains("Uni") {
@@ -329,6 +334,11 @@ impl<'a> Processor<'a> {
                 self.text_state.font_size = s;
             } else if let Some(&Object::Integer(i)) = op.operands.get(1) {
                 self.text_state.font_size = i as f64;
+            }
+            if let Some(Object::Name(name)) = self.resources.as_ref().and_then(|res| {
+                self.text_state.font.as_ref().and_then(|obj| res.resolver.resolve_if_ref(obj).ok())
+            }) {
+                println!("[DIAG] Tf(post): Font={}, Size={}", String::from_utf8_lossy(&name), self.text_state.font_size);
             }
         }
         Ok(())
@@ -391,14 +401,18 @@ impl<'a> Processor<'a> {
                     .map_or(1, |cmap| cmap.code_length(&bytes[i..]));
                 
                 let char_code = bytes[i..i+len].to_vec();
-                let width = self.current_font.as_ref()
-                    .map_or(0.0, |f| f.char_width(&char_code));
-
-                let is_space = char_code == [32];
-                let v_metrics = self.current_font.as_ref().map(|f| f.char_vertical_metrics(&char_code).0);
+                let mut width = 0.0;
+                let mut is_space = char_code == [32];
+                let v_metrics = if let Some(ref font) = self.current_font {
+                    width = font.char_width(&char_code);
+                    is_space = font.is_space_char(&char_code);
+                    Some(font.char_vertical_metrics(&char_code).0)
+                } else {
+                    None
+                };
+                
                 let (_, matrix_before) = self.text_state.advance_glyph(is_space, width, v_metrics, 0.0, true);
-
-                // Calculate BBox and Path in page space
+            // No log
                 let (bbox, path) = self.calculate_glyph_data(&char_code, matrix_before);
                 
                 glyphs.push(GlyphInstance { 
@@ -498,7 +512,7 @@ impl<'a> Processor<'a> {
 
     fn handle_double_quote(&mut self, op: &Operation) -> PdfResult<()> {
         if op.operands.len() >= 3 {
-            if let Some(tw) = op.operands.get(0) {
+            if let Some(tw) = op.operands.first() {
                 let tw_f = match tw {
                     Object::Real(r) => *r,
                     Object::Integer(i) => *i as f64,
@@ -576,7 +590,7 @@ impl<'a> Processor<'a> {
                     // Only probe if it's a known multi-byte font OR if the 1-byte lookup fails
                     let looks_multi = font.is_multi_byte();
                     if looks_multi {
-                        let single_path = font.get_glyph_path(&bytes[i..i+1]).ok().flatten();
+                        let single_path = font.get_glyph_path(&bytes[i..=i]).ok().flatten();
                         if single_path.is_none() {
                             let double_path = font.get_glyph_path(&bytes[i..i+2]).ok().flatten();
                             if double_path.is_some() {
@@ -592,11 +606,16 @@ impl<'a> Processor<'a> {
 
 
             let char_code = bytes[i..i+len].to_vec();
-            let width = self.current_font.as_ref()
-                .map_or(0.0, |f| f.char_width(&char_code));
+            let mut width = 0.0;
+            let mut is_space = char_code == [32];
+            let v_metrics = if let Some(ref font) = self.current_font {
+                width = font.char_width(&char_code);
+                is_space = font.is_space_char(&char_code);
+                Some(font.char_vertical_metrics(&char_code).0)
+            } else {
+                None
+            };
             
-            let is_space = char_code == [32];
-            let v_metrics = self.current_font.as_ref().map(|f| f.char_vertical_metrics(&char_code).0);
             let (_, matrix_before) = self.text_state.advance_glyph(is_space, width, v_metrics, 0.0, true);
             
             // Calculate BBox and Path in page space
@@ -634,10 +653,27 @@ impl<'a> Processor<'a> {
         if self.text_state.wmode == 1 {
             let (_w1y, vx, vy) = font.char_vertical_metrics(char_code);
             path_offset = Affine::translate((-vx, -vy));
+            
+            if font.char_should_rotate_vertical(char_code) {
+                // Rotate 90 degrees clockwise around the character origin.
+                // In PDF vertical mode, character origin is at (0,0) after (-vx, -vy) translation.
+                let rotation = Affine::rotate(90.0f64.to_radians());
+                path_offset = rotation * path_offset;
+                println!("[DIAG] Rot: 90deg CW applied for vertical mode");
+            }
         }
         
         // 3. Width Synchronization (Enforce PDF-specified widths)
         let expected_width = font.char_width(char_code);
+        
+        let text = font.to_unicode_string(char_code);
+        let has_to_uni = font.to_unicode.is_some();
+        let is_embedded = font.descriptor.as_ref().is_some_and(|d| d.font_data.is_some());
+        
+        println!("[DIAG] Gly: CC={:02X?}, W(PDF)={:.2}, WMode={}, Uni='{}', ToUni={}, Embed={}", 
+            char_code, expected_width, i32::from(self.text_state.wmode == 1),
+            text.replace('\n', "\\n"), has_to_uni, is_embedded);
+
         let mut glyph_scale = Affine::IDENTITY;
         if let Some(nw) = native_width {
             if nw > 0.001 && expected_width.abs() > 0.001 {
@@ -649,17 +685,29 @@ impl<'a> Processor<'a> {
 
         // 4. Matrix Composition
         // text_extra handles font size, horizontal scaling, and the Y-flip for coordinate normalization.
-        let text_extra = Affine::new([fs * th, 0.0, 0.0, -fs, 0.0, rise]);
+        let text_extra = Affine::new([fs * th, 0.0, 0.0, fs, 0.0, rise]);
         let font_matrix = Affine::new(font.font_matrix);
         
         // total_matrix = Tm * TextExtra * FontMatrix
         let total_matrix = tm * text_extra * font_matrix;
         
         // Final transformation for the glyph: [Local Space -> 1000-unit Space -> User Space]
-        let glyph_space_transform = path_offset * glyph_scale;
+        // Combine transformations: Total * Scale * Offset
+        // This ensures the character origin (top-center for vertical) is preserved.
+        let glyph_space_transform = glyph_scale * path_offset;
         let final_transform = total_matrix * glyph_space_transform;
-
+        
         // 5. Update BBox and Path
+        if let Some(path_ref) = &glyph_path {
+            let bbox = path_ref.bounding_box();
+            println!("[DIAG] Mat: Tm_trans=[{:.2}, {:.2}], Final_trans=[{:.2}, {:.2}], W(PDF)={}, W(Nat)={:.2}, S_X={:.4}, BBox_x0={:.2}", 
+                tm.as_coeffs()[4], tm.as_coeffs()[5], 
+                final_transform.as_coeffs()[4], final_transform.as_coeffs()[5],
+                expected_width, native_width.unwrap_or(0.0), 
+                expected_width / native_width.unwrap_or(expected_width),
+                bbox.x0);
+        }
+
         let res_bbox = final_transform.transform_rect_bbox(glyph_bbox);
         let res_path = glyph_path.map(|mut p| {
             p.apply_affine(final_transform);
@@ -703,9 +751,19 @@ impl<'a> Processor<'a> {
         Ok(())
     }
 
+    fn ensure_path_initialized(&mut self, x: f64, y: f64) -> PdfResult<()> {
+        let path = &mut self.gs_stack.current_mut()?.current_path;
+        let needs_move = path.elements().is_empty() || matches!(path.elements().last(), Some(kurbo::PathEl::ClosePath));
+        if needs_move {
+            std::sync::Arc::make_mut(path).move_to((x, y));
+        }
+        Ok(())
+    }
+
     fn handle_l(&mut self, op: &Operation) -> PdfResult<()> {
         let v = self.extract_f64_operands(&op.operands, 2);
         if v.len() == 2 {
+            self.ensure_path_initialized(v[0], v[1])?;
             std::sync::Arc::make_mut(&mut self.gs_stack.current_mut()?.current_path).line_to((v[0], v[1]));
         }
         Ok(())
@@ -714,6 +772,7 @@ impl<'a> Processor<'a> {
     fn handle_c(&mut self, op: &Operation) -> PdfResult<()> {
         let v = self.extract_f64_operands(&op.operands, 6);
         if v.len() == 6 {
+            self.ensure_path_initialized(v[0], v[1])?;
             std::sync::Arc::make_mut(&mut self.gs_stack.current_mut()?.current_path).curve_to((v[0], v[1]), (v[2], v[3]), (v[4], v[5]));
         }
         Ok(())
@@ -722,10 +781,13 @@ impl<'a> Processor<'a> {
     fn handle_v(&mut self, op: &Operation) -> PdfResult<()> {
         let v = self.extract_f64_operands(&op.operands, 4);
         if v.len() == 4 {
-            let current = self.gs_stack.current()?.current_path.elements().last().map(|el| match el {
+            let path = &self.gs_stack.current()?.current_path;
+            let current = path.elements().last().map_or(kurbo::Point::ORIGIN, |el| match el {
                 kurbo::PathEl::MoveTo(p) | kurbo::PathEl::LineTo(p) | kurbo::PathEl::CurveTo(_, _, p) | kurbo::PathEl::QuadTo(_, p) => *p,
                 kurbo::PathEl::ClosePath => kurbo::Point::ORIGIN,
-            }).unwrap_or(kurbo::Point::ORIGIN);
+            });
+            
+            self.ensure_path_initialized(current.x, current.y)?;
             std::sync::Arc::make_mut(&mut self.gs_stack.current_mut()?.current_path).curve_to((current.x, current.y), (v[0], v[1]), (v[2], v[3]));
         }
         Ok(())
@@ -734,6 +796,7 @@ impl<'a> Processor<'a> {
     fn handle_y(&mut self, op: &Operation) -> PdfResult<()> {
         let v = self.extract_f64_operands(&op.operands, 4);
         if v.len() == 4 {
+            self.ensure_path_initialized(v[0], v[1])?;
             std::sync::Arc::make_mut(&mut self.gs_stack.current_mut()?.current_path).curve_to((v[0], v[1]), (v[2], v[3]), (v[2], v[3]));
         }
         Ok(())
@@ -796,8 +859,10 @@ impl<'a> Processor<'a> {
     fn handle_do(&mut self, op: &Operation) -> PdfResult<Option<Vec<ContentNode>>> {
         if !self.current_visibility() { return Ok(None); }
         if let Some(Object::Name(name)) = op.operands.first() {
+            println!("[DIAG] handle_do: {}", String::from_utf8_lossy(name));
             if let Some(ref res) = self.resources {
                 if let Some(xobj) = res.get_xobject(name) {
+                    println!("[DIAG] Entering XObject: {}", String::from_utf8_lossy(name));
                     let subtype = match xobj.dictionary.get(b"Subtype".as_ref()) {
                         Some(Object::Name(n)) => n,
                         _ => return Ok(None),
@@ -890,7 +955,10 @@ impl<'a> Processor<'a> {
     }
 
     fn handle_h(&mut self, _op: &Operation) -> PdfResult<()> {
-        Arc::make_mut(&mut self.gs_stack.current_mut()?.current_path).close_path();
+        let path = &mut self.gs_stack.current_mut()?.current_path;
+        if !path.elements().is_empty() {
+            Arc::make_mut(path).close_path();
+        }
         Ok(())
     }
 
@@ -1052,12 +1120,18 @@ impl<'a> Processor<'a> {
     }
 
     fn handle_close_fill_stroke(&mut self, _op: &Operation) -> PdfResult<()> {
-        Arc::make_mut(&mut self.gs_stack.current_mut()?.current_path).close_path();
+        let path = &mut self.gs_stack.current_mut()?.current_path;
+        if !path.elements().is_empty() {
+            std::sync::Arc::make_mut(path).close_path();
+        }
         self.handle_b_fill_stroke(_op)
     }
 
     fn handle_close_star_fill_stroke(&mut self, _op: &Operation) -> PdfResult<()> {
-        Arc::make_mut(&mut self.gs_stack.current_mut()?.current_path).close_path();
+        let path = &mut self.gs_stack.current_mut()?.current_path;
+        if !path.elements().is_empty() {
+            std::sync::Arc::make_mut(path).close_path();
+        }
         self.handle_b_star_fill_stroke(_op)
     }
 
@@ -1414,6 +1488,10 @@ pub fn parse_content_stream(input: &[u8]) -> PdfResult<Vec<ContentNode>> {
     const MAX_OPS: usize = 1_000_000;
 
     while !current_input.is_empty() {
+        let (next_input, ()) = crate::lexer::pdf_multispace0(current_input).unwrap_or((current_input, ()));
+        current_input = next_input;
+        if current_input.is_empty() { break; }
+
         if let Ok((next_input, obj)) = crate::lexer::parse_object(current_input) {
             operand_stack.push(obj);
             current_input = next_input;
@@ -1421,15 +1499,17 @@ pub fn parse_content_stream(input: &[u8]) -> PdfResult<Vec<ContentNode>> {
             let operands = std::mem::take(&mut operand_stack);
             handle_parsed_operator(op, operands, &mut block_stack, &mut root_nodes)?;
             current_input = next_input;
-        } else if current_input.first().is_some_and(|&b| b.is_ascii_whitespace()) {
-            current_input = &current_input[1..];
         } else {
-            return Err(PdfError::ParseError(ParseErrorVariant::general(0, "Malformed content stream")));
+            // GRACEFUL RECOVERY: skip one byte and try again instead of failing the whole stream
+            current_input = &current_input[1..];
         }
         loop_count += 1;
         if loop_count > MAX_OPS { return Err(PdfError::ContentError("Content stream operation limit exceeded".into())); }
     }
-    if !block_stack.is_empty() { return Err(PdfError::ContentError("Unclosed graphics or text block".into())); }
+    while let Some((_op, _)) = block_stack.pop() {
+        
+        // Option: add dummy closing nodes if needed, but for now just popping is enough to avoid error
+    }
     Ok(root_nodes)
 }
 
@@ -1443,16 +1523,17 @@ fn handle_parsed_operator(
         block_stack.push((op, Vec::new()));
     } else if op == b"Q" || op == b"ET" {
         let expected_start: &[u8] = if op == b"Q" { b"q" } else { b"BT" };
-        let (start_op, children) = block_stack.pop().ok_or_else(|| {
-            PdfError::ContentError(format!("Unexpected block end: {}", std::str::from_utf8(&op).unwrap_or("?")).into())
-        })?;
-        if start_op != expected_start {
-            return Err(PdfError::ContentError(format!("Mismatched block end: expected {}, found {}", 
-                std::str::from_utf8(expected_start).unwrap_or("?"), 
-                std::str::from_utf8(&op).unwrap_or("?")).into()));
+        if let Some((start_op, children)) = block_stack.pop() {
+            if start_op == expected_start {
+                let block = ContentNode::Block(start_op, children);
+                push_content_node(block, block_stack, root_nodes);
+            } else {
+                // Mismatched: push children back to previous level or into a partial block
+                for child in children {
+                    push_content_node(child, block_stack, root_nodes);
+                }
+            }
         }
-        let block = ContentNode::Block(start_op, children);
-        push_content_node(block, block_stack, root_nodes);
     } else {
         let operation = ContentNode::Operation(Operation { operands, operator: op });
         push_content_node(operation, block_stack, root_nodes);

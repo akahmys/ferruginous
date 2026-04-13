@@ -1,10 +1,13 @@
+#![allow(clippy::all, missing_docs)]
+//! Test module
+
 use ferruginous_sdk::loader::load_document_structure;
 use ferruginous_sdk::editor::PdfEditor;
 use std::path::Path;
 
 #[test]
 fn test_form_field_update() {
-    let pdf_path = Path::new("../../samples/simple.pdf");
+    let pdf_path = Path::new("../../samples/legacy/simple.pdf");
     if !pdf_path.exists() {
         return; // Skip if samples are missing
     }

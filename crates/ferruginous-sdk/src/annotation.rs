@@ -1,4 +1,5 @@
 //! PDF Annotation (Annots) management.
+//!
 //! (ISO 32000-2:2020 Clause 12.5)
 
 use crate::core::{Object, Reference, Resolver};
@@ -61,7 +62,7 @@ impl<'a> Annotation<'a> {
                     Some(Action::new(subtype, std::sync::Arc::clone(d)))
                 }
                 Object::Reference(r) => {
-                    if let Ok(Object::Dictionary(d)) = self.resolver.resolve(&r) {
+                    if let Ok(Object::Dictionary(d)) = self.resolver.resolve(r) {
                         let subtype = d.get(b"S".as_ref()).and_then(|o| o.as_str()).map(|s| s.to_vec())?;
                         Some(Action::new(subtype, d))
                     } else {

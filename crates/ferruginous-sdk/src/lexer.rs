@@ -1,4 +1,5 @@
 //! Lexical analysis for PDF content streams and objects.
+//!
 //! (ISO 32000-2:2020 Clause 7.2)
 
 use nom::{
@@ -64,8 +65,9 @@ fn parse_boolean(input: &[u8]) -> IResult<&[u8], Object> {
 
 /// ISO 32000-2:2020 Clause 7.3.3 - Numeric objects (Integer)
 fn parse_integer(input: &[u8]) -> IResult<&[u8], Object> {
-    debug_assert!(!input.is_empty(), "parse_integer: input empty");
-    debug_assert!(input[0].is_ascii_digit() || input[0] == b'+' || input[0] == b'-', "parse_integer: invalid start (pre-verify)");
+    if input.is_empty() {
+        return Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Digit)));
+    }
     let (input, (sign, digits)) = pair(opt(alt((tag("+"), tag("-")))), digit1)(input)?;
     let mut s = String::new();
     if let Some(sig) = sign {
@@ -78,8 +80,9 @@ fn parse_integer(input: &[u8]) -> IResult<&[u8], Object> {
 
 /// ISO 32000-2:2020 Clause 7.3.3 - Numeric objects (Real)
 fn parse_real(input: &[u8]) -> IResult<&[u8], Object> {
-    debug_assert!(!input.is_empty(), "parse_real: input empty");
-    debug_assert!(input[0].is_ascii_digit() || input[0] == b'+' || input[0] == b'-' || input[0] == b'.', "parse_real: invalid start (pre-verify)");
+    if input.is_empty() {
+        return Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Float)));
+    }
     let (input, res) = recognize(tuple((
         opt(alt((tag("+"), tag("-")))),
         alt((
@@ -125,7 +128,6 @@ fn parse_escape(input: &[u8]) -> IResult<&[u8], Vec<u8>> {
 fn parse_literal_string(input: &[u8]) -> IResult<&[u8], Object> {
     debug_assert!(!input.is_empty(), "parse_literal_string: input empty");
     let (input, _) = tag("(")(input)?;
-    debug_assert!(input.len() < 10 * 1024 * 1024, "parse_literal_string: excessive string length context");
     let mut content = Vec::new();
     let mut depth = 1;
     let mut current_input = input;
@@ -235,7 +237,6 @@ pub fn parse_name(input: &[u8]) -> IResult<&[u8], Object> {
 fn parse_array(input: &[u8]) -> IResult<&[u8], Object> {
     debug_assert!(!input.is_empty(), "parse_array: input empty");
     let (input, _) = tag("[")(input)?;
-    debug_assert!(input.len() < 100 * 1024 * 1024, "parse_array: context too large");
     let (input, elements) = many0(parse_object)(input)?;
     let (input, _) = preceded(pdf_multispace0, tag("]"))(input)?;
     Ok((input, Object::new_array(elements)))
@@ -317,7 +318,6 @@ fn parse_stream(input: &[u8]) -> IResult<&[u8], Object> {
 /// Entry point for parsing any object
 pub fn parse_object(input: &[u8]) -> IResult<&[u8], Object> {
     debug_assert!(!input.is_empty(), "parse_object: input should not be empty");
-    debug_assert!(input.len() < 1024 * 1024 * 1024, "parse_object: input too large");
     let (input, ()) = pdf_multispace0(input)?;
     if input.is_empty() {
         return Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Eof)));
@@ -349,7 +349,6 @@ pub fn parse_object(input: &[u8]) -> IResult<&[u8], Object> {
 /// Parses a content stream operator (e.g., "q", "m", "BT")
 /// (Clause 7.2.1 - Lexical Rules)
 pub fn parse_operator(input: &[u8]) -> IResult<&[u8], Vec<u8>> {
-    debug_assert!(input.len() < 1024 * 1024, "parse_operator: input chunk too large");
     let (input, ()) = pdf_multispace0(input)?;
     let (input, op) = take_while1(|b: u8| !is_pdf_whitespace(b) && !is_pdf_delimiter(b))(input)?;
     debug_assert!(!op.is_empty(), "parse_operator: operator name is empty");

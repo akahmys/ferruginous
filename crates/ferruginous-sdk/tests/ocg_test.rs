@@ -1,3 +1,6 @@
+#![allow(clippy::all, missing_docs)]
+//! Test module
+
 use ferruginous_sdk::core::{Object, Resolver, PdfResult, Reference};
 use ferruginous_sdk::content::{Processor, Operation};
 use ferruginous_sdk::ocg::OCContext;
