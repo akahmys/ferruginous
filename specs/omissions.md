@@ -1,58 +1,58 @@
-# ISO 32000-2 準拠性に関する実装制限および簡略化の記録
+# Implementation Limits and Simplifications Regarding ISO 32000-2 Compliance
 
-本ドキュメントは、Ferruginous PDF エンジンの開発において、ISO 32000-2:2020 (PDF 2.0) 規格の完全な実装に対して、意図的に簡略化または制限を設けた項目を記録するものです。これらの決定は、Reliable Rust-15 (RR-15) コーディング規則の遵守、およびミッションクリティカルな環境での決定論的動作（Deterministic behavior）の確保を最優先とした結果です。
+This document records the items where intentional simplifications or limitations have been established relative to the full implementation of the ISO 32000-2:2020 (PDF 2.0) specification in the development of the Ferruginous PDF engine. These decisions are the result of prioritizing compliance with the Reliable Rust-15 (RR-15) coding rules and ensuring deterministic behavior in mission-critical environments.
 
-## 1. ストリーム・フィルタ (Stream Filters)
+## 1. Stream Filters
 
-規格（Clause 7.4）では多様な圧縮アルゴリズムが定義されています。Ferruginous では、現在以下のフィルタに限定してサポートしています。
+The specification (Clause 7.4) defines a wide variety of compression algorithms. Ferruginous currently limits support to the following filters:
 
-- **FlateDecode / ASCIIHexDecode**: 汎用的なデータ圧縮およびテキストベースの符号化として実装。
-- **DCTDecode / JPXDecode**: JPEG および JPEG 2000 (hayro-jpeg2000 経由) 形式の画像デコードをサポート。
-- **LZWDecode / CCITTFaxDecode / JBIG2Decode**: Phase 12 で実運用向けに完全実装。`weezl` (LZW), `fax` (CCITT G4), `justbig2` (JBIG2) を Safe Rust の制約内で統合し、スキャン文書やアーカイブ文書への対応を完了しました。
-- **未実装項目**: `RunLengthDecode`。
-  - **理由**: 利用頻度が極めて低く、他の優先度の高いフィルタ実装を優先しました。
+- **FlateDecode / ASCIIHexDecode**: Implemented as general-purpose data compression and text-based encoding.
+- **DCTDecode / JPXDecode**: Supports image decoding in JPEG and JPEG 2000 (via hayro-jpeg2000) formats.
+- **LZWDecode / CCITTFaxDecode / JBIG2Decode**: Fully implemented for production use in Phase 12. Integrated `weezl` (LZW), `fax` (CCITT G4), and `justbig2` (JBIG2) within the constraints of Safe Rust, completing support for scanned and archived documents.
+- **Unimplemented Items**: `RunLengthDecode`.
+  - **Reason**: Extremely low utilization frequency; prioritized other higher-priority filter implementations.
 
-## 2. グラフィックスと色空間 (Graphics & Color Spaces)
+## 2. Graphics and Color Spaces
 
-グラフィックス描画（Clause 8）については、主要なレンダリングモデルをカバーしていますが、以下の制限があります。
+Regarding graphics rendering (Clause 8), major rendering models are covered, with the following limitations:
 
-- **色空間 (Color Spaces)**: `DeviceGray`, `DeviceRGB`, `DeviceCMYK` の基本 3 種に加え、`ICCBased` を完全サポート (lcms2-rs 経由)。高精度なカラーマネジメントプロファイルに基づく色変換を実現しています。
-- **パターンとシェーディング**: `Function-based Shading` (Type 1-3) および `Axial/Radial Shading` に加え、`Mesh Gradients` (Type 4-7) の完全な CPU テッセレーションをサポート。Coons Patch や Tensor-Product Patch の再帰的細分割 (Subdivision) により、規格準拠かつ高精細な描画が可能です。
+- **Color Spaces**: In addition to the three basic types (`DeviceGray`, `DeviceRGB`, `DeviceCMYK`), `ICCBased` is fully supported (via lcms2-rs). High-precision color conversion based on color management profiles is achieved.
+- **Patterns and Shading**: In addition to `Function-based Shading` (Types 1-3) and `Axial/Radial Shading`, full CPU tessellation support for `Mesh Gradients` (Types 4-7) is provided. Standard-compliant and high-definition rendering is possible through recursive subdivision of Coons Patches and Tensor-Product Patches.
 
-## 3. フォントとテキスト (Fonts & Text)
+## 3. Fonts and Text
 
-テキスト処理（Clause 9）は、最も仕様が複雑な領域の一つです。
+Text processing (Clause 9) is one of the most complex areas of the specification.
 
-- **フォント形式**: `Type 1`, `TrueType`, `Type 0 (CIDFont)` をサポート。
-- **進展 (Phase 11)**: 全ての TrueType/CIDFont に対して、抽出したグリフアウトライン（BezPath）を直接レンダリングするパイプラインを実装。WMode 1（垂直書き）のアドバンス計算、および CID メトリクス（/W, /DW）に完全準拠。
-- **簡略化内容**: `Type 3`（ユーザー定義フォント）は、任意の描画命令を内包できるため、再帰呼び出しやスタックオーバーフローのリスク（RR-15 Rule 6 違反）を考慮して除外しています。
+- **Font Formats**: `Type 1`, `TrueType`, and `Type 0 (CIDFont)` are supported.
+- **Progress (Phase 11)**: Implemented a pipeline to directly render extracted glyph outlines (BezPath) for all TrueType/CIDFonts. Fully compliant with WMode 1 (vertical writing) advance calculations and CID metrics (/W, /W2).
+- **Simplification Content**: `Type 3` (User-defined fonts) is excluded due to the risk of recursive calls and stack overflows (violating RR-15 Rule 6), as they can encapsulate arbitrary drawing instructions.
 
-## 4. ドキュメント構造と走査 (Document Structure)
+## 4. Document Structure and Traversal
 
-PDF 文書の論理・物理構造（Clause 7/14）は、再帰的な木構造で定義されます。
+The logical and physical structures of a PDF document (Clauses 7/14) are defined as recursive tree structures.
 
-- **非再帰走査の強制**: 規格上は再帰的なツリーとして定義される `Page Tree` や `Resource Dictionary` ですが、RR-15 Rule 6（No Recursion）を遵守するため、全内部処理を明示的なスタック（`Vec`）を用いた反復処理に置き換えています。これにより、規格どおりの再帰的深さを持つファイルに対するスタックオーバーフローの懸念を完全に排除しました。
+- **Enforcement of Non-Recursive Traversal**: While `Page Tree` and `Resource Dictionary` are defined as recursive trees in the specification, all internal processing has been replaced with iterative processing using an explicit stack (`Vec`) to comply with RR-15 Rule 6 (No Recursion). This completely eliminates concerns about stack overflows for files with recursive depths as defined in the specification.
 
-## 5. インタラクティブ機能 (Interactive Features)
+## 5. Interactive Features
 
-フォーム、注釈、セキュリティ（Clause 12/13）に関しては、以下の設計指針を採っています。
+Regarding forms, annotations, and security (Clauses 12/13), the following design principles are adopted:
 
-- **静的ならびに動的解析**: `AcroForm` および `Digital Signatures` を完全統合。
-  - **AcroForm**: フィールド値の一括取得 (export) および設定 (import) API を提供し、JSON 形式での外部連携が可能になりました。
-  - **Digital Signatures**: 単なる構造検証を超え、`x509-parser` と `rsa` / `ed25519-dalek` を用いた暗号学的な署名検証（SHA-256 + 非対称鍵検証）を実装しました。
-- **マルチメディア (Clause 13)**: `RichMedia` および `3D` アノテーションは、辞書構造の解析と Arlington モデルによる検証のみをサポートしています。
-  - **制限**: U3D/PRC モデルの実レンダリングや、外部メディア（音声・ビデオ）のデコード・再生機能は、外部コーデックへの依存とランタイムの安全性確保の観点から、現時点では意図的に実装を見送っています。
-- **制限事項**: `XFA` (XML Forms Architecture) は、その複雑さとセキュリティ上の攻撃ベクトルの多さを考慮し、非サポートとしています。
+- **Static and Dynamic Analysis**: `AcroForm` and `Digital Signatures` are fully integrated.
+  - **AcroForm**: Provides APIs for bulk retrieval (export) and setting (import) of field values, enabling external integration in JSON format.
+  - **Digital Signatures**: Beyond simple structural validation, cryptographic signature verification (SHA-256 + asymmetric key verification) using `x509-parser` and `rsa` / `ed25519-dalek` has been implemented.
+- **Multimedia (Clause 13)**: For `RichMedia` and `3D` annotations, only dictionary structure analysis and validation via the Arlington model are supported.
+  - **Limitations**: Actual rendering of U3D/PRC models and decoding/playback of external media (audio/video) have been intentionally deferred at this time from the perspective of ensuring runtime safety and dependency management.
+- **Restrictions**: `XFA` (XML Forms Architecture) is not supported due to its complexity and numerous security attack vectors.
 
-## 6. 自動検証とアクセシビリティ (Validation & Accessibility)
+## 6. Automated Validation and Accessibility
 
-- **Arlington 述語 (Predicates)**: Phase 17 において、`nom` による AST パーサおよび再帰的評価エンジンを完全実装しました。これにより、ISO 32000-2 規格に含まれる複雑なバリデーション条件（SinceVersion, Required, Dependent key check 等）の動的評価が可能です。
-- **Tagged PDF 修復**: `TaggedPdfValidator` は ISO 32000-2 Clause 14.8 への準拠性を検証しますが、欠落しているタグ構造の「自動推論・修復」機能は備えていません。
+- **Arlington Predicates**: In Phase 17, an AST parser and recursive evaluation engine using `nom` were fully implemented. This allows for dynamic evaluation of complex validation conditions (SinceVersion, Required, Dependent key check, etc.) included in the ISO 32000-2 specification.
+- **Tagged PDF Repair**: `TaggedPdfValidator` verifies compliance with ISO 32000-2 Clause 14.8 but does not include functionality for "automatic inference and repair" of missing tag structures.
 
-## 7. 方針: Liberal Read, Strict Write
+## 7. Policy: Liberal Read, Strict Write
 
-Ferruginous PDF Engine は、読み込みにおいて最大限の互換性（Liberal Read）を確保しつつ、書き出しにおいて規格への完全準拠（Strict Write）を貫くことを基本方針としています。本ドキュメントに記載された制限事項の多くは、この方針に基づき、複雑でエラーを誘発しやすい古い仕様をあえて「書き出し」対象から除外することで、生成される PDF の品質と安全性を高めるための戦略的決定でもあります。
+The basic policy of the Ferruginous PDF Engine is to ensure maximum compatibility during reading (Liberal Read) while strictly adhering to the specification during writing (Strict Write). Many of the limitations described in this document are strategic decisions based on this policy, aimed at enhancing the quality and safety of generated PDFs by intentionally excluding old, complex, and error-prone specifications from the "writing" target.
 
-## 総評
+## Overall Assessment
 
-Ferruginous は、PDF 2.0 の「全ての定義を読み取る」ことよりも、「読み取った定義が正しく、かつ安全に処理されること」を重視した実装となっています。将来的にこれらの制限を緩和する場合は、各マイルストーンで確立された RR-15 監査を再度パスさせる必要があります。
+Ferruginous is an implementation that emphasizes "correct and safe processing of recognized definitions" rather than just "reading all definitions" of PDF 2.0. If these limitations are to be relaxed in the future, the RR-15 audit established in each milestone must be passed again.

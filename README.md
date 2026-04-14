@@ -1,81 +1,80 @@
-# Ferruginous: 人間と AI の共創による PDF 2.0 ツールキット
+# Ferruginous: A PDF 2.0 Toolkit for Human-AI Co-creation
 
-Ferruginous（フェルジナス）は、ISO 32000-2 (PDF 2.0) 準拠を目指して開発中の、オープンソースの PDF ツールキットです。
-本プロジェクトは、AI エージェント **Antigravity** を活用したプログラミング課題として、PDF 規格に挑む実験的な個人プロジェクトです。
+Ferruginous is an open-source PDF toolkit currently under development with the goal of ISO 32000-2 (PDF 2.0) compliance.
+This project is an experimental personal project that tackles the PDF standard as a programming challenge utilizing the AI agent **Antigravity**.
 
-## プロジェクトの概要
+## Project Overview
 
-このプロジェクトの最大の特徴は、人間と AI の共同開発体制にあります。
-人間（開発者）は基本方針の決定とマイルストーンのレビューに専念し、**具体的な実装の大部分は Antigravity が自律的に担当しています。** また、自らの動作を律する安全性プロトコルやガバナンスルール自体も Antigravity 自身が実装・改定していくという、自己洗練型の開発プロセスを採用しています。
+The most significant feature of this project is the collaborative development system between humans and AI.
+The human (developer) focuses on determining basic policies and reviewing milestones, while **Antigravity autonomously handles the majority of the concrete implementation.** Furthermore, it employs a self-refining development process where Antigravity itself implements and revises its own safety protocols and governance rules.
 
-Rust の安全性を最大限に引き出した「壊れにくい」実装と、GPU 描画エンジン [Vello](https://github.com/linebender/vello) による軽快な動作を両立した、モダンな PDF 環境の構築を目標としています。
+The goal is to build a modern PDF environment that balances "unbreakable" implementation—maximizing Rust's safety—with lightweight performance powered by the [Vello](https://github.com/linebender/vello) GPU rendering engine.
 
-現在、プロジェクトは **Phase 18** (マルチバイトテキスト描画の精密化) の「精密診断フェーズ」にあります。規格書 (ISO 32000-2:2020) を構造的にクエリ可能な診断基盤と、AI の記憶喪失を防ぐ新ガバナンスプロトコルの構築を完了しました。
+Currently, the project is in the "Precision Diagnosis Phase" of **Phase 18** (Multibyte Text Rendering Precision). We have completed the construction of a diagnostic infrastructure capable of structurally querying the specification (ISO 32000-2:2020) and new governance protocols to prevent AI memory loss.
 
-### ✅ 実装済みの全機能
+### ✅ Implemented Features
 
-- **解析とレンダリング (Phase 1-4)**: PDF 文書構造を解析し、Vello による GPU 描画をサポート。
-- **検索とUnicode抽出 (Phase 5)**: Unicode 復元によるテキスト抽出と全文検索。
-- **注釈と編集 (Phase 5)**: ハイライト、矩形注釈の付与とインクリメンタル保存。
-- **フォームとレイヤー (Phase 6)**: AcroForm の入力・保存と OCG レイヤー制御。
-- **高度な描画 (Phase 7)**: ICC カラー管理、透明グループ、複雑なシェーディング。
-- **セキュリティと信頼性 (Phase 8)**: AES-256 Rev 6 暗号化、PAdES 電子署名(LTV)、墨消し。
-- **論理構造とアクセシビリティ (Phase 9)**: Tagged PDF 解析、RoleMap/ClassMap 解決、整合性検証 UI。
-- **マルチメディアと品質保証 (Phase 10)**: RichMedia/3D 解析、Arlington モデルによる再帰的検証、Rayon 並列最適化。
-- **統治基盤と診断インフラ (Phase 11)**: AI の「記憶の蒸発」を防ぐ ELM 規約の確立、および `pdf-spec-mcp` による規格要件抽出基盤の構築。[完了]
-- **プロフェッショナル統合 (Phase 12-13)**: サムネイル駆動のページ操作 (Orchestrator)、CAD 級の精密スナップと計測ツール。
-- **セマンティック & クリエイティブ (Phase 14-15)**: AI によるタグ構造自動生成・修復、選択オブジェクト駆動型のモードレス・コンテキスト UX。
-- **アーキテクチャの強靭化 (Phase 16)**: Vello への直接依存を排除した Render Bridge の構築。
-- **マルチバイトテキスト描画の精密化 (Phase 18)**: 日本語テキストの重なりと位置ずれの解消。現在、規格診断基盤を活用した精密分析フェーズ。
+- **Parsing & Rendering (Phases 1-4)**: Parsing PDF document structure and supporting GPU rendering via Vello.
+- **Search & Unicode Extraction (Phase 5)**: Text extraction via Unicode restoration and full-text search.
+- **Annotation & Editing (Phase 5)**: Adding highlight and rectangle annotations and incremental saving.
+- **Forms & Layers (Phase 6)**: AcroForm input/saving and OCG layer control.
+- **Advanced Graphics (Phase 7)**: ICC color management, transparency groups, and complex shading.
+- **Security & Trust (Phase 8)**: AES-256 Rev 6 encryption, PAdES electronic signatures (LTV), and redaction.
+- **Logical Structure & Accessibility (Phase 9)**: Tagged PDF parsing, RoleMap/ClassMap resolution, and consistency verification UI.
+- **Multimedia & Quality Assurance (Phase 10)**: RichMedia/3D parsing, recursive validation via the Arlington model, and Rayon parallel optimization.
+- **Governance & Diagnostic Infrastructure (Phase 11)**: Establishment of ELM conventions to prevent AI "memory evaporation" and the construction of a specification requirement extraction infrastructure using `pdf-spec-mcp`. [Complete]
+- **Professional Integration (Phases 12-13)**: Thumbnail-driven page operations (Orchestrator), CAD-grade precision snap and measurement tools.
+- **Semantic & Creative (Phases 14-15)**: Automatic generation and repair of tag structures by AI, and modeless context UX driven by selected objects.
+- **Architectural Resilience (Phase 16)**: Construction of a Render Bridge to eliminate direct dependency on Vello.
+- **Multibyte Text Rendering Precision (Phase 18)**: Resolution of overlapping and misalignment of Japanese text. Currently in the precision analysis phase using the specification diagnostic infrastructure.
 
-### 🗓 今後の展望
+### 🗓 Future Outlook
 
-- **3D 投影描画**: Vello を用いた 3D モデルのリアルタイムレンダリング対応。
-- **アプリパッケージ**: 各 OS 向けのネイティブインストーラ自動ビルド。
+- **3D Projection Rendering**: Real-time rendering support for 3D models using Vello.
+- **App Packaging**: Automated builds of native installers for various operating systems.
 
-詳細な実装状況は [ROADMAP.md](ROADMAP.md) に記録しています。
+Detailed implementation status is recorded in [ROADMAP.md](ROADMAP.md).
 
-## 技術的な構成
+## Technical Stack
 
-- **言語**: Rust (Edition 2024 / MSRV 1.94)
-- **描画**: [Vello](https://github.com/linebender/vello) / WGPU
-- **UI フレームワーク**: [egui](https://github.com/emilk/egui) / eframe (0.33.1)
-- **準拠規格**: ISO 32000-2:2020
-- **診断基盤**: `pdf-spec-mcp` (AI 専用規格クエリツール)
+- **Language**: Rust (Edition 2024 / MSRV 1.94)
+- **Rendering**: [Vello](https://github.com/linebender/vello) / WGPU
+- **UI Framework**: [egui](https://github.com/emilk/egui) / eframe (0.33.1)
+- **Compliance Standard**: ISO 32000-2:2020
+- **Diagnostic Foundation**: `pdf-spec-mcp` (AI-exclusive specification query tool)
 
-## 開発環境
+## Development Environment
 
-- **マシン**: MacBook Air (Intel Core i5 / 16GB Memory)
+- **Machine**: MacBook Air (Intel Core i5 / 16GB Memory)
 - **OS**: macOS 15.7.4
-- **AI エージェント**: Antigravity (Gemini)
-- **開発ツール**: Cargo, Clippy, Rustfmt
+- **AI Agent**: Antigravity (Gemini)
+- **Dev Tools**: Cargo, Clippy, Rustfmt
 
-## 開発を支えるルール
+## Rules for Development
 
-以下の厳格なルールによって、AI 主導の開発品質を保っています。
+We maintain the quality of AI-driven development through the following strict rules:
 
-1. **HDD (Harness-Driven Development)**: 実装前に検証用ハーネス（テスト）を用意。
-2. **RR-15 (Reliable Rust 15)**: 15 項目の安全性制約。
-3. **ELM (External Long-Term Memory)**: AI の「記憶の蒸発」を防ぐため、全ての思考・計画をリアルタイムでプロジェクト内の `.agent/session/` に永続化。
-4. **Spec-First Diagnosis**: 推論を排し、`pdf-spec-mcp` を用いた規格照合（Scientific Method）に基づく不具合修正。
+1. **HDD (Harness-Driven Development)**: Prepare a verification harness (test) before implementation.
+2. **RR-15 (Reliable Rust 15)**: A set of 15 safety constraints.
+3. **ELM (External Long-Term Memory)**: To prevent AI "memory evaporation," all thoughts and plans are persisted in real-time to `.agent/session/` within the project.
+4. **Spec-First Diagnosis**: Eliminate inference and perform bug fixes based on the Scientific Method through specification verification using `pdf-spec-mcp`.
 
-## ファイルの構成
+## File Structure
 
-- `crates/`: SDK 本体やレンダリング、UI 等のソースコード。
-- `specs/`: 設計の「正典」として扱っている技術仕様書。
-- `samples/`: テスト用の PDF サンプル。
-- `scripts/`: 品質監査やコンプライアンス検証を行うためのスクリプト。
+- `crates/`: Source code for the SDK core, rendering, UI, etc.
+- `specs/`: Technical specifications treated as the "canon" of design.
+- `samples/`: PDF samples for testing.
+- `scripts/`: Scripts for performing quality audits and compliance verification.
 
 ---
 
-### 開発者・AI 向けの情報
+### Information for Developers & AI
 
-詳細なプロトコルやワークフローについては、[.agent/](.agent/) ディレクトリに集約されています。
+Detailed protocols and workflows are centralized in the [.agent/](.agent/) directory.
 
-- [AI 開発憲章 (GEMINI.md)](.agent/GEMINI.md): AI の行動原則。
-- [管理プロトコル (PLANNING_PROTOCOL.md)](.agent/protocols/PLANNING_PROTOCOL.md): 計画・同期・管理ルール。
-- [品質プロトコル (RELIABLE_RUST_15.md)](.agent/protocols/RELIABLE_RUST_15.md): 安全制約 15 条。
-
+- [AI Charter (GEMINI.md)](.agent/GEMINI.md): Behavioral principles for the AI.
+- [Planning Protocol (PLANNING_PROTOCOL.md)](.agent/protocols/PLANNING_PROTOCOL.md): Rules for planning, synchronization, and management.
+- [Quality Protocol (RELIABLE_RUST_15.md)](.agent/protocols/RELIABLE_RUST_15.md): 15 safety constraints.
 
 ---
 © 2026 Ferruginous Project.

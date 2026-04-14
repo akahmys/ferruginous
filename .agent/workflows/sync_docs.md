@@ -1,26 +1,26 @@
 ---
-description: ドキュメント（ROADMAP, task, README, 設計書）の同期ワークフロー
+description: Workflow for synchronizing documents (ROADMAP, task, README, design specs).
 ---
 
-# [Workflow] ドキュメント同期 (Sync Docs)
+# [Workflow] Sync Docs
 
-実装実態に基づき SSoT を維持せよ。
+Maintain the SSoT (Single Source of Truth) based on the actual implementation state.
 
-## 手順
+## Procedure
 
-1. **状況収集**: パースコード、テスト結果、Arlington 検証状況、および `crates/` 配下の各 crate のビルド状況を確認。
+1. **Information Gathering**: Verify parsing code, test results, Arlington validation status, and the build status of each crate under `crates/`.
 // turbo
-2. **ROADMAP 同期**: [ROADMAP.md](../../ROADMAP.md) の進捗を最新のマイルストーン状況に更新。
+2. **ROADMAP Sync**: Update the progress in [ROADMAP.md](../../ROADMAP.md) to reflect the latest milestone status.
 // turbo
-3. **task 同期**: [.agent/session/task.md](../session/task.md) の完了項目をチェックし、次期タスクを明文化せよ。
+3. **task Sync**: Check off completed items in [.agent/session/task.md](../session/task.md) and clearly document upcoming tasks.
 // turbo
-4. **セッション状態同期**: [.agent/session/handoff.md](../session/handoff.md) および [.agent/session/regression_log.md](../session/regression_log.md) をこのセッションの学びに基づいて更新。
+4. **Session State Sync**: Update [.agent/session/handoff.md](../session/handoff.md) and [.agent/session/regression_log.md](../session/regression_log.md) based on the lessons learned from this session.
 // turbo
-5. **仕様書更新**: 解析・描画ロジックの変更、および UI 統合の進展を [specs/](../../specs/) 配下の各設計書に反映。
+5. **Spec Update**: Reflect changes in parsing/rendering logic and progress in UI integration in the respective design documents under [specs/](../../specs/).
 // turbo
-6. **README 同期**: 現在のフェーズ、RR-15 準拠状況を [README.md](../../README.md) に反映。
+6. **README Sync**: Reflect the current phase and RR-15 compliance status in [README.md](../../README.md).
 
-## 完了要件
+## Completion Requirements
 
-- 全てのドキュメントが現在のコードベースの能力を正しく説明していること
-- リンク切れがないこと
+- All documents accurately describe the capabilities of the current codebase.
+- No broken links.

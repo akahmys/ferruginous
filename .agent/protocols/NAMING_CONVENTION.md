@@ -1,35 +1,35 @@
 # Naming Convention Protocol (RFC 0430 Alignment)
 
-このドキュメントは、[Rust RFC 0430](https://github.com/rust-lang/rfcs/blob/master/text/0430-finalizing-naming-conventions.md) に準拠した Ferruginous プロジェクトの公式命名規則を定義する。
+This document defines the official naming conventions for the Ferruginous project, adhering to [Rust RFC 0430](https://github.com/rust-lang/rfcs/blob/master/text/0430-finalizing-naming-conventions.md).
 
 > [!IMPORTANT]
-> **優先順位**: PDF 仕様書（ISO 32000-2）の用語と Rust の慣習が衝突する場合、原則として **Rust の共通慣習（Naming Context）を優先**する。
+> **Priority**: If there is a conflict between the terminology in the PDF specification (ISO 32000-2) and Rust conventions, **Rust's common naming conventions (Naming Context) shall prevail** as a general rule.
 
 ---
 
-## 1. ケース・スタイル (Casing Strategy)
+## 1. Casing Strategy
 
-- **規約**: 型・トレイトは `UpperCamelCase`、関数・変数は `snake_case` を徹底せよ。
-- **目的**: Rust コンパイルの慣習（RFC 0430）に合わせることで、警告をゼロにし可読性を最大化する。
-- **判定基準**: Clippy による命名警告がゼロであること。
+- **Rule**: Use `UpperCamelCase` for types and traits, and `snake_case` for functions and variables.
+- **Purpose**: Align with Rust compilation conventions (RFC 0430) to eliminate warnings and maximize readability.
+- **Criterion**: Zero naming warnings from Clippy.
 
-## 2. Getter と変換 (Getters & Conversions)
+## 2. Getters & Conversions
 
-- **規約**: 直接取得に `get_` を使用せず、変換には `as_`（参照）、`to_`（生成）、`into_`（消費）を使い分けよ。
-- **目的**: Rust 特有の所有権セマンティクスをメソッド名から直感的に理解可能にする。
-- **判定基準**: SDK 公開 API のシグネチャにおいて `get_` プレフィックスが排除されていること。
+- **Rule**: Avoid using `get_` for direct retrieval. Use `as_` (reference), `to_` (creation), and `into_` (consumption) to differentiate conversions.
+- **Purpose**: Make Rust's unique ownership semantics intuitively understandable from method names.
+- **Criterion**: Exclusion of the `get_` prefix in the SDK's public API signatures.
 
-## 3. PDF 用語の調和 (PDF Domain Mapping)
+## 3. PDF Domain Mapping
 
-- **規約**: PDF 仕様の用語（MediaBox 等）は保持するが、ケースは Rust 規約（media_box）に従え。略語も通常の単語（PdfError）として扱う。
-- **目的**: ドメイン固有の知識と言語の慣習を矛盾なく融合させる。
-- **判定基準**: Arlington Model のキー名と Rust メソッド名の対応が機械的に変換可能であること。
+- **Rule**: Retain PDF specification terminology (e.g., MediaBox) but adhere to Rust casing conventions (e.g., `media_box`). Treat abbreviations as normal words (e.g., `PdfError`).
+- **Purpose**: Seamlessly fuse domain-specific knowledge with language conventions.
+- **Criterion**: Key names from the Arlington Model and Rust method names must be mechanically convertible.
 
 ---
 
-## 4. 命名対応表
+## 4. Naming Correspondence Table
 
-| 項目 | スタイル | 例 |
+| Item | Style | Example |
 | :--- | :--- | :--- |
 | **Types, Traits** | `UpperCamelCase` | `PdfResolver`, `Object` |
 | **Enum Variants** | `UpperCamelCase` | `Dictionary`, `String` |

@@ -1,15 +1,15 @@
-# スキル: ハーネス構築 (scaffold_harness)
+# Skill: Scaffold Harness (scaffold_harness)
 
-[HDD_PROTOCOL](../protocols/HDD_PROTOCOL.md) に基づき、実装に先行して「失敗する検証環境」を自動構築せよ。
+Autonomously construct a "failing verification environment" prior to implementation, based on the [HDD_PROTOCOL](../protocols/HDD_PROTOCOL.md).
 
-## 1. 仕様の特定 (Spec Definition)
+## 1. Specification Definition
 
-- **規約**: `specs/` または ISO Clause 情報を元に、期待される入出力を厳密に定義せよ。
-- **目的**: 実装前に「正解」を確定させ、開発の迷いを排除する。
-- **判定基準**: Clause 番号がテスト名またはコメントに含まれていること。
+- **Rule**: Strictly define expected inputs and outputs based on `specs/` or ISO Clause information.
+- **Purpose**: Determine the "correct answer" before implementation to eliminate hesitation during development.
+- **Criterion**: The Clause number must be included in the test name or comments.
 
-## 2. 失敗の実証 (Fail-First)
+## 2. Proving Failure (Fail-First)
 
-- **規約**: ロジックが空の状態で `cargo test` を実行し、意図通りに FAIL することを確認せよ。
-- **目的**: テスト自体が正常に機能（検証能力を保持）していることを証明する。
-- **判定基準**: テスト実行結果に期待通りのエラー（Panic または Assertion Fail）が記録されていること。
+- **Rule**: Run `cargo test` with empty logic and confirm that it fails as intended.
+- **Purpose**: Prove that the test itself functions correctly (retains verification capability).
+- **Criterion**: An expected error (Panic or Assertion Fail) is recorded in the test execution results.

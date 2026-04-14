@@ -23,7 +23,7 @@ pub static RENDER_TRIGGER_COUNT: std::sync::atomic::AtomicU32 = std::sync::atomi
 pub struct FerruginousApp {
     /// Count of frames rendered since startup.
     pub frame_count: u32,
-    /// Currently active navigation tab (e.g. "ページ", "目次").
+    /// Currently active navigation tab (e.g. "Page", "Outline").
     pub active_tab: String,
     /// Currently selected interaction tool.
     pub tool_mode: ToolMode,
@@ -87,13 +87,13 @@ pub struct FerruginousApp {
     pub vello_callback_count: u32,
 
     // Diagnostic State
-    /// デバッグ用のオーバーレイを表示するかどうか。
+    /// Whether to show the debug overlay.
     pub show_debug_overlay: bool,
-    /// 診断モード（詳細ログ出力など）を有効にするかどうか。
+    /// Whether to enable diagnostic mode (detailed logging, etc.).
     pub diagnostic_mode: bool,
     
     // Platform Bridge
-    /// OS 固有機能（ファイルダイアログ等）へのブリッジ。
+    /// Bridge to OS-specific features (file dialogs, etc.).
     pub system: Box<dyn SystemBridge>,
 }
 
@@ -117,7 +117,7 @@ impl FerruginousApp {
 
         Self {
             frame_count: 0,
-            active_tab: "ページ".to_string(),
+            active_tab: "Page".to_string(),
             tool_mode: ToolMode::Select,
             font_loaded: false,
             icons_loaded: false,
@@ -159,7 +159,7 @@ impl FerruginousApp {
                 }
                 Err(e) => { 
                     eprintln!("[ERROR][UI] Failed to load initial file: {e:?}");
-                    self.error_message = Some(format!("PDFロード失敗: {e:?}")); 
+                    self.error_message = Some(format!("PDF Load Failed: {e:?}")); 
                 }
             }
         }
@@ -172,7 +172,7 @@ impl FerruginousApp {
             if let Ok(data) = std::fs::read(&path) {
                 match ferruginous_sdk::loader::load_document_structure(&data) {
                     Ok(doc) => { self.process_loaded_doc(doc); }
-                    Err(e) => { self.error_message = Some(format!("PDFロード失敗: {e:?}")); }
+                    Err(e) => { self.error_message = Some(format!("PDF Load Failed: {e:?}")); }
                 }
             }
         }
@@ -182,7 +182,7 @@ impl FerruginousApp {
         let tree = match doc.page_tree() {
             Ok(t) => t,
             Err(e) => {
-                self.error_message = Some(format!("ページツリー解析エラー: {e:?}"));
+                self.error_message = Some(format!("Page Tree Analysis Error: {e:?}"));
                 return;
             }
         };

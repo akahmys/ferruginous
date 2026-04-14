@@ -1,31 +1,31 @@
-# UI コンポーネント設計規約 (UI Design Protocol)
+# UI Component Design Protocol
 
 > [!IMPORTANT]
-> Ferruginous の UI は「データの純粋性」と「直感的な操作性」を両立させる。Egui の immediate mode 特性を活かし、常に単一の真実（SDK 状態）を視覚化せよ。
+> The Ferruginous UI balances "Data Purity" with "Intuitive Operability." Leverage Egui's immediate mode characteristics to always visualize a Single Source of Truth (SDK state).
 
-## 1. 共有 SSoT (Shared SSoT)
+## 1. Shared SSoT (Shared Single Source of Truth)
 
-- **規約**: UI は独自の可変状態を最小限に抑え、`ferruginous-sdk` の状態を直接投影せよ。
-- **目的**: UI とデータの不整合を物理的に排除し、単一の真実を維持する。
-- **判定基準**: UI コンポーネントが SDK のデータ型を直接引数として受け取っていること。
+- **Rule**: Minimize the UI's own mutable state and directly project the state of `ferruginous-sdk`.
+- **Purpose**: Physically eliminate inconsistencies between the UI and data, maintaining a single truth.
+- **Criterion**: UI components must accept SDK data types directly as arguments.
 
-## 2. プレミアム・デザイン (Premium Aesthetics)
+## 2. Premium Aesthetics
 
-- **規約**: HSL ベースのカラーパレット、モダンなタイポグラフィ、および 100-200ms のマイクロアニメーションを採用せよ。
-- **目的**: ツールとしての機能性だけでなく、所有欲を満たす高品質なユーザー体験を提供する。
-- **判定基準**: ブラウザデフォルトのスタイルが完全に排除され、一貫したデザイントークンが適用されていること。
+- **Rule**: Adopt an HSL-based color palette, modern typography, and 100-200ms micro-animations.
+- **Purpose**: Provide a high-quality user experience that not only offers functionality but also satisfies the desire for ownership.
+- **Criterion**: Browser default styles must be completely eliminated, and consistent design tokens must be applied.
 
-## 3. レスポンスと堅牢性 (Fluidity & Robustness)
+## 3. Fluidity & Robustness
 
-- **規約**: 全てのインタラクティブ要素に一意の ID を付与し、ウィンドウリサイズや不正な入力に対してクラッシュせずに追従せよ。
-- **目的**: テスト容易性の向上と、あらゆる利用環境における安定性を確保する。
-- **判定基準**: リサイズ時の描画崩れがなく、全要素が `Universal ID` を保持していること。
+- **Rule**: Assign a unique ID to every interactive element and ensure they follow window resizing and invalid input without crashing.
+- **Purpose**: Improve testability and ensure stability across all usage environments.
+- **Criterion**: No rendering breakdown during resizing, and all elements must hold a `Universal ID`.
 
 ---
 
-## 4. 監査チェックリスト
+## 4. Audit Checklist
 
-1. **SSoT 投影**: SDK 状態との乖離はないか？
-2. **パフォーマンス**: 60 FPS を維持できているか？
-3. **視覚的一貫性**: 余白、色使い、タイポグラフィが統一されているか？
-4. **アクセシビリティ**: コントラスト比 4.5:1 以上を維持し、ダークモードに対応しているか？
+1.  **SSoT Projection**: Is there any divergence from the SDK state?
+2.  **Performance**: Is 60 FPS being maintained?
+3.  **Visual Consistency**: Are margins, colors, and typography unified?
+4.  **Accessibility**: Is a contrast ratio of 4.5:1 or higher maintained, and is dark mode supported?

@@ -28,7 +28,7 @@ pub fn cid_to_unicode_aj1(cid: u32) -> Option<char> {
         7 => Some('。'),
         8 => Some('、'),
         
-        // Hiragana: CID 9354 ('ぁ') to 9443 ('ん')
+        // Hiragana: CID 9354 to 9443
         // (Note: CIDs depend on the specific AJ1 version, but 1-3 is most common)
         // Let's use a more robust range-based approach if possible.
         

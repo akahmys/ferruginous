@@ -1,25 +1,25 @@
 ---
-description: RR-15 コンプライアンスの自動検証ワークフロー
+description: Automated verification workflow for RR-15 compliance.
 ---
 
-# [Workflow] 整合性検証 (Verify Compliance)
+# [Workflow] Verify Compliance
 
-[RR-15](../protocols/RELIABLE_RUST_15.md) 適合性を「スキル」と「スクリプト」の両面から監査し、絶対的な品質を維持せよ。
+Audit compliance with [RR-15](../protocols/RELIABLE_RUST_15.md) from both the "skill" and "script" perspectives to maintain absolute quality.
 
-## 手順
+## Procedure
 
 // turbo
-1. **AI監査**: [verify_rr15](../skills/verify_rr15.md) スキルに従い、現状のコードベースに論理的・構造的な違反がないかセルフチェックせよ。
-2. **自動監査**: 以下を実行し、機械的な全項目 PASS を確認せよ。
+1. **AI Audit**: Follow the [verify_rr15](../skills/verify_rr15.md) skill to self-check the current codebase for any logical or structural violations.
+2. **Automated Audit**: Execute the following and confirm that all items PASS mechanically.
 // turbo
-   - `./scripts/verify_compliance.sh` (規約適合性)
+   - `./scripts/verify_compliance.sh` (Convention compliance)
 // turbo
-   - `cargo clippy --pedantic` (警告ゼロ)
+   - `cargo clippy --pedantic` (Zero warnings)
 // turbo
-   - `./scripts/msrv_check.sh` (互換性維持)
-3. **成果物記録**: 監査結果と発見された課題、修正内容を `walkthrough.md` に記録せよ。
+   - `./scripts/msrv_check.sh` (Maintenance of compatibility)
+3. **Artifact Recording**: Record audit results, discovered issues, and fix details in `walkthrough.md`.
 
-## 完了要件
-- 警告・不整合が 1 件も残っていないこと
-- AIによる論理監査において「改善の余地なし」と判断されること
-- 修正が必要な場合は、機能追加を中断して修正を優先したこと
+## Completion Requirements
+- Not a single warning or inconsistency remains.
+- The AI's logical audit yields a judgment of "no room for improvement."
+- If fixes are necessary, feature additions are suspended and fixes are prioritized.

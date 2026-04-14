@@ -9,21 +9,21 @@ use ferruginous_sdk::graphics::DrawCommand;
 use crate::{RenderBackend, VelloBackend, BackendOptions};
 use image::RgbaImage;
 
-/// WGPU ヘッドレス環境を管理する構造体。
+/// Structure managing the WGPU headless environment.
 pub struct HeadlessDevice {
-    /// レンダリングに使用する WGPU デバイス。
+    /// WGPU device used for rendering.
     pub device: Arc<Device>,
-    /// コマンド送信用の WGPU キュー。
+    /// WGPU queue for command submission.
     pub queue: Queue,
 }
 
 impl HeadlessDevice {
-    /// デバイスとキューを同期的に初期化します。
+    /// Synchronously initializes the device and queue.
     pub fn new() -> Result<Self, String> {
         let instance = Instance::default();
-        // コンパイラのエラー「no method named ok_or_else found for struct wgpu::Adapter」
-        // を踏まえ、pollster::block_on(...) の結果が直接 Adapter (Option または Result 経由)
-        // であると判断し、安全に剥がす。
+        // Based on the compiler error "no method named ok_or_else found for struct wgpu::Adapter,"
+        // it is determined that the result of pollster::block_on(...) is directly an Adapter
+        // (via Option or Result), and it is safely unwrapped.
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
             compatible_surface: None,
@@ -49,7 +49,7 @@ impl HeadlessDevice {
         })
     }
 
-    /// `DisplayList` をレンダリングし、RgbaImage として取得します。
+    /// Renders a `DisplayList` and retrieves it as an `RgbaImage`.
     pub fn capture_rendering(
         &self,
         commands: &[DrawCommand],
@@ -59,7 +59,7 @@ impl HeadlessDevice {
         let mut backend = VelloBackend::new();
         backend.prepare_renderer(&self.device, BackendOptions { use_cpu: false, antialiasing: true })?;
         
-        // 1. レンダリングターゲット用テクスチャの作成
+        // 1. Create a texture for the rendering target
         let texture = self.device.create_texture(&TextureDescriptor {
             label: Some("Capture Texture"),
             size: Extent3d {
@@ -76,11 +76,11 @@ impl HeadlessDevice {
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        // 2. 描画
+        // 2. Render
         backend.render_display_list(commands, ferruginous_sdk::graphics::Affine::IDENTITY, None);
         backend.render_to_texture(&self.device, &self.queue, &view, width, height)?;
 
-        // 3. テクスチャからバッファへのコピー
+        // 3. Copy from texture to buffer
         let pixel_size = 4; // RGBA8
         let align = 256;
         let unpadded_row_size = width * pixel_size;
@@ -122,12 +122,12 @@ impl HeadlessDevice {
 
         self.queue.submit(Some(encoder.finish()));
 
-        // 4. バッファの読み取りと画像変換
+        // 4. Read buffer and convert to image
         let buffer_slice = output_buffer.slice(..);
         let (tx, rx) = std::sync::mpsc::channel();
         buffer_slice.map_async(MapMode::Read, move |v| tx.send(v).unwrap());
 
-        // wgpu 25.0+ における PollType::wait_indefinitely() を使用。
+        // Use PollType::wait_indefinitely() available in wgpu 25.0+.
         let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
 
         if rx.recv() == Ok(Ok(())) {

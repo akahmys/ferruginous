@@ -1,69 +1,65 @@
-# 戦略的プランニング・プロトコル (Planning Protocol)
+# Strategic Planning Protocol
 
 > [!IMPORTANT]
-> **AI の生存戦略**: セッション開始時に本プロトコルの「3.1. セッション開始手順」を完遂せよ。
-> 「記憶の蒸発」を前提とし、あらゆる思考過程を即座に外部化（ELM 永続化）せよ。
-
-## 1. 信頼できる唯一の情報源 (SSoT Roles)
-
-プロジェクトの整合性を維持するため、以下の SSoT（Single Source of Truth）定義を厳守せよ。
-
-| カテゴリ | ターゲット | 役割と定義 | 判定基準 |
-| :--- | :--- | :--- | :--- |
-| **思想** | `.agent/GEMINI.md` | **Constitution**: 憲章・開発哲学・根本原則。 | 命令の絶対的優先順位 |
-| **規約** | `.agent/protocols/` | **Governance**: 品質・プロセス・設計の具体的制約。 | 各ファイル内の判定基準 |
-| **仕様** | `specs/` | **Specs**: 内部設計書および機能要件。 | ISO 32000 との整合性 |
-| **外部規格** | `pdf-spec-mcp` | **Standard**: ISO 32000-2:2020 国際規格の正典。 | ツールによる条項特定 |
-| **記憶 (ELM)** | `.agent/session/` | **ELM**: AI の外部長期記憶。計画、タスク、WAL。 | リアルタイムのミラー反映 |
-| **履歴** | `ROADMAP.md` | **Progress**: マイルストーンの達成と承認の記録。 | ユーザー承認の有無 |
-
-## 2. ELM ライフサイクル (The Life-Support Cycle)
-
-AI の思考が「蒸発」するのを防ぐため、以下の **即時永続化フロー** を全フェーズで適用せよ。
-
-1.  **提案 (Artifact)**: 計画（Plan）やタスク（Task）を、AI IDE の高視認性領域（Artifact）に作成。
-2.  **即時永続化 (ELM Mirror)**: 承認を待たず、作成直後のターンで **プロジェクト内の `.agent/session/` フォルダへ物理的に書き出し**。
-3.  **実行 (Execution)**: 承認された Plan に基づき作業を開始。進捗の都度 `task.md` を ELM へ反映。
-4.  **検証 (Proof)**: 検証結果（Walkthrough）も同様に Artifact 作成と ELM 永続化を同時に実施。
-
-## 3. セッション管理 (Session Management)
-
-### 3.1. セッション開始手順 [MANDATORY]
-セッション開始直後、AI は以下の手順を **一気通貫で実行** しなければならない。
-
-1.  **憲章確認**: `GEMINI.md` を読み、現在の哲学を再教育する。
-2.  **記憶のロード**: `session/handoff.md` および `session/regression_log.md` を読み、中断地点と過去の過ちを把握する。
-3.  **ELM 同期**: `session/task.md` と `session/implementation_plan.md` を読み、現在の未完了タスクと合意事項を復元する。
-4.  **モード宣言**: Build または Fix モードを宣言し、スコープを明示した上でユーザーの承認を得る。
-
-### 3.2. WAL (Write-Ahead Log) 運用
-- **意図の記録**: コードを 1 行でも変更する前に、その「意図（Why）」を `task.md` に追記せよ。
-- **結果の記録**: 変更後、テストの結果等「事実（What）」を `task.md` に記録せよ。
-- **ELM 反映**: 常に `brain` 側と `session/` 側の内容を同期させ、「書き出されていない思考は存在しない」状態を維持せよ。
-
-## 4. ポータビリティと匿名性 (Portability & Privacy)
-
-- **相対パスの強制**: 環境依存の絶対パス（`/Users/...`）を排除し、常にプロジェクトルートからの相対パスを使用せよ。
-- **匿名化**: 個人を特定する情報や秘密情報を ELM に書き込んではならない。
-- **プロジェクト完結性**: `.agent/` ディレクトリのみで AI が自律的に立ち上がれる状態を維持せよ。
-
-## 6. バージョン管理規約 (Version Control Protocol)
-
-「メインブランチの安定性」と「大胆な診断・実験」を両立するため、以下のブランチ運用を標準手順とする。
-
-- **main ブランチ (SSoT of Stability)**:
-    - 常にビルド可能であり、`verify_compliance.sh` をパスする最安定版。
-    - ユーザーによる最終承認を得た成果物のみがマージされる。
-- **開発ブランチ (feat/ or fix/)**:
-    - 新機能開発（Build モード）は `feat/phase-XX-description`。
-    - 不具合修正（Fix モード）は `fix/issue-description`。
-    - AI は原則として開発ブランチ上で作業を行い、完了後にマージを提案せよ。
-- **ライフサイクル**:
-    1. フェーズ開始時に新ブランチ作成。
-    2. ブランチ上で診断・実装・検証を実行。
-    3. 完了ゲートを通過し `walkthrough.md` で報告。
-    4. ユーザー承認後、`main` へマージし、ブランチをクローズする。
+> **AI Survival Strategy**: Execute the "3.1. Session Start Procedure" of this protocol immediately at the start of every session. Externalize every thought process to ELM instantly.
 
 ---
-> [!NOTE]
-> **Git への永続化タイミング**: 重要なマイルストーン完了時、またはセッションの区切りにおいて、積極的に GitHub へプッシュせよ。これはクラウド上の ELM（外部長期記憶）バックアップとして機能する。
+
+## 1. Single Source of Truth (SSoT)
+
+- **Rule**: Maintain project consistency by strictly categorizing assets into their respective SSoT roles.
+- **Purpose**: Prevent information fragmentation and ensure that all development decisions are based on the latest canonical source.
+- **Criterion**:
+    - **Constitution**: `.agent/GEMINI.md` (Fundamental principles)
+    - **Governance**: `.agent/protocols/` (Quality & process constraints)
+    - **Specs**: `specs/` (Internal design & requirements)
+    - **External Standard**: ISO 32000-2 (via `pdf-spec-mcp`)
+    - **Memory (ELM)**: `.agent/session/` (Real-time thought/plan persistence)
+    - **History**: `ROADMAP.md` (Approved milestones)
+
+## 2. ELM Lifecycle (Immediate Persistence)
+
+- **Rule**: Physically persist every plan, task, and result to the `.agent/session/` directory in the same turn they are created.
+- **Purpose**: Overcome "Session Amnesia" by ensuring that thoughts exist in the project filesystem, not just in AI context.
+- **Criterion**: All active `task.md` and `implementation_plan.md` states must match the local filesystem files before the session turn ends.
+
+## 3. Execution Modes
+
+- **Rule**: Every task must be categorized into either **Build Mode** or **Fix Mode**, and the corresponding protocol must be declared.
+- **Purpose**: Apply the appropriate verification rigor (HDD for new features, Diagnosis-first for fixes).
+- **Criterion**:
+    - **Build Mode**: Applies to new features. Use [HDD_PROTOCOL](HDD_PROTOCOL.md).
+    - **Fix Mode**: Applies to bugs/regressions. Use [FIX_PROTOCOL](FIX_PROTOCOL.md).
+
+## 4. Session Management
+
+### 4.1. Session Start Procedure [MANDATORY]
+- **Rule**: Upon startup, sync with ELM sequentially: Constitution → Memory (Handoff/Regression) → Task/Plan Sync → Mode Declaration.
+- **Purpose**: Re-establish context and historical awareness before making any modifications.
+- **Criterion**: The first response of a session must demonstrate awareness of the last completed task and the current goal.
+
+### 4.2. WAL (Write-Ahead Log) Operation
+- **Rule**: Declare intent in `task.md` *before* execution, and record facts (test results/diffs) *after* execution.
+- **Purpose**: Create a traceable audit trail of "Why" and "What" for future session diagnosis.
+- **Criterion**: Every code-modifying turn must have a corresponding entry in the session task list.
+
+## 5. Portability & Integrity
+
+- **Rule**: Enforce relative paths and strictly anonymize all logs/comments.
+- **Purpose**: Ensure the repository can be cloned and managed on any system without environment-specific failures.
+- **Criterion**: Zero absolute paths (`/Users/...`) in project documentation or ELM files.
+
+## 6. Version Control Workflow
+
+- **Rule**: Balance the stability of `main` with the flexibility of development branches using a strict branch-per-milestone lifecycle.
+- **Purpose**: Maintain `main` as the stable "SSoT of Stability" while allowing bold, diagnostic changes in development branches.
+- **Criterion**:
+    - **main Branch**: Must always pass `verify_compliance.sh`. Only merged after user approval.
+    - **Development Branches**:
+        - **Build Mode**: Use `feat/phase-[XX]-[description]`.
+        - **Fix Mode**: Use `fix/[issue-description]`.
+    - **Lifecycle**:
+        1. Create a new branch at the start of a phase.
+        2. Perform diagnosis, implementation, and verification on the branch.
+        3. Pass the completion gate (all tests pass) and report with `walkthrough.md`.
+        4. After user approval, merge into `main` and close the branch.

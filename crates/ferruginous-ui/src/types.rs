@@ -10,9 +10,9 @@ pub enum ToolMode {
 impl ToolMode {
     pub fn label(&self) -> &'static str {
         match self {
-            Self::Select => "選択",
-            Self::Snap => "スナップ",
-            Self::Measure => "計測",
+            Self::Select => "Select",
+            Self::Snap => "Snap",
+            Self::Measure => "Measure",
         }
     }
 }

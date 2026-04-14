@@ -1,15 +1,15 @@
-# スキル: ハーネス解決 (resolve_harness)
+# Skill: Resolve Harness (resolve_harness)
 
-構築された検証ハーネスを、[RR-15](../protocols/RELIABLE_RUST_15.md) 準拠の実装によって PASS 状態へ導け。
+Bring a constructed verification harness to a PASS state through an implementation that complies with [RR-15](../protocols/RELIABLE_RUST_15.md).
 
-## 1. 最小実装 (Minimal Logic)
+## 1. Minimal Logic
 
-- **規約**: ハーネスを PASS させるために必要な最小限のロジックのみを記述せよ。
-- **目的**: 不要な複雑性を排除し、仕様に対する正確な実装を維持する。
-- **判定基準**: テストが Green になり、余分な機能が含まれていないこと。
+- **Rule**: Write only the minimum necessary logic to make the harness PASS.
+- **Purpose**: Eliminate unnecessary complexity and maintain an accurate implementation of the specifications.
+- **Criterion**: Tests become Green and no redundant functionality is included.
 
-## 2. 所有権と借用 (Ownership & Borrowing)
+## 2. Ownership & Borrowing
 
-- **規約**: 借用エラーを `.clone()` で解決することを禁止し、所有権構造自体を RR-15 に基づき再設計せよ。
-- **目的**: メモリ効率と実行時パフォーマンス、および設計の健全性を担保する。
-- **判定基準**: 静的解析において不要なクローンが報告されないこと。
+- **Rule**: Prohibit resolving borrowing errors using `.clone()`; instead, redesign the ownership structure itself based on RR-15.
+- **Purpose**: Ensure memory efficiency, runtime performance, and the integrity of the design.
+- **Criterion**: No unnecessary clones are reported in static analysis.

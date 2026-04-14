@@ -1,29 +1,29 @@
 ---
-description: プロジェクト規約、スキル、ワークフローの全体的な再編と整理
+description: Overall reorganization and cleanup of project conventions, skills, and workflows.
 ---
 
-# [Workflow] 規約リファクタリング (Refactor Conventions)
+# [Workflow] Refactor Conventions
 
-プロジェクトの成長に伴う規約の冗長化を排除し、SSoT を再構築せよ。
+Eliminate redundancy in conventions as the project grows and rebuild the SSoT (Single Source of Truth).
 
-## 手順
-
-// turbo
-1. **全体監査**: `GEMINI.md`、`protocols/`、`skills/`、`workflows/` 全域を走査し、冗長な記述やリンク切れを特定せよ。
-// turbo
-2. **基盤刷新**: `GEMINI.md`（憲章）と `PLANNING_PROTOCOL.md`（管理）の役割を分離し、役分担を明確化せよ。
-// turbo
-3. **記述の統一**: `RELIABLE_RUST_15.md` 等の各規約を「規約・目的・判定基準」の標準フォーマットへ統一し、曖昧さを排除せよ。
-// turbo
-4. **自動化の拡張**: 全ワークフローに `// turbo` アノテーションを付与し、かつリンクパスを最新の配置に修復せよ。
-// turbo
-5. **組織化**: 不要な一時ファイルの削除、および迷い込んだ仕様書を `specs/` 配下へ統合せよ。
+## Procedure
 
 // turbo
-6. **同期確認**: [sync_docs](sync_docs.md) を実行し、全ドキュメントの整合性を最終確認せよ。
+1. **Global Audit**: Scan `GEMINI.md`, `protocols/`, `skills/`, and `workflows/` to identify redundant descriptions or broken links.
+// turbo
+2. **Infrastructure Renewal**: Separate the roles of `GEMINI.md` (Charter) and `PLANNING_PROTOCOL.md` (Management), clarifying the division of responsibilities.
+// turbo
+3. **Unification of Descriptions**: Standardize each convention (e.g., `RELIABLE_RUST_15.md`) into the "Rule, Purpose, Criterion" format to eliminate ambiguity.
+// turbo
+4. **Extension of Automation**: Add `// turbo` annotations to all workflows and fix link paths to reflect the latest layout.
+// turbo
+5. **Organization**: Delete unnecessary temporary files and integrate misplaced specifications into the `specs/` directory.
 
-## 完了要件
+// turbo
+6. **Sync Verification**: Execute [sync_docs](sync_docs.md) to perform a final consistency check across all documents.
 
-- 階層構造（Constitution -> Protocols -> Specifications）の維持
-- `verify_compliance.sh` による等価な品質担保
-- 全リンクの正常動作
+## Completion Requirements
+
+- Maintenance of the hierarchical structure (Constitution -> Protocols -> Specifications)
+- Equivalent quality assurance via `verify_compliance.sh`
+- All links are functional

@@ -1,22 +1,22 @@
-# スキル: 摩擦分析 (analyze_friction)
+# Skill: Friction Analysis (analyze_friction)
 
-開発・検証ループの摩擦（Friction）や指摘を分析し、再発防止策を適切な規約ファイルへ反映せよ。
+Analyze friction points and feedback in the development and verification loop, and reflect preventive measures in the appropriate convention files.
 
-## 1. 履歴走査 (Scan)
+## 1. History Scanning
 
-- **規約**: コンパイルエラー、Clippy 警告、論理的矛盾、またはユーザーからの指摘を特定し、試行錯誤の原因を深掘りせよ。
-- **目的**: 表面的な修正ではなく、思考プロセスや規約の不備という根本原因を特定する。
-- **判定基準**: 摩擦の具体的な発生箇所と、その背後にある「迷い」が言語化されていること。
+- **Rule**: Identify compilation errors, Clippy warnings, logical contradictions, or user feedback, and delve deep into the causes of trial and error.
+- **Purpose**: Identify the root causes—such as flaws in the thought process or conventions—rather than making superficial fixes.
+- **Criterion**: The specific occurrence points of friction and the underlying "hesitation" must be verbalized.
 
-## 2. カテゴリ分類と改定 (Categorize & Revise)
+## 2. Categorization & Revision
 
-- **規約**: [PLANNING_PROTOCOL](../protocols/PLANNING_PROTOCOL.md) に基づきカテゴリ（憲章/品質/プロセス等）を分類し、既存の哲学を損なわず「より具体的・機械的」な規約へ改定せよ。
-- **目的**: 改善案を SSoT へ還元し、同様の摩擦の再発を物理的に防止する。
-- **判定基準**: 修正対象のファイルが特定され、具体的な「判定基準」を含む改定文案が作成されていること。
-- **自動化の検討**: そのルール改定は「スキル化」または「ワークフロー化」によって自動検証・自動実行が可能か？（推奨：頻度の高い複雑なルールはスキル化せよ）
+- **Rule**: Categorize by type (e.g., Charter/Quality/Process) based on the [PLANNING_PROTOCOL](../protocols/PLANNING_PROTOCOL.md), and revise conventions to be "more concrete and mechanical" without compromising existing philosophy.
+- **Purpose**: Feed improvements back into the SSoT and physically prevent the recurrence of similar friction.
+- **Criterion**: Files to be modified are identified, and draft revisions including specific "Criteria" are created.
+- **Automation Consideration**: Can the rule revision be automated through "skillization" or "workflowization"? (Recommendation: Complex rules with high frequency should be made into skills.)
 
-## 3. 反映 (Apply)
+## 3. Reflection (Apply)
 
-- **規約**: ユーザーの合意を得た後、規約ファイルを修正し、[sync_docs](../workflows/sync_docs.md) を実行して最新化せよ。
-- **目的**: 改善をプロジェクト全体の知識ベースとして定着させる。
-- **判定基準**: 規約修正後の `verify_compliance.sh` がパスし、ドキュメントが同期されていること。
+- **Rule**: After obtaining user consensus, modify the convention files and execute [sync_docs](../workflows/sync_docs.md) to bring them up to date.
+- **Purpose**: Solidify improvements as a project-wide knowledge base.
+- **Criterion**: `verify_compliance.sh` passes after convention modification, and documents are synchronized.

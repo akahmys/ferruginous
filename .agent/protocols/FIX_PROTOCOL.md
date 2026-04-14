@@ -1,46 +1,48 @@
-# 修正プロトコル (Fix Protocol)
+# Fix Protocol
 
 > [!IMPORTANT]
-> **修正の本質**: 「コード変更」と「解決」は異なる。
-> 科学的方法（診断 → 仮説検証 → 最小変更）を厳守し、推測による副作用を根絶せよ。
+> **Nature of a Fix**: "Code changes" and "Solutions" are distinct.
+> Strictly adhere to the Scientific Method (Diagnosis → Hypothesis Verification → Minimal Change) and eradicate side effects caused by guesswork.
 
-## 1. 動作モード: Fix Mode
-既存コードの不整合、リグレッション、または仕様違反の修正時に適用する。成功の定義は「意図した修正が行われ、かつ他の全てが壊れていないこと」である。
+## 1. Operating Mode: Fix Mode
 
-## 2. 認識論的謙虚さ (Epistemic Humility)
-- **原則**: AI は自身の仮説の確信度を常に疑え。
-- **要件**: 客観的エビデンス（テスト通過、ログ出力、規格書の Clause）なしに修正を完了と見なしてはならない。
+Applied when correcting inconsistencies in existing code, regressions, or specification violations. Success is defined as "the intended fix is implemented and everything else remains unbroken."
 
-## 3. 修正サイクル (The Fix Cycle)
+## 2. Epistemic Humility
 
-以下の 9 ステップを省略なく実行せよ。
+- **Principle**: The AI must always doubt the confidence level of its own hypotheses.
+- **Requirement**: A fix must not be considered complete without objective evidence (passing tests, log outputs, or Clauses from the specification).
 
-1.  **現象の記述**: 何が起きているか正確に `task.md` へ ELM 永続化する。
-2.  **歴史の参照**: `regression_log.md` から過去の類似事象や失敗を読み出す。
-3.  **多角的仮説**: 原因候補を「複数」挙げ、1 つに固執しない。
-4.  **診断の設計**: プロダクション（本番）ロジックを **一切変更せず** に仮説を絞り込む方法を設計する。
-    - **Spec-First**: `pdf-spec-mcp` で規格上の期待値（shall/must）を抽出。
-5.  **診断の実行**: ログ出力や診断スクリプトを用い、仮説を 1 つに絞り込む。
-6.  **仮説と事実の照合**: 期待値（規格）と実測値（診断結果）の差異を明確にする。
-7.  **最小変更**: 特定された原因を解消する **最小限の 1 箇所** のみを修正する。
-8.  **効果とリグレッションの検証**: 症状の消失を確認し、全テストで他への影響がないことを証明する。
-9.  **学びに転換**: 結果を `regression_log.md` へ記録し、将来の自分（AI）への教訓とする。
+## 3. The Fix Cycle
 
-## 4. 診断ツール (Diagnostic Toolkit)
+Execute the following 9 steps without omission.
 
-- **`pdf-spec-mcp`**: ISO 32000 条件、テーブル定義、継承ルールの抽出。
-- **診断用プローブ**: `eprintln!` による内部マトリクス（CTM, FontMatrix 等）の出力。
-- **検証ハーネス**: `diag_layout` 等、特定の挙動を抽出して検証する使い捨てバイナリ。
+1.  **Describe the Phenomenon**: Exactly what is happening must be persisted to ELM in `task.md`.
+2.  **Reference History**: Read `regression_log.md` to identify similar past incidents or failures.
+3.  **Multifaceted Hypotheses**: List multiple candidate causes and do not fixate on one.
+4.  **Design the Diagnosis**: Design a method to narrow down hypotheses **without changing any** production (live) logic.
+    - **Spec-First**: Extract expected values (shall/must) from the specification using `pdf-spec-mcp`.
+5.  **Execute the Diagnosis**: Use log outputs or diagnostic scripts to narrow down the hypotheses to one.
+6.  **Verify Hypothesis against Facts**: Clarify the difference between expected values (specification) and measured values (diagnostic results).
+7.  **Minimal Change**: Fix **only the minimum necessary point** identified as the cause.
+8.  **Verify Effect and Regression**: Confirm the disappearance of the symptoms and prove via all tests that there is no impact on other areas.
+9.  **Convert to Learning**: Record the result in `regression_log.md` as a lesson for future AI self.
 
-## 5. 完了ゲート (Completion Gate)
+## 4. Diagnostic Toolkit
 
-以下の [MUST] 項目をすべて満たした場合のみ [完了] と宣言できる。
+- **`pdf-spec-mcp`**: Extraction of ISO 32000 conditions, table definitions, and inheritance rules.
+- **Diagnostic Probes**: Output internal matrices (CTM, FontMatrix, etc.) using `eprintln!`.
+- **Verification Harnesses**: Disposable binaries (e.g., `diag_layout`) that extract and verify specific behaviors.
 
-- **再現テストの PASS**: 修正したバグを再現したテストが、修正後に PASS すること。
-- **全既存テストの PASS**: `cargo test` でリグレッションがないことを証明すること。
-- **証跡の ELM 永続化**: ログと `walkthrough.md` がプロジェクトディレクトリに同期されていること。
-- **ユーザー承認**: ROADMAP の更新にはユーザーの承認を必須とする。
+## 5. Completion Gate
+
+A fix can only be declared [Complete] once all of the following [MUST] items are met.
+
+- **Passing Reproduction Test**: A test that reproduces the fixed bug must PASS after the fix.
+- **Passing All Existing Tests**: Prove there are no regressions by passing all tests via `cargo test`.
+- **ELM Persistence of Evidence**: Logs and `walkthrough.md` must be synchronized to the project directory.
+- **User Approval**: User approval is required for any updates to the ROADMAP.
 
 ---
 > [!CAUTION]
-> **禁止事項**: 診断なしのロジック変更、および「目視のみ」での完了報告。
+> **Prohibited Items**: Changing logic without diagnosis and reporting completion based "solely on visual inspection."

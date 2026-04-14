@@ -1,81 +1,81 @@
 # Reliable Rust-15 (RR-15) Rulebook
 
 > [!IMPORTANT]
-> NASA Power of 10 を Rust に最適化した全 15 項目。Ferruginous における「絶対的安全制約」である。
+> A set of 15 items optimized from NASA's "Power of 10" for Rust. These are "Absolute Safety Constraints" for Ferruginous.
 
 ---
 
-## 1. 関数サイズ制限 (Function Size Limit)
-- **規約**: 実効ロジック 50 行上限。
-- **目的**: 借用チェッカの解析精度維持とメンタルモデルの縮小。
-- **遵守基準**: テストコードを除く全関数の行数が 50 行以内に収まっていること。
+## 1. Function Size Limit
+- **Rule**: Limit effective logic to 50 lines.
+- **Purpose**: Maintain precision of the borrow checker and reduce mental load.
+- **Compliance Criterion**: All functions (excluding test code) must stay within 50 lines.
 
-## 2. パニック排除 (No-Panic Principle)
-- **規約**: `unwrap()`, `expect()`, `panic!()` の禁止。
-- **目的**: 実行時クラッシュの根絶。
-- **遵守基準**: プロダクションコードにおいて、回復不能なエラーによる強制終了パスが存在しないこと。
+## 2. No-Panic Principle
+- **Rule**: Prohibit `unwrap()`, `expect()`, and `panic!()`.
+- **Purpose**: Eradicate runtime crashes.
+- **Compliance Criterion**: In production code, there must be no paths that cause forced termination due to unrecoverable errors.
 
-## 3. 安全性の隔離 (Safety Isolation)
-- **規約**: コア層（SDK/Render）での `unsafe` ブロック完全禁止。
-- **目的**: メモリ安全性のコンパイラ保証を 100% 維持。
-- **遵守基準**: `crates/ferruginous-sdk` および `crates/ferruginous-render`（存在する場合）において `unsafe` キーワードがゼロであること。
+## 3. Safety Isolation
+- **Rule**: Total prohibition of `unsafe` blocks in the core layers (SDK/Render).
+- **Purpose**: Maintain 100% compiler-guaranteed memory safety.
+- **Compliance Criterion**: The `unsafe` keyword count must be zero in `crates/ferruginous-sdk` and `crates/ferruginous-render`.
 
-## 4. ネストの平坦化 (Flat Nesting)
-- **規約**: `?` 演算子による早期リターン。`if` ネストは 2 段まで。
-- **目的**: 論理パスの単純化と可読性向上。
-- **遵守基準**: 制御フローが直列かつ平坦であり、深いインデントが解消されていること。
+## 4. Flat Nesting
+- **Rule**: Use the `?` operator for early returns. Nest `if` statements no more than 2 levels deep.
+- **Purpose**: Simplify logical paths and improve readability.
+- **Compliance Criterion**: Control flow must be linear and flat, with deep indentation eliminated.
 
-## 5. 網羅的な型処理 (Exhaustive Match)
-- **規約**: `match` でのワイルドカード（`_`）禁止。
-- **目的**: 枚挙型拡張時のコンパイルエラー誘導。
-- **遵守基準**: すべての `match` 式において、将来的なバリアント追加をコンパイラが検知できる状態であること。
+## 5. Exhaustive Match
+- **Rule**: Prohibit wildcards (`_`) in `match` statements.
+- **Purpose**: Induce compiler errors when enums are extended.
+- **Compliance Criterion**: In all `match` expressions, the compiler must be able to detect the addition of future variants.
 
-## 6. スタック安全 (Stack Safety)
-- **規約**: 関数再帰（Recursion）禁止。明示的なスタック（`Vec`）を用いる。
-- **目的**: スタックオーバーフローの根絶。
-- **遵守基準**: 実行時のコールスタックが予測可能であり、深いネストの再帰呼び出しが存在しないこと。
+## 6. Stack Safety
+- **Rule**: Prohibit function recursion. Use an explicit stack (`Vec`) instead.
+- **Purpose**: Eradicate stack overflows.
+- **Compliance Criterion**: The runtime call stack must be predictable, with no deep nested recursive calls.
 
-## 7. 状態の純粋性 (Pure State Management)
-- **規約**: グローバル可変状態（`static mut`）禁止。
-- **目的**: データ競合と実行順序依存性の排除。
-- **遵守基準**: 共有状態は明示的な同期プリミティブ（`Arc<Mutex<T>>` 等）または所有権の移動によってのみ管理されていること。
+## 7. Pure State Management
+- **Rule**: Prohibit global mutable state (`static mut`).
+- **Purpose**: Eliminate data races and execution order dependencies.
+- **Compliance Criterion**: Shared state must be managed solely through explicit synchronization primitives (e.g., `Arc<Mutex<T>>`) or ownership transfers.
 
-## 8. 不正状態の型排除 (Type-Level Safety)
-- **規約**: Enum を活用し、不正な状態（Invalid state）を物理的に表現不能にせよ。
-- **目的**: 実行時の条件分岐（assert）の最小化。
-- **遵守基準**: コードベースに「あり得ない状態」をチェックするガード節が極小化されていること。
+## 8. Type-Level Safety
+- **Rule**: Leverage enums to make invalid states physically unrepresentable.
+- **Purpose**: Minimize runtime conditional branches (assertions).
+- **Compliance Criterion**: Guard clauses checking for "impossible states" must be minimized in the codebase.
 
-## 9. 設計の単純化 (Simplified Design)
-- **規約**: 所有権優先 (Owned-First)。不必要なライフタイム参照の排除。
-- **目的**: ライフタイム汚染による設計の硬直化防止。
-- **遵守基準**: 構造体や関数シグネチャが自己完結しており、複雑なライフタイム・アノテーションが避けられていること。
+## 9. Simplified Design
+- **Rule**: Owned-First approach. Eliminate unnecessary lifetime references.
+- **Purpose**: Prevent design rigidity caused by "lifetime pollution."
+- **Compliance Criterion**: Structs and function signatures must be self-contained, avoiding complex lifetime annotations.
 
-## 10. 決定論的実行 (Deterministic Engineering)
-- **規約**: 非決定的な `HashMap`/`HashSet` 禁止。`BTreeMap`/`BTreeSet` 使用。
-- **目的**: 同一入力に対するバイト完全一致の出力を保証。
-- **遵守基準**: 内部的な反復順序が常に固定されており、ハッシュ塩（Salt）等の非決定要因が排除されていること。
+## 10. Deterministic Engineering
+- **Rule**: Prohibit non-deterministic `HashMap`/`HashSet`. Use `BTreeMap`/`BTreeSet`.
+- **Purpose**: Guarantee bit-perfect output for the same input.
+- **Compliance Criterion**: Internal iteration order must be fixed, eliminating non-deterministic factors like hash salts.
 
-## 11. エラー定義の具体化 (Explicit Error)
-- **規約**: `String` エラー禁止。具体的 Enum 型および `thiserror` の使用。
-- **目的**: エラー追跡性とプログラムによる回復可能性の確保。
-- **遵守基準**: すべてのエラーがドメイン固有の Enum 型として定義され、呼び出し側が型に応じてハンドリング可能であること。
+## 11. Explicit Error Handling
+- **Rule**: Prohibit `String` errors. Use concrete Enum types and the `thiserror` crate.
+- **Purpose**: Ensure error traceability and programmatic recoverability.
+- **Compliance Criterion**: All errors must be defined as domain-specific Enum types, allowing callers to handle them based on the type.
 
-## 12. 境界と不変条件の明示 (Bound & Invariant)
-- **規約**: 外部入力（PDF ストリーム）の 256MB 上限および `assert!` による不変条件明示。
-- **目的**: リソース枯渇（OOM）と論理矛盾の早期発見。
-- **遵守基準**: リソース制限が型または定数によって強制され、設計上の前提条件がコード内で検証されていること。
+## 12. Bound & Invariant Enforcement
+- **Rule**: Enforce a 256MB limit on external inputs (PDF streams) and explicitly state invariants using `assert!`.
+- **Purpose**: Early detection of resource exhaustion (OOM) and logical contradictions.
+- **Compliance Criterion**: Resource limits must be enforced by types or constants, and design assumptions must be verified within the code.
 
-## 13. エラー黙殺の禁止 (Zero Silent Swallowing)
-- **規約**: `.ok()`, `_` によるエラー破棄禁止。必ずログ出力または伝搬。
-- **目的**: 潜在的な不具合の早期顕在化。
-- **遵守基準**: 全ての `Result` が評価され、無視されるエラーが一つも存在しないこと。
+## 13. Zero Silent Swallowing
+- **Rule**: Prohibit discarding errors via `.ok()` or `_`. Always log or propagate.
+- **Purpose**: Early surfacing of latent bugs.
+- **Compliance Criterion**: All `Result` types must be evaluated; not a single error should be ignored.
 
-## 14. 変数定義の厳格化 (Strict Scoping)
-- **規約**: 変数は着手直前に定義。スコープ（`{}`）を限定。
-- **目的**: 変数の生存期間（Lifetime）の最小化と誤認防止。
-- **遵守基準**: 変数の生存期間が必要最小限であり、初期化から使用までの距離が短いこと。
+## 14. Strict Scoping
+- **Rule**: Define variables just before they are used. Limit scopes (`{}`).
+- **Purpose**: Minimize the lifetime of variables and prevent misinterpretation.
+- **Compliance Criterion**: Variable lifetimes must be the minimum necessary, with short distances between initialization and use.
 
-## 15. クローンの制限 (No Magic Cloning)
-- **規約**: 借用エラー回避目的の `.clone()` 禁止。所有権構造を再考せよ。
-- **目的**: 非効率なメモリ割り当てと設計上の歪みの可視化。
-- **遵守基準**: `.clone()` の使用が「データの論理的な複製」が真に必要とされる箇所に限定されていること。
+## 15. No Magic Cloning
+- **Rule**: Prohibit `.clone()` for the purpose of avoiding borrow checker errors. Rethink ownership structure instead.
+- **Purpose**: Visualize inefficient memory allocations and design distortions.
+- **Compliance Criterion**: Use of `.clone()` must be limited to cases where "logical duplication of data" is truly required.

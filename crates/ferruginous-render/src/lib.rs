@@ -1,7 +1,7 @@
 //! Ferruginous Rendering Engine
 //! 
-//! このクレートは、PDF の描画命令（`DrawOp`）を具体的なグラフィックスライブラリ（現在は Vello）へ
-//! 橋渡しするための抽象化レイヤーと実装を提供します。
+//! This crate provides an abstraction layer and implementation for bridging
+//! PDF drawing commands (`DrawOp`) to a specific graphics library (currently Vello).
 
 use vello::{Scene, peniko::{Brush, Fill, Color as VelloColor, ImageBrush, ImageData, ImageFormat, ImageAlphaType, Blob, BlendMode as VelloBlendMode, Mix, ColorStop, Gradient}, kurbo::{self, Affine, Stroke, Rect, Shape, BezPath, Point as KurboPoint}};
 use ferruginous_sdk::graphics::{DrawOp, DrawCommand, Color, ClippingRule, BlendMode};
@@ -10,33 +10,33 @@ use ferruginous_sdk::ocg::OCContext;
 use rayon::prelude::*;
 use std::sync::Arc;
 
-/// ヘッドレス GPU レンダリングと画像キャプチャを行うテスト用ハーネス。
+/// Test harness for performning headless GPU rendering and image capture.
 pub mod visual_harness;
 
-/// レンダリングエンジンのオプション。
+/// Options for the rendering engine.
 #[derive(Debug, Clone, Default)]
 pub struct BackendOptions {
-    /// CPU レンダリングを使用するかどうか。
+    /// Whether to use CPU rendering.
     pub use_cpu: bool,
-    /// アンチエイリアスを有効にするかどうか。
+    /// Whether to enable anti-aliasing.
     pub antialiasing: bool,
 }
 
-/// レンダリングバックエンドのコア機能を定義するトレイト。
+/// Trait defining the core functionality of a rendering backend.
 pub trait RenderBackend: Send {
-    /// レンダリング状態（シーンなど）を初期化します。
+    /// Initializes the rendering state (e.g., scenes).
     fn clear(&mut self);
     
-    /// 指定された表示リスト（Display List）を、ビュー変換を適用してレンダリングします。
+    /// Renders the specified display list by applying a view transformation.
     fn render_display_list(&mut self, list: &[DrawCommand], transform: Affine, oc_context: Option<&OCContext>);
     
-    /// シーンの上にハイライト（選択範囲など）をレンダリングします。
+    /// Renders highlights (e.g., selection ranges) on top of the scene.
     fn render_highlights(&mut self, rects: &[Rect], view_transform: Affine);
 
-    /// GPU レンダラの準備（初期化）を行います。
+    /// Prepares (initializes) the GPU renderer.
     fn prepare_renderer(&mut self, device: &wgpu::Device, options: BackendOptions) -> Result<(), String>;
 
-    /// 指定されたテクスチャターゲットに現在のシーンをレンダリングします。
+    /// Renders the current scene to the specified texture target.
     fn render_to_texture(
         &mut self,
         device: &wgpu::Device,
@@ -47,11 +47,11 @@ pub trait RenderBackend: Send {
     ) -> Result<(), String>;
 }
 
-/// Vello グラフィックスエンジンを使用した `RenderBackend` の実装。
+/// `RenderBackend` implementation using the Vello graphics engine.
 pub struct VelloBackend {
-    /// 描画内容を蓄積する Vello のシーングラフ。
+    /// Vello scene graph accumulating drawing content.
     scene: Scene,
-    /// 実際の GPU レンダリングを担当する Vello レンダラ。
+    /// Vello renderer responsible for actual GPU rendering.
     renderer: Option<vello::Renderer>,
 }
 

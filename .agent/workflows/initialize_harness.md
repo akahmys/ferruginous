@@ -1,20 +1,20 @@
 ---
-description: HDD プロトコルに基づく検証ハーネスの最速初期化
+description: Fastest initialization of a verification harness based on the HDD protocol.
 ---
 
-# [Workflow] ハーネス初期化 (Initialize Harness)
+# [Workflow] Initialize Harness
 
-実装前の合格条件 (HDD) を定義せよ。
+Define the passing conditions (HDD) prior to implementation.
 
-## 手順
+## Procedure
 
-1. **仕様特定**: [HDD_PROTOCOL](../protocols/HDD_PROTOCOL.md) および ISO 32000-2 から該当オブジェクト・Clause を特定。
-2. **モデル参照**: Arlington PDF Model から期待されるフィールド定義、型、制約を確認。
+1. **Specification Identification**: Identify the relevant object and Clause from the [HDD_PROTOCOL](../protocols/HDD_PROTOCOL.md) and ISO 32000-2.
+2. **Model Reference**: Check expected field definitions, types, and constraints from the Arlington PDF Model.
 // turbo
-3. **ハーネス構築**: `scaffold_harness` スキルを実行し、`tests/` 配下に不合格テストを作成。
+3. **Harness Construction**: Execute the `scaffold_harness` skill to create a failing test under `tests/`.
 // turbo
-4. **FAIL 確認**: `cargo test` を実行し、意図通りに FAIL することを確認せよ。
+4. **FAIL Confirmation**: Run `cargo test` and confirm that it fails as intended.
 
-## 完了要件
-- 仕様とのリンクがコードコメントに含まれていること
-- テストが現状の「不全」を正しく証明していること
+## Completion Requirements
+- Links to specifications are included in the code comments.
+- The test correctly proves the current "deficiency."

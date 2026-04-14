@@ -1,14 +1,14 @@
-# スキル: GitHub操作 (github_operations)
+# Skill: GitHub Operations (github_operations)
 
-`gh` CLI・`git` でブランチ・PR・CI を自律管理せよ
+Autonomously manage branches, PRs, and CI using the `gh` CLI and `git`.
 
-## 1. ワークフロー管理 (Workflow Management)
+## 1. Workflow Management
 
-- **規約**: `gh` CLI および `git` を用い、ブランチ作成から Draft PR、CI 監視までを自律的に遂行せよ。
-- **目的**: 開発プロセスの透明性を確保し、ユーザーのレビューコストを最小化する。
-- **判定基準**: PR が作成され、CI ステータスがプロジェクトの現状を正しく反映していること。
+- **Rule**: Use the `gh` CLI and `git` to autonomously perform tasks from branch creation to Draft PR and CI monitoring.
+- **Purpose**: Ensure transparency of the development process and minimize the user's review cost.
+- **Criterion**: The PR is created, and the CI status correctly reflects the current state of the project.
 
-## 2. 合意形成 (Consensus)
+## 2. Consensus Building
 
-- **規約**: Draft PR の段階でアプローチの合意を得てから、本実装（Green 化）に着手せよ。
-- **判定基準**: ユーザーからの「承認」またはチャット上での明確な合意が記録されていること。
+- **Rule**: Obtain consensus on the approach at the Draft PR stage before commencing the main implementation (bringing it to "Green").
+- **Criterion**: An "Approval" from the user or a clear consensus on the chat is recorded.

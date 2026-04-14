@@ -65,7 +65,7 @@ fn show_tool_modes(app: &mut FerruginousApp, ui: &mut egui::Ui) {
 
 fn show_navigation(app: &mut FerruginousApp, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
-        if ui.add(Button::new("前へ").frame(false)).clicked() && app.current_page > 0 {
+        if ui.add(Button::new("Prev").frame(false)).clicked() && app.current_page > 0 {
             app.current_page -= 1;
             app.pan_offset = Vec2::ZERO;
             app.update_rendering();
@@ -75,7 +75,7 @@ fn show_navigation(app: &mut FerruginousApp, ui: &mut egui::Ui) {
         ui.label(RichText::new(format!("{} / {}", app.current_page + 1, app.page_count)).weak());
         ui.add_space(8.0);
 
-        if ui.add(Button::new("次へ").frame(false)).clicked() && app.current_page + 1 < app.page_count {
+        if ui.add(Button::new("Next").frame(false)).clicked() && app.current_page + 1 < app.page_count {
             app.current_page += 1;
             app.pan_offset = Vec2::ZERO;
             app.update_rendering();
@@ -85,7 +85,7 @@ fn show_navigation(app: &mut FerruginousApp, ui: &mut egui::Ui) {
 
 fn show_zoom(app: &mut FerruginousApp, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
-        if ui.add(Button::new("縮小").frame(false)).clicked() {
+        if ui.add(Button::new("Zoom Out").frame(false)).clicked() {
             app.zoom_factor = (app.zoom_factor - 0.1).clamp(0.1, 10.0);
             app.update_rendering();
         }
@@ -94,14 +94,14 @@ fn show_zoom(app: &mut FerruginousApp, ui: &mut egui::Ui) {
         ui.label(RichText::new(format!("{:.0}%", app.zoom_factor * 100.0)).strong());
         ui.add_space(4.0);
 
-        if ui.add(Button::new("拡大").frame(false)).clicked() {
+        if ui.add(Button::new("Zoom In").frame(false)).clicked() {
             app.zoom_factor = (app.zoom_factor + 0.1).clamp(0.1, 10.0);
             app.update_rendering();
         }
 
         ui.add_space(12.0);
         
-        if ui.add(Button::new("幅に合わせる").frame(false)).clicked() {
+        if ui.add(Button::new("Fit Width").frame(false)).clicked() {
             // Target width slightly less than available
             let available_width = ui.available_width().max(800.0);
             app.zoom_factor = (available_width / 850.0).clamp(0.5, 3.0);
@@ -109,7 +109,7 @@ fn show_zoom(app: &mut FerruginousApp, ui: &mut egui::Ui) {
             app.update_rendering();
         }
 
-        if ui.add(Button::new("リセット").frame(false)).clicked() {
+        if ui.add(Button::new("Reset").frame(false)).clicked() {
             app.zoom_factor = 1.0;
             app.pan_offset = Vec2::ZERO;
             app.update_rendering();
@@ -118,7 +118,7 @@ fn show_zoom(app: &mut FerruginousApp, ui: &mut egui::Ui) {
 }
 
 fn show_utility_actions(app: &mut FerruginousApp, ui: &mut egui::Ui) {
-    if ui.button(RichText::new("PDFを開く").color(Color32::WHITE)).clicked() {
+    if ui.button(RichText::new("Open PDF").color(Color32::WHITE)).clicked() {
         app.open_pdf();
     }
     

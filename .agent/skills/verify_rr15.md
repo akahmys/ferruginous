@@ -1,34 +1,34 @@
-# スキル: RR-15 適合性監査 (verify_rr15)
+# Skill: RR-15 Compliance Audit (verify_rr15)
 
-コードベースが [RELIABLE_RUST_15](../protocols/RELIABLE_RUST_15.md) に準拠しているかを多角的に审计し、不適合箇所を特定せよ。
+Audit the codebase from multiple perspectives to ensure compliance with [RELIABLE_RUST_15](../protocols/RELIABLE_RUST_15.md) and identify any non-compliant areas.
 
-## 1. 静的・機械的監査 (Static Audit)
+## 1. Static & Mechanical Audit
 
-以下のアクションを実行し、機械的な不適合を抽出せよ。
+Execute the following actions to extract mechanical non-compliances:
 
-- **アクション**: `./scripts/verify_compliance.sh` を実行。
-- **目的**: 関数長、unwrap/expect、unsafe、static mut、HashMap 等の決定論的でないコレクションの使用を即座に検知する。
-- **補足**: スクリプトがエラーを出した場合、その修正を最優先事項とする。
+- **Action**: Run `./scripts/verify_compliance.sh`.
+- **Purpose**: Immediately detect function length, unwrap/expect, unsafe blocks, static mut, and the use of non-deterministic collections like HashMap.
+- **Note**: If the script yields an error, fixing it must be the top priority.
 
-## 2. 論理的・構造的監査 (Architectural Audit)
+## 2. Logical & Architectural Audit
 
-AIのコンテキスト理解を用い、スクリプトでは検知困難な違反を特定せよ。
+Leverage the AI's contextual understanding to identify violations that are difficult for scripts to detect:
 
-- **Rule 4 (ネスト)**: 複雑な `if let` や `match` が重なっていないか。`?` 演算子による早期リターンで平坦化できる余地はないか。
-- **Rule 6 (再帰)**: 再帰呼び出し（間接的なものを含む）はないか。ループと明示的なスタック（`Vec`）へ変換可能か。
-- **Rule 8 (不正状態)**: `Option` や `Result` の代わりに、型安全な Enum（State machine）で表現できないか。
-- **Rule 15 (クローン)**: その `.clone()` は本当に必要か。`Arc` による共有や、設計の見直しにより所有権移動で解決できないか。
+- **Rule 4 (Nesting)**: Are there overlapping complex `if let` or `match` statements? Is there room for flattening using early returns with the `?` operator?
+- **Rule 6 (Recursion)**: Are there any recursive calls (including indirect ones)? Can they be converted to loops with an explicit stack (`Vec`)?
+- **Rule 8 (Invalid State)**: Can the logic be expressed using type-safe Enums (State machine) instead of `Option` or `Result`?
+- **Rule 15 (Cloning)**: Is that `.clone()` truly necessary? Can it be resolved through sharing with `Arc` or by redesigning to use ownership transfer?
 
-## 3. 監査結果の提示 (Reporting)
+## 3. Reporting Audit Results
 
-監査の結果、違反が見つかった場合は以下の形式で報告せよ。
+If violations are found during the audit, report them in the following format:
 
-1.  **違反箇所**: ファイル名と行番号。
-2.  **違反ルール**: RR-15 の項目番号。
-3.  **推奨される修正案**: 具体的なコード片を含む修正。
+1.  **Violation Location**: Filename and line number.
+2.  **Violated Rule**: RR-15 rule number.
+3.  **Recommended Fix**: A fix including concrete code snippets.
 
-## 4. 完了判定
+## 4. Completion Criterion
 
-- [ ] `verify_compliance.sh` が PASS している。
-- [ ] `cargo clippy --pedantic` で警告が出ていない。
-- [ ] 上記の論理的監査において、さらなる改善の余地がないと合理的に判断できる。
+- [ ] `verify_compliance.sh` PASSES.
+- [ ] `cargo clippy --pedantic` yields no warnings.
+- [ ] In the logical audit above, it is reasonably judged that there is no further room for improvement.

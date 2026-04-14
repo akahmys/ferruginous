@@ -23,10 +23,10 @@ pub fn show_sidebar(app: &mut FerruginousApp, ctx: &egui::Context) {
                 .id_salt("sidebar_scroll")
                 .show(ui, |ui| {
                     match app.active_tab.as_str() {
-                        "ページ" => show_pages_tab(app, ui),
-                        "目次" => show_outline_tab(app, ui),
-                        "レイヤー" => show_layers_tab(app, ui),
-                        "検索" => show_search_tab(app, ui),
+                        "Page" => show_pages_tab(app, ui),
+                        "Outline" => show_outline_tab(app, ui),
+                        "Layer" => show_layers_tab(app, ui),
+                        "Search" => show_search_tab(app, ui),
                         _ => {}
                     }
                 });
@@ -36,7 +36,7 @@ pub fn show_sidebar(app: &mut FerruginousApp, ctx: &egui::Context) {
 fn show_sidebar_tabs(app: &mut FerruginousApp, ui: &mut egui::Ui) {
     let rust = Color32::from_rgb(183, 65, 14);
     ui.horizontal(|ui| {
-        for name in &["ページ", "目次", "レイヤー", "検索"] {
+        for name in &["Page", "Outline", "Layer", "Search"] {
             let is_active = app.active_tab == *name;
             let text = RichText::new(*name).strong();
             let resp = ui.selectable_label(is_active, text);
@@ -57,15 +57,15 @@ fn show_sidebar_tabs(app: &mut FerruginousApp, ui: &mut egui::Ui) {
 }
 
 fn show_pages_tab(app: &mut FerruginousApp, ui: &mut egui::Ui) {
-    ui.label(RichText::new("ページ一覧").strong().size(14.0));
+    ui.label(RichText::new("Page List").strong().size(14.0));
     ui.add_space(12.0);
     
     if app.page_count == 0 {
-        ui.label(RichText::new("ドキュメントが未ロードです").weak());
+        ui.label(RichText::new("No document loaded").weak());
     } else {
         for i in 0..app.page_count {
             let is_current = app.current_page == i;
-            if ui.selectable_label(is_current, format!("第 {} ページ", i + 1)).clicked() {
+            if ui.selectable_label(is_current, format!("Page {}", i + 1)).clicked() {
                 app.current_page = i;
                 app.update_rendering();
             }
@@ -75,20 +75,20 @@ fn show_pages_tab(app: &mut FerruginousApp, ui: &mut egui::Ui) {
     ui.add_space(32.0);
     ui.separator();
     ui.add_space(12.0);
-    ui.label(RichText::new("システム・デバッグ").strong().color(Color32::from_rgb(183, 65, 14)));
-    ui.label(format!("PDFロード済: {}", app.pdf_doc.is_some()));
-    ui.label(format!("ページ数: {}", app.page_count));
-    ui.label(format!("描画命令数: {}", app.last_draw_op_count));
-    ui.label(format!("レンダリング回数: {}", app.vello_callback_count));
-    ui.label(format!("テクスチャID: {:?}", app.vello_texture_id));
+    ui.label(RichText::new("System & Debug").strong().color(Color32::from_rgb(183, 65, 14)));
+    ui.label(format!("PDF Loaded: {}", app.pdf_doc.is_some()));
+    ui.label(format!("Page Count: {}", app.page_count));
+    ui.label(format!("Draw Ops: {}", app.last_draw_op_count));
+    ui.label(format!("Render Count: {}", app.vello_callback_count));
+    ui.label(format!("Texture ID: {:?}", app.vello_texture_id));
     ui.label(format!("GPU: {}", app.gpu_name));
     if let Some(err) = &app.vello_init_error {
-        ui.label(RichText::new(format!("Velloエラー: {err}")).color(Color32::RED));
+        ui.label(RichText::new(format!("Vello Error: {err}")).color(Color32::RED));
     }
 }
 
 fn show_outline_tab(app: &mut FerruginousApp, ui: &mut egui::Ui) {
-    ui.label(RichText::new("ドキュメント目次").strong().size(14.0));
+    ui.label(RichText::new("Document Outline").strong().size(14.0));
     ui.add_space(12.0);
     
     let mut nav_target = None;
@@ -97,11 +97,11 @@ fn show_outline_tab(app: &mut FerruginousApp, ui: &mut egui::Ui) {
             if let Some(outline) = catalog.outlines() {
                 nav_target = render_outline_tree(ui, outline);
             } else {
-                ui.label(RichText::new("目次情報がありません").weak());
+                ui.label(RichText::new("No outline information available").weak());
             }
         }
     } else {
-        ui.label(RichText::new("PDF をロードしてください").weak());
+        ui.label(RichText::new("Please load a PDF").weak());
     }
 
     if let Some(target_ref) = nav_target {
@@ -123,7 +123,7 @@ fn render_outline_tree(ui: &mut egui::Ui, outline: Outline) -> Option<Reference>
         while let Some((current_ref, depth)) = stack.pop() {
             if let Ok(ferruginous_sdk::core::Object::Dictionary(dict)) = outline.resolver.resolve(&current_ref) {
                 let item = OutlineItem::new(dict, current_ref, outline.resolver);
-                let title = item.title().unwrap_or_else(|| "無題".to_string());
+                let title = item.title().unwrap_or_else(|| "Untitled".to_string());
                 
                 ui.horizontal(|ui| {
                     ui.add_space(depth as f32 * 12.0);
@@ -143,7 +143,7 @@ fn render_outline_tree(ui: &mut egui::Ui, outline: Outline) -> Option<Reference>
 }
 
 fn show_layers_tab(app: &mut FerruginousApp, ui: &mut egui::Ui) {
-    ui.label(RichText::new("表示レイヤー").strong().size(14.0));
+    ui.label(RichText::new("Visible Layers").strong().size(14.0));
     ui.add_space(12.0);
     
     if let Some(ref mut ctx) = app.oc_context {
@@ -158,17 +158,17 @@ fn show_layers_tab(app: &mut FerruginousApp, ui: &mut egui::Ui) {
         }
         if changed { app.update_rendering(); }
     } else {
-        ui.label(RichText::new("レイヤー情報はありません").weak());
+        ui.label(RichText::new("No layer information available").weak());
     }
 }
 
 fn show_search_tab(app: &mut FerruginousApp, ui: &mut egui::Ui) {
-    ui.label(RichText::new("テキスト検索").strong().size(14.0));
+    ui.label(RichText::new("Text Search").strong().size(14.0));
     ui.add_space(12.0);
     
     ui.horizontal(|ui| {
         ui.text_edit_singleline(&mut app.search_query);
-        if ui.button("検索").clicked() {
+        if ui.button("Search").clicked() {
             // Execution of search: Logic remains to be integrated if needed
         }
     });

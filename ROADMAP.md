@@ -1,191 +1,192 @@
 # Ferruginous Roadmap (ISO 32000-2:2020 Strict)
 
-## 1. 開発憲章 (Constitution)
+## 1. Constitution
 
-- **[RR-15](.agent/protocols/RELIABLE_RUST_15.md)**: 15 の安全性制約を機械的に適用。
-- **[HDD](.agent/protocols/HDD_PROTOCOL.md)**: 仕様先行・自動検証ハーネス駆動を徹底。
+- **[RR-15](.agent/protocols/RELIABLE_RUST_15.md)**: Mechanically apply 15 safety constraints.
+- **[HDD](.agent/protocols/HDD_PROTOCOL.md)**: Adhere strictly to specification-first, automated verification harness-driven development.
 - **Target**: ISO 32000-2:2020 (PDF 2.0) Only
 - **MSRV**: 1.94 / Edition 2024
 
-## 2. 開発原則 (Parallel Principles)
+## 2. Parallel Principles
 
-- **Track-Driven**: SDK (Track S) と App (Track A) を並行トラックとして定義し、連動させつつ開発を加速する。
-- **SSoT Sync**: 各トラック babysits の成果物は必ず `specs/` 配下の仕様書および `ROADMAP.md` と同期させる。
+- **Track-Driven**: Define SDK (Track S) and App (Track A) as parallel tracks, accelerating development while keeping them linked.
+- **SSoT Sync**: Artifacts from each track must always be synchronized with the design specifications under `specs/` and `ROADMAP.md`.
 
-## 3. 開発フェーズ (AI Implementation Phases)
+## 3. AI Implementation Phases
 
-### Phase 1: Core Foundation (基礎構造) [完了]
+### Phase 1: Core Foundation [Complete]
 
-- **M1-M4: 物理構造の確立**: COS解析、DrawOp、DisplayList。
-- **M5-M8: 論理構造とリゾルバ**: ページツリー、リソース辞書、間接オブジェクト解決。
+- **M1-M4: Establishing Physical Structure**: COS parsing, DrawOp, DisplayList.
+- **M5-M8: Logical Structure & Resolvers**: Page Tree, Resource Dictionaries, Indirect Object Resolution.
 
-### Phase 2: Content Parsing (コンテンツ解析) [完了]
+### Phase 2: Content Parsing [Complete]
 
-- **M9-M14: フィルタとグラフィックス命令**: FlateDecode, ASCIIHexDecode, パス描画。
+- **M9-M14: Filters & Graphics Instructions**: FlateDecode, ASCIIHexDecode, Path Painting.
 
-### Phase 3: SDK Refinement (SDK の洗練) [完了]
+### Phase 3: SDK Refinement [Complete]
 
-- **M15-M18: リソース管理と整合性検証**: 画像、フォント基盤、Arlington 検証。
+- **M15-M18: Resource Management & Consistency Validation**: Images, Font Infrastructure, Arlington Validation.
 
-### Phase 4: Display & UX (表示と体験) [完了]
+### Phase 4: Display & UX [Complete]
 
-- **M23-26: Vello レンダリング統合**: WGPU/Vello パイプラインの Eframe 組み込み。
+- **M23-26: Vello Rendering Integration**: Incorporating WGPU/Vello pipeline into Eframe.
 
-### Phase 5: Interactive Foundations (インタラクティブ基盤) [完了]
+### Phase 5: Interactive Foundations [Complete]
 
-- **M30-A: Unicode 抽出とコピー (Copy & Unicode)** [完了]
-  - 選択エリアの Unicode 復元とクリップボード連携 (Clause 9.10)。
-- **M30-S: インクリメンタル保存の実態化 (Save Implementation)** [完了]
-  - 物理シリアライザの統合による変更箇所のファイル永続化 (Clause 7.5.6)。
-- **M31-A: 注釈編集 UI (Annotation UI)** [完了]
-  - ハイライト、矩形、矢印、フリーハンドのビジュアル編集 (Clause 12.5)。
-- **M32-A: 全文検索とアウトライン (Search & Outline)** [完了]
-  - 文書内検索とサイドバー目次表示 (Clause 12.3.3)。
+- **M30-A: Copy & Unicode Extraction** [Complete]
+  - Unicode restoration for selection areas and clipboard integration (Clause 9.10).
+- **M30-S: Realizing Incremental Save** [Complete]
+  - Persistence of changes through integration of physical serializers (Clause 7.5.6).
+- **M31-A: Annotation UI** [Complete]
+  - Visual editing of highlights, rectangles, arrows, and freehand (Clause 12.5).
+- **M32-A: Full-Text Search & Outline** [Complete]
+  - In-document search and sidebar table of contents (Clause 12.3.3).
 
-### Phase 6: Forms & Layers (フォームとレイヤー) [完了]
+### Phase 6: Forms & Layers [Complete]
 
-- **M34-S: AcroForms (インタラクティブフォーム)**
-  - フォームフィールドの解析と外観ストリーム生成 (Clause 12.7)。
-- **M35-A: フォーム入力・レイヤー操作 (UI Integration)**
-  - UI 上での入力保存と OCG (レイヤー) 切り替え (Clause 14.11)。
+- **M34-S: AcroForms (Interactive Forms)**
+  - Parsing form fields and generating appearance streams (Clause 12.7).
+- **M35-A: Form Input & Layer Controls (UI Integration)**
+  - Saving inputs on the UI and switching OCG layers (Clause 14.11).
 
-### Phase 7: Advanced Graphics & Compliance (高度な描画と色彩) [完了]
+### Phase 7: Advanced Graphics & Compliance [Complete]
 
-- **M36-S: ICC プロファイルとカラー管理** [完了]
-  - カラーマネジメントシステム (lcms2 等) の統合 (Clause 8.6)。
-- **M37-S: 透明グループと高度なシェーディング** [完了]
-  - 透過グループ、ブレンドモード、Type 4-7 シェーディング (Clause 8.7, 11)。
+- **M36-S: ICC Profiles & Color Management** [Complete]
+  - Integration of color management systems (e.g., lcms2) (Clause 8.6).
+- **M37-S: Transparency Groups & Advanced Shading** [Complete]
+  - Transparency groups, blend modes, and Type 4-7 shading (Clauses 8.7, 11).
 
-### Phase 8: Security & Trust (セキュリティと信頼性) [完了]
+### Phase 8: Security & Trust [Complete]
 
-- **M38-S: AES-256 (Rev 6) 暗号化** [完了]
-  - 規格準拠の高度なパスワード保護・復号 (Clause 7.6.4)。
-- **M39-S: デジタル署名 (PAdES/LTV)** [完了]
-  - 公開鍵基盤による署名の検証と付与 (Clause 12.8)。
-- **M40-A: セキュアな墨消し (Redaction)** [完了]
-  - コンテンツの物理的・不可逆的な削除 (Clause 12.5.6.23)。
+- **M38-S: AES-256 (Rev 6) Encryption** [Complete]
+  - Compliant advanced password protection and decryption (Clause 7.6.4).
+- **M39-S: Digital Signatures (PAdES/LTV)** [Complete]
+  - Verification and application of signatures using public key infrastructure (Clause 12.8).
+- **M40-A: Secure Redaction** [Complete]
+  - Physical and irreversible deletion of content (Clause 12.5.6.23).
 
-### Phase 9: Accessibility & Structure (アクセシビリティ) [完了]
+### Phase 9: Accessibility & Structure [Complete]
 
-- **M41-S: 論理構造と Tagged PDF** [完了]
-  - RoleMap/ClassMap 解決と文書構造ツリーの解析 (Clause 14.7)。
-- **M42-A: 構造表示とタグ検証 UI** [完了]
-  - 構造ツリーのサイドバー表示と Tagged PDF 整合性検証 (Clause 14.8)。
+- **M41-S: Logical Structure & Tagged PDF** [Complete]
+  - RoleMap/ClassMap resolution and document structure tree parsing (Clause 14.7).
+- **M42-A: Structure Display & Tag Validation UI** [Complete]
+  - Sidebar display of structure tree and Tagged PDF consistency validation (Clause 14.8).
 
-### Phase 10: Finalization & Release (最終統合) [完了]
+### Phase 10: Finalization & Release [Complete]
 
-- **M43-S: 3D & マルチメディア解析** [完了]
-  - RichMedia および 3D アノテーションのパースと仕様確認 (Clause 13)。
-- **M44-S: Arlington 完全適合試験** [完了]
-  - 全オブジェクトのスキーマ自動再帰検証による品質保証。
-- **M45: 最適化と最終統合** [完了]
-  - Rayon による並列レンダリング最適化と UI 統合の完了。
+- **M43-S: 3D & Multimedia Analysis** [Complete]
+  - Parsing RichMedia and 3D annotations and verifying specifications (Clause 13).
+- **M44-S: Arlington Full Compliance Suite** [Complete]
+  - Quality assurance via automated recursive schema validation of all objects.
+- **M45: Optimization & Final Integration** [Complete]
+  - Completion of parallel rendering optimization via Rayon and UI integration.
 
-### Phase 11: Governance & Quality (ガバナンスと品質向上) [完了]
+### Phase 11: Governance & Quality [Complete]
 
-- **M46-G: 統治プロトコルの再編**: `GEMINI.md`（憲章）と `PLANNING_PROTOCOL.md`（管理）の役割分離と重複排除。 [完了]
-- **M47-Q: RR-15 コンプライアンスの強化**: `verify_compliance.sh` の整備と SDK/UI 全域での警告・違反ゼロ達成。 [完了]
-- **M48-A: UI レイヤーの近代化**: ガード節によるロジックの平坦化、および `unwrap()` 排除による不変条件の強化。 [完了]
+- **M46-G: Restructuring Governance Protocols**: Separating roles and deduplicating `GEMINI.md` (Charter) and `PLANNING_PROTOCOL.md` (Management). [Complete]
+- **M47-Q: Strengthening RR-15 Compliance**: Preparing `verify_compliance.sh` and achieving zero warnings/violations across the SDK and UI. [Complete]
+- **M48-A: Modernizing the UI Layer**: logic flattening using guard clauses and strengthening invariants by eliminating `unwrap()`. [Complete]
 
-### Phase 12: Professional Orchestration (プロフェッショナル統合) [完了]
+### Phase 12: Professional Orchestration [Complete]
 
-- **M49-A: ページ・オーケストレーター (UI)**: サムネイルグリッドによる視覚的なページ並べ替え・抽出・結合 UI。 [完了]
-- **M49-S: 文書操作 API (SDK)**: リソースの不整合を発生させない安全なページツリー操作と、他文書からのページインポート。 [完了]
+- **M49-A: Page Orchestrator (UI)**: UI for visual page reordering, extraction, and merging using thumbnail grids. [Complete]
+- **M49-S: Document Manipulation API (SDK)**: Safe Page Tree operations that prevent resource inconsistency and page importing from other documents. [Complete]
 
-### Phase 13: Engineering Precision (エンジニアリング精度) [完了]
+### Phase 13: Engineering Precision [Complete]
 
-- **M50-S: 幾何学的近傍検索 (SDK)**: ベクトルパスへの精密なスナップポイント計算エンジン。 [完了]
-- **M50-A: スナップ UX & 精密計測 (UI)**: CAD 級のスナップ機能による、正確な距離・面積のビジュアル計測とスケール管理。 [完了]
+- **M50-S: Geometric Proximity Search (SDK)**: Precision snap point calculation engine for vector paths. [Complete]
+- **M50-A: Snap UX & Precision Measurement (UI)**: CAD-grade snapping for visual measurement of distance and area and scale management. [Complete]
 
-### Phase 14: Semantic Intelligence (セマンティック・インテリジェンス) [完了]
+### Phase 14: Semantic Intelligence [Complete]
 
-- **M51-S: 自動タグ構造化 & パターン検出 (SDK)**: AI による論理構造 (Tagged PDF) の自動生成と、機密情報のパターン抽出。 [完了]
-- **M51-A: タグ・ツリー・エディタ (UI)**: 論理構造をマウス操作で「修復」するビジュアルエディタと、墨消しアシスタント。 [完了]
+- **M51-S: Automated Tag Structuring & Pattern Detection (SDK)**: AI-driven automatic generation of logical structure (Tagged PDF) and pattern extraction for sensitive information. [Complete]
+- **M51-A: Tag Tree Editor (UI)**: Visual editor to "repair" logical structures via mouse operations and redaction assistant. [Complete]
 
-### Phase 15: Creative Mastery (クリエイティブ・マスター) [完了]
+### Phase 15: Creative Mastery [Complete]
 
-- **M52-A: モードレス_ワークフロー (UI)**: 全ての固定メニューを排した、選択オブジェクト駆動型のコンテキストメニュー UX。 [完了]
-- **M52-S: リフロー編集 & 3D レンダリング (SDK)**: 段落単位でのテキストリフロー編集、および WGPU による U3D/PRC モデルの実レンダリング。 [完了]
+- **M52-A: Modeless Workflow (UI)**: Modeless context menu UX driven by selected objects, eliminating all fixed menus. [Complete]
+- **M52-S: Reflow Editing & 3D Rendering (SDK)**: Paragraph-based text reflow editing and actual rendering of U3D/PRC models via WGPU. [Complete]
 
-### Phase 16: Architectural Resilience [完了]
+### Phase 16: Architectural Resilience [Complete]
 
-- **M53-S: 描画バックエンドの抽象化 (Render Bridge)** [x]
-  - Vello への直接依存を排除し、`RenderBackend` トレイトによる抽象化レイヤーを構築。
-- **M54-G: プラットフォーム非依存性の確立** [x]
-  - WASM / Web Canvas への将来的なブリッジ接続を考慮したインターフェースの定義と、`ferruginous-ui` の依存構造整理。
+- **M53-S: Abstraction of Rendering Backend (Render Bridge)** [x]
+  - Eliminate direct dependency on Vello and build an abstraction layer using the `RenderBackend` trait.
+- **M54-G: Establishing Platform Independence** [x]
+  - Define interfaces considering future bridge connections to WASM / Web Canvas and organize dependency structure for `ferruginous-ui`.
 
-### Phase 16.5: Quality & Feature Refinement [完了]
+### Phase 16.5: Quality & Feature Refinement [Complete]
 
-- **M55-Q: 技術的負債の解消 (Sprint)** [x]
-  - 全 SDK/UI レイヤーでの `missing_docs`, `redundant_clone`, 安全な型キャストの徹底。
-- **M56-G: ドキュメント品質の向上** [x]
-  - 主要 API への ISO 32000-2 条項引用に基づく解説追加。
+- **M55-Q: Resolving Technical Debt (Sprint)** [x]
+  - Enforcing `missing_docs`, `redundant_clone`, and safe type casting across all SDK/UI layers.
+- **M56-G: Improving Documentation Quality** [x]
+  - Adding commentary based on ISO 32000-2 clause citations to major APIs.
 
-### Phase 18: Multibyte Text Rendering Precision (マルチバイトテキスト描画の精密化) [完了]
+### Phase 18: Multibyte Text Rendering Precision [Complete]
 
 > [!NOTE]
-> **全工程完了 (2026-04-14)**:
-> CIDToGIDMap の解決、垂直原点シフト、および WMode に基づくグリフ回転の実装と検証が完了。
-> `diag_layout` および `verify_compliance.sh` による最終品質保証をパス。
+> **All Steps Complete (2026-04-14)**:
+> Implementation and verification of CIDToGIDMap resolution, vertical origin shifts, and glyph rotation based on WMode are complete.
+> Passed final quality assurance via `diag_layout` and `verify_compliance.sh`.
 
-- **M59-S: FontMatrix 標準化とコンポジットフォント同期 (SDK)** [x]
-  - ISO 32000-2 準拠のデフォルト FontMatrix (0.001) の統一と、Type 0 フォントにおける子要素 CIDFont からの行列継承の実装。
-- **M60-S: グリフ幅の厳密同期 (SDK)** [x]
-  - PDF の `W` (Widths) 配列とフォントファイルのグリフメトリクスを強制同期させ、日本語文字の重なり（バンチング）を物理的に解消。
-- **M61-A: レンダラー座標変換の完全同期 (UI)** [x]
-  - 累積的な座標変換行列 (CTM) をテキスト描画に完全に統合し、図形や枠線との位置ずれを 100% 解消。
+- **M59-S: FontMatrix Standardization & Composite Font Sync (SDK)** [x]
+  - Unifying default FontMatrix (0.001) in compliance with ISO 32000-2 and implementing matrix inheritance from child CIDFont elements in Type 0 fonts.
+- **M60-S: Strict Glyph Width Synchronization (SDK)** [x]
+  - Forcing synchronization between PDF `W` (Widths) arrays and font file glyph metrics to physically eliminate overlapping (bunching) of Japanese characters.
+- **M61-A: Full Renderer Coordinate Synchronization (UI)** [x]
+  - Fully integrating the cumulative transformation matrix (CTM) into text rendering, eliminating 100% of misalignment with shapes and borders.
 
-## 4. 運用ルール (Process Rules)
+## 4. Process Rules
 
-- **Parallel Sync**: `task.md` で Track S と Track A の同期ポイントを管理せよ。
-- **Atomic Sync**: 各報告前に `task.md` および `ROADMAP.md` を同期。
-## 5. 次世代ロードマップ案: Ferruginous "Sentinel" v2.0
+- **Parallel Sync**: Manage synchronization points for Track S and Track A in `task.md`.
+- **Atomic Sync**: Synchronize `task.md` and `ROADMAP.md` before every report.
 
-現在までの Phase 18 の完遂を受け、エンジンの「堅牢性」と「ビジュアル・体験」を両立させる次世代フェーズを定義します。
+## 5. Next Generation Roadmap: Ferruginous "Sentinel" v2.0
 
-### Phase 19: High-End Compliance & Archiving (規格適合の頂点へ) [x]
+Based on the completion of Phase 18, we define next-generation phases that balance "Robustness" with "Visual Experience."
 
-プロフェッショナル向け規格の完全制覇。
+### Phase 19: High-End Compliance & Archiving [x]
 
-- **M62-S: PDF/A-4 & PDF/X-6 完全準拠 (Strict Write)**
-    - M62.1-S: XMP メタデータエンジンの刷新 (ISO 16684-1 準拠) [x]
-    - M62.2-S: Unicode 整合性チェッカーと自動修復レイヤーの実装 [x]
-    - M62.3-S: 関連ファイル (Associated Files) の双方向管理 (PDF/A-4f 対応) [x]
-- **M63-S: 高精度カラーマネジメント (Spot Color & ICC v4)**
-    - M63.1-S: ページレベル OutputIntents 解析とレンダリング反映 [ ]
-    - M63.2-S: 黒点補正 (Black Point Compensation) の LUT 生成エンジン [ ]
-    - M63.3-S: 分光データ (CxF/X-4) のパースと特色シミュレーション [ ]
+Achieving full mastery of professional standards.
+
+- **M62-S: PDF/A-4 & PDF/X-6 Strict Compliance (Strict Write)**
+    - M62.1-S: Overhaul of XMP Metadata Engine (ISO 16684-1 compliant) [x]
+    - M62.2-S: Implementation of Unicode Integrity Checker and Auto-repair Layer [x]
+    - M62.3-S: Bidirectional management of Associated Files (PDF/A-4f support) [x]
+- **M63-S: High-Precision Color Management (Spot Color & ICC v4)**
+    - M63.1-S: Page-level OutputIntents analysis and rendering reflection [ ]
+    - M63.2-S: LUT generation engine for Black Point Compensation (BPC) [ ]
+    - M63.3-S: Parsing of spectral data (CxF/X-4) and spot color simulation [ ]
 
 ### Phase 20: Visual Excellence & Design System ("Sentinel UI") [ ]
 
-Egui をベースとした独自デザインシステム "Sentinel UI" の構築。
+Building an original design system "Sentinel UI" based on Egui.
 
-- **M64-A: プレミアム UI テーマの構築**
-    - M64.1-A: `Sentinel-Theme` クレートの創設 (HSL Tokens & Dark/Light スイッチ) [ ]
-    - M64.2-A: フレームレス・ウィンドウとカスタムタイトルバーの実装 (macOS/Windows) [ ]
-    - M64.3-A: プロダクト内蔵フォント (Inter / Outfit) の統合とダイナミックヒープ化 [ ]
-- **M65-A: モーションとマイクロインタラクション**
-    - M65.1-A: モーション・カーブ・ライブラリの統合 (Spline-based easing) [ ]
-    - M65.2-A: パネル遷移とモーダル・オーバーレイの物理ベース・アニメーション [ ]
+- **M64-A: Premium UI Theme Construction**
+    - M64.1-A: Creation of the `Sentinel-Theme` crate (HSL Tokens & Dark/Light switch) [ ]
+    - M64.2-A: Implementation of frameless windows and custom title bars (macOS/Windows) [ ]
+    - M64.3-A: Integration of built-in product fonts (Inter / Outfit) and dynamic heapification [ ]
+- **M65-A: Motion & Micro-interactions**
+    - M65.1-A: Integration of motion curve library (Spline-based easing) [ ]
+    - M65.2-A: Physics-based animation for panel transitions and modal overlays [ ]
 
-### Phase 21: Performance & Universal Platform (汎用性と Web) [ ]
+### Phase 21: Performance & Universal Platform [ ]
 
-- **M66-S: 線形化 (Linearization / Fast Web View) 対応**
-    - M66.1-S: ヒント・テーブル生成とオブジェクト順序の最適化オプティマイザ [ ]
-    - M66.2-S: 巨大ファイルのインクリメンタル読み込みプロトコル [ ]
-- **M67-P: WGPU-WASM パフォーマンス・スプリント**
-- **M68-A: リフロー閲覧モード (Liquid Mode) の初期実装**
+- **M66-S: Linearization (Fast Web View) Support**
+  - M66.1-S: Hint table generation and optimizer for object order optimization [ ]
+  - M66.2-S: Incremental loading protocol for large files [ ]
+- **M67-P: WGPU-WASM Performance Sprint**
+- **M68-A: Initial implementation of Reflow Viewing Mode (Liquid Mode)**
 
-### Phase 22: Advanced Interactive Core (高度な相互作用) [ ]
-- **M69-S: Safe AcroJS Sandbox (RR-15 準拠)**
-  - 規格準拠の JS 実行環境をセキュアなサンドボックスで実装。
-- **M70-A: インタラクティブ・フォーム UI の刷新**
-  - リアルタイムバリデーションとシームレスな入力体験。
+### Phase 22: Advanced Interactive Core [ ]
+- **M69-S: Safe AcroJS Sandbox (RR-15 compliant)**
+  - Implementing a compliant JS execution environment in a secure sandbox.
+- **M70-A: Refreshing the Interactive Form UI**
+  - Real-time validation and a seamless input experience.
 
-### Phase 23: Data PDF & Hybrid Containers (データコンテナ化) [ ]
-- **M71-S: 関連ファイル (Associated Files) の双方向管理**
-  - PDF をデータコンテナとして活用する Clause 14.13 の実装。
+### Phase 23: Data PDF & Hybrid Containers [ ]
+- **M71-S: Bidirectional Management of Associated Files**
+  - Implementing Clause 14.13 for utilizing PDF as a data container.
 
-### Phase 24: AI-Native Document Intelligence (AI 連携 - 延期) [ ]
-- **M72-S: セマンティック抽出と LLM 連携**
-- **M73-A: 対話型 AI アシスタント UI**
+### Phase 24: AI-Native Document Intelligence (Deferred) [ ]
+- **M72-S: Semantic Extraction & LLM Integration**
+- **M73-A: Interactive AI Assistant UI**

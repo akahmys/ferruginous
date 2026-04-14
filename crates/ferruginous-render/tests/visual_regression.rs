@@ -11,24 +11,24 @@ fn run_visual_regression_test(pdf_path: &str, page_idx: usize, name: &str) {
     let baseline_dir = "../../tests/fixtures/baselines";
     let baseline_path = format!("{}/{}-p{}.png", baseline_dir, name, page_idx + 1);
     
-    // 1. PDF のロードと指定ページの DisplayList 取得
+    // 1. Load PDF and retrieve DisplayList for the specified page
     let pdf_data = std::fs::read(pdf_path).expect("Failed to read sample PDF");
     let doc = load_document_structure(&pdf_data).expect("Failed to load PDF structure");
     let tree = doc.page_tree().expect("Failed to get page tree");
     let page = tree.get_page(page_idx).expect("Failed to get page");
     let display_list = page.get_display_list().expect("Failed to get display list");
     
-    // MediaBox からレンダリングサイズを決定
+    // Determine rendering size from MediaBox
     let bbox = page.media_box_array().unwrap_or([0.0, 0.0, 595.0, 842.0]);
     let width = (bbox[2] - bbox[0]).abs() as u32;
     let height = (bbox[3] - bbox[1]).abs() as u32;
 
-    // 2. ヘッドレスレンダリングの実行
+    // 2. Execute headless rendering
     let harness = HeadlessDevice::new().expect("Failed to initialize headless WGPU");
     let captured = harness.capture_rendering(&display_list, width, height)
         .expect("Failed to capture rendering");
 
-    // 3. 基線（Baseline）との比較
+    // 3. Compare with Baseline
     let update_baselines = std::env::var("UPDATE_BASELINES").is_ok();
     
     if !Path::new(&baseline_path).exists() || update_baselines {
