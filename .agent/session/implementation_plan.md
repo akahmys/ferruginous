@@ -1,47 +1,72 @@
-# Phase 18: Multibyte Text Rendering Precision
+# Ferruginous Rebirth: Clean-Slate Reconstruction
 
-This phase focuses on correcting Japanese character positioning and rendering by implementing missing ISO 32000-2 requirements for composite fonts (Type 0) and CIDFonts.
+Scraping the current prototype and rebuilding the PDF 2.0 toolkit with a cleaner, more robust architecture.
 
 ## User Review Required
 
 > [!IMPORTANT]
-> The changes involve core rendering logic in `ferruginous-sdk`. While aiming for 100% compliance, the use of system fallback fonts on macOS (e.g., Hiragino) might lead to slight metrics mismatches if the embedded font widths in the PDF don't align with the system font. We prioritize PDF-specified widths (`W` and `W2`) over font file metrics.
+> This plan completely replaces the existing codebase. The current code has been moved to `.legacy/` for reference. We will not "port" code line-by-line, but rather rewrite it using the mature insights (Zero-copy, CID/WMode fixes) from Phase 19.
+
+> [!WARNING]
+> The initial focus will be on the core SDK and rendering foundation. UI features like `ferruginous-ui` will be reconstructed later once the core is stable.
 
 ## Proposed Changes
 
-### Research & Baseline
-- Run `cargo run --example create_jp_harness` to generate a test PDF.
-- Run `cargo run --example diag_layout samples/pdf20/jp-harness.pdf` to establish the baseline failure state.
+### [ferruginous-core] [NEW]
+The base layer for PDF type systems and low-level parsing.
 
----
+#### [NEW] [types.rs](file:///Users/jun/Documents/Project/Ferruginous/crates/ferruginous-core/src/types.rs)
+- Definition of `Object`, `Reference`, and `Name` types.
+- Strict use of `bytes::Bytes` for raw data to ensure zero-copy.
+- `Resolver` trait definition.
 
-### SDK Refactoring (Track S)
+#### [NEW] [lexer.rs](file:///Users/jun/Documents/Project/Ferruginous/crates/ferruginous-core/src/lexer.rs) / [parser.rs](file:///Users/jun/Documents/Project/Ferruginous/crates/ferruginous-core/src/parser.rs)
+- Modernized lexer using `Peekable<I>` for optimized tokenization.
+- Recursive descent parser with strict ISO 32000-2 compliance.
 
-#### [MODIFY] [font.rs](file:///Users/jun/Documents/Project/Ferruginous/crates/ferruginous-sdk/src/font.rs)
-- **Metric Propagation**: Ensure `from_type0_dict` correctly inherits and overrides metrics from the Descendant CIDFont.
-- **CIDToGIDMap**: Fix the logic in `get_glyph_path` to handle `Identity` mapping correctly (CID 1:1 GID) and ensure it's applied for `CIDFontType2`.
-- **Vertical Origin**: Refine `char_vertical_metrics` to ensure default values (Clause 9.7.4.3) are used when `W2` is absent.
+### [ferruginous-doc] [NEW]
+Document structure and resource management.
 
-#### [MODIFY] [text.rs](file:///Users/jun/Documents/Project/Ferruginous/crates/ferruginous-sdk/src/text.rs)
-- **Origin Shift**: Update `TextState` or the rendering loop to apply the vertical origin shift `(vx, vy)` before drawing each glyph in vertical mode (`wmode == 1`).
-- **FontMatrix Sync**: Ensure the 0.001 scaling factor is explicitly handled in the transformation matrix if not already included in the CTM/Tm calculation.
+#### [NEW] [xref.rs](file:///Users/jun/Documents/Project/Ferruginous/crates/ferruginous-doc/src/xref.rs)
+- Unified XRef handler (Cross-reference tables and streams).
+- Robust recovery logic for "dirty" PDFs.
 
-#### [MODIFY] [renderer.rs / content.rs] (TBD)
-- Integrate the origin shift into the actual rendering loop within `ferruginous-render` or the content stream processor.
+#### [NEW] [page.rs](file:///Users/jun/Documents/Project/Ferruginous/crates/ferruginous-doc/src/page.rs)
+- Efficient Page Tree resolution.
+- Inheritance-aware resource dictionary management.
+
+### [ferruginous-render] [NEW]
+The graphics engine and rendering abstraction.
+
+#### [NEW] [bridge.rs](file:///Users/jun/Documents/Project/Ferruginous/crates/ferruginous-render/src/bridge.rs)
+- `RenderBackend` trait (the Render Bridge).
+- Headless rendering specialization for JPEG/PNG output (using Vello + `image` crate).
+
+#### [NEW] [text.rs](file:///Users/jun/Documents/Project/Ferruginous/crates/ferruginous-render/src/text.rs)
+- Integrated Multibyte/Vertical text layout engine (Japanese support).
+
+### [ferruginous-mcp] [NEW]
+The interface layer for AI-driven document manipulation.
+
+#### [NEW] [server.rs](file:///Users/jun/Documents/Project/Ferruginous/crates/ferruginous-mcp/src/server.rs)
+- Implementation of the Model Context Protocol (using `rmcp`).
+- **Read/Edit Tools**: Full CRUD capability for PDF data.
+- **Visual Tools**: Capability to trigger headless rendering and return image paths for AI inspection.
 
 ---
 
 ## Open Questions
 
-- Should we strictly enforce the PDF's `W` and `W2` widths even if the actual font outline has a different advance? (Currently: Yes, per ISO 32000-2).
+- **UI Phase**: Confirming that `ferruginous-ui` (egui-based) will be deferred until the core engine and headless verification are stable.
+
+- **Feature Parity**: Which features from Phase 19 (e.g., Encryption, Signatures) are high priority for the Rebirth?
 
 ## Verification Plan
 
 ### Automated Tests
-- `cargo run --example create_jp_harness`
-- `cargo run --example diag_layout samples/pdf20/jp-harness.pdf`
-- Check if the output shows the expected origin shift and advancement.
-- `verify_compliance.sh` to ensure no `unwrap()` regressions.
+- `cargo test` across all new crates.
+- **SSoT Verification**: Use the [PDF Association Sample Suite](https://github.com/pdf-association/pdf-issues) as the primary verification source.
+- `pdf-spec-mcp` validation for all new parsing logic against ISO 32000-2.
 
 ### Manual Verification
-- Visual inspection of the generated `jp-harness.pdf` in the `ferruginous-ui` (if possible) or system viewer.
+- Rendering a set of "insight-heavy" PDFs (Japanese vertical text, transparency groups) once the bridge is ready.

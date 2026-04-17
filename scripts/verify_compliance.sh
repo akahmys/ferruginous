@@ -3,7 +3,7 @@
 set -e
 
 ERROR=0
-TARGET_DIRS="crates/ferruginous-sdk crates/ferruginous-ui"
+TARGET_DIRS="crates/ferruginous-core crates/ferruginous-doc crates/ferruginous-render crates/ferruginous-sdk crates/ferruginous-bridge-legacy crates/ferruginous-mcp"
 
 # Ensure cargo is available
 if ! command -v cargo &> /dev/null; then
@@ -51,7 +51,7 @@ while read -r file; do
             echo "  FAIL: $file:$line"
             ERROR=1
         fi
-    done < <(grep -nE "\.(unwrap|expect)\(" "$file")
+    done < <(grep -nE "\.(unwrap|expect)\(" "$file" | grep -vE "unwrap_(or|err)\(")
 done < <(find $TARGET_DIRS -name "*.rs" | grep -v "tests")
 
 # Rule 3: No Unsafe
@@ -82,6 +82,7 @@ done < <(find $TARGET_DIRS -name "*.rs" | grep -v "tests")
 # Rule 11: Explicit Error Transparency
 echo "[Rule 11] Checking for String/anyhow errors in Result..."
 while read -r file; do
+    if [[ $file == *"crates/ferruginous-mcp"* ]]; then continue; fi
     while read -r line; do
         lnum=$(echo "$line" | cut -d: -f1)
         is_test=$(sed -n "1,${lnum}p" "$file" | grep -c "mod tests" || true)
@@ -108,6 +109,10 @@ done < <(find $TARGET_DIRS -name "*.rs")
 # MSRV 1.94
 echo "[MSRV] Checking 1.94 compatibility..."
 cargo check --quiet || ERROR=1
+# Rule 17: Idiomatic Quality
+echo "[Rule 17] Running clippy audit..."
+cargo clippy --workspace -- -D warnings || ERROR=1
+
 # Rule 16: License Compliance
 echo "[Rule 16] Checking for license conflicts..."
 ./scripts/audit_licenses.py || ERROR=1

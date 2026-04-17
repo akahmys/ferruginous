@@ -58,12 +58,12 @@
 ## 11. Explicit Error Handling
 - **Rule**: Prohibit `String` errors. Use concrete Enum types and the `thiserror` crate.
 - **Purpose**: Ensure error traceability and programmatic recoverability.
-- **Compliance Criterion**: All errors must be defined as domain-specific Enum types, allowing callers to handle them based on the type.
+- **Compliance Criterion**: All errors must be defined as domain-specific Enum types with mandatory contextual enrichment (e.g., lexical position, object hierarchy, or operation name).
 
 ## 12. Bound & Invariant Enforcement
 - **Rule**: Enforce a 256MB limit on external inputs (PDF streams) and explicitly state invariants using `assert!`.
 - **Purpose**: Early detection of resource exhaustion (OOM) and logical contradictions.
-- **Compliance Criterion**: Resource limits must be enforced by types or constants, and design assumptions must be verified within the code.
+- **Compliance Criterion**: Resource limits must be enforced by types or constants. For structural parsers, a multi-token lookahead buffer must be used to ensure no data loss during disambiguation.
 
 ## 13. Zero Silent Swallowing
 - **Rule**: Prohibit discarding errors via `.ok()` or `_`. Always log or propagate.

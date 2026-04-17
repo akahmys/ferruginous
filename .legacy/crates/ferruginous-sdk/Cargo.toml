@@ -1,0 +1,51 @@
+[package]
+name = "ferruginous-sdk"
+version = "0.1.0"
+authors = { workspace = true }
+edition = { workspace = true }
+rust-version = { workspace = true }
+license = { workspace = true }
+
+[lints]
+workspace = true
+
+[dependencies]
+thiserror = { workspace = true }
+bytes = { workspace = true }
+nom = "7.1"
+byteorder = "1.5"
+miniz_oxide = "0.7"
+aes = "0.8"
+cbc = "0.1"
+md-5 = "0.10"
+sha2 = "0.10"
+cms = "0.2"
+x509-cert = "0.2"
+der = { version = "0.7", features = ["derive"] }
+serde = { version = "1.0", features = ["derive", "rc"] }
+kurbo = { version = "0.13", features = ["serde"] }
+jpeg-decoder = "0.3.2"
+ttf-parser = { workspace = true }
+lcms2 = { workspace = true }
+xmp-writer = "0.3.2"
+fax = "0.2"
+weezl = "0.1"
+justbig2 = "0.1"
+x509-parser = "0.16"
+rsa = "0.9"
+ed25519-dalek = "2.1"
+hayro-jpeg2000 = { version = "0.3.4", default-features = false, features = ["std"] }
+ferruginous-bridge-legacy = { path = "../ferruginous-bridge-legacy", optional = true }
+roxmltree = "0.21.1"
+
+[features]
+default = ["legacy"]
+legacy = ["ferruginous-bridge-legacy"]
+
+[dev-dependencies]
+proptest = "1.4"
+criterion = "0.5"
+
+[[bench]]
+name = "parse_bench"
+harness = false

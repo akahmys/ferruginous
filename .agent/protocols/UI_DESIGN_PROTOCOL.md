@@ -1,31 +1,26 @@
 # UI Component Design Protocol
 
 > [!IMPORTANT]
-> The Ferruginous UI balances "Data Purity" with "Intuitive Operability." Leverage Egui's immediate mode characteristics to always visualize a Single Source of Truth (SDK state).
-
-## 1. Shared SSoT (Shared Single Source of Truth)
-
-- **Rule**: Minimize the UI's own mutable state and directly project the state of `ferruginous-sdk`.
-- **Purpose**: Physically eliminate inconsistencies between the UI and data, maintaining a single truth.
-- **Criterion**: UI components must accept SDK data types directly as arguments.
-
-## 2. Premium Aesthetics
-
-- **Rule**: Adopt an HSL-based color palette, modern typography, and 100-200ms micro-animations.
-- **Purpose**: Provide a high-quality user experience that not only offers functionality but also satisfies the desire for ownership.
-- **Criterion**: Browser default styles must be completely eliminated, and consistent design tokens must be applied.
-
-## 3. Fluidity & Robustness
-
-- **Rule**: Assign a unique ID to every interactive element and ensure they follow window resizing and invalid input without crashing.
-- **Purpose**: Improve testability and ensure stability across all usage environments.
-- **Criterion**: No rendering breakdown during resizing, and all elements must hold a `Universal ID`.
+> The Ferruginous UI balances "Data Purity" with "Intuitive Operability." Leverage Egui's immediate mode characteristics to always project a Single Source of Truth (SDK state).
 
 ---
 
-## 4. Audit Checklist
+## 1. SDK State Projection
+- **Rule**: Minimize internal UI state and derive visibility/content directly from `ferruginous-sdk` data types.
+- **Purpose**: Eliminate inconsistencies between the interface and the underlying PDF document state.
+- **Compliance Criterion**: UI components must accept SDK-native types as primary arguments for rendering.
 
-1.  **SSoT Projection**: Is there any divergence from the SDK state?
-2.  **Performance**: Is 60 FPS being maintained?
-3.  **Visual Consistency**: Are margins, colors, and typography unified?
-4.  **Accessibility**: Is a contrast ratio of 4.5:1 or higher maintained, and is dark mode supported?
+## 2. Premium Design Language
+- **Rule**: Utilize an HSL-based harmonious color palette, high-precision typography, and 100-200ms micro-animations.
+- **Purpose**: Provide a professional-grade experience that reflects the "Reference Precision" of the toolkit.
+- **Compliance Criterion**: Elimination of browser default styles and adherence to the unified Design Token set.
+
+## 3. Layout Stability
+- **Rule**: assign unique IDs to all interactive elements and ensure layout resilience against window resizing.
+- **Purpose**: Prevent visual breakage and ensure testability through automated UI drivers.
+- **Compliance Criterion**: Zero rendering artifacts or crashes during viewport resizing or high-dpi scaling changes.
+
+## 4. Visual Accessibility
+- **Rule**: Maintain a minimum contrast ratio of 4.5:1 and provide first-class support for both Light and Dark themes.
+- **Purpose**: Ensure that document intelligence is accessible to all users across various lighting conditions.
+- **Compliance Criterion**: Passing accessibility audits and seamless theme switching.

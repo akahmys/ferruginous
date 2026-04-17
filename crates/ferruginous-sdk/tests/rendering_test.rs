@@ -1,79 +1,24 @@
-#![allow(clippy::all, missing_docs)]
-//! Test module
+use std::path::Path;
+use bytes::Bytes;
+use ferruginous_sdk::PdfDocument;
 
-use ferruginous_sdk::content::{Processor, parse_content_stream};
-use ferruginous_sdk::graphics::{DrawOp, Color, ClippingRule};
+#[tokio::test]
+async fn test_render_sample_pdf() {
+    let pdf_path = Path::new("../../samples/pdf20/pdf-association/Simple PDF 2.0 file.pdf");
+    assert!(pdf_path.exists(), "Sample PDF not found at {:?}", pdf_path);
 
-#[test]
-fn test_draw_op_generation_basic() {
-    let content = b"10 20 m 30 40 l S";
-    let nodes = parse_content_stream(content).unwrap();
-    
-    // Processor with 200x100 mediabox (height = 100)
-    let mut processor = Processor::new(None, Some([0.0, 0.0, 200.0, 100.0]), None);
-    processor.process_nodes(&nodes).unwrap();
-    
-    let dl = processor.display_list;
-    
-    // 1. SetTransform (Normalization: height=100) -> [1 0 0 -1 0 100]
-    // 2. StrokePath
-    assert_eq!(dl.len(), 2);
-    
-    match &dl[0].op {
-        DrawOp::SetTransform(m) => {
-            let c = m.as_coeffs();
-            assert_eq!(c[0], 1.0); // a
-            assert_eq!(c[3], -1.0); // d
-            assert_eq!(c[5], 100.0); // f
-        }
-        _ => panic!("Expected SetTransform at index 0"),
-    }
-    
-    match &dl[1].op {
-        DrawOp::StrokePath { path, color, width, .. } => {
-            assert_eq!(path.elements().len(), 2);
-            assert_eq!(*color, Color::RGB(0.0, 0.0, 0.0));
-            assert_eq!(*width, 1.0);
-        }
-        _ => panic!("Expected StrokePath at index 1"),
-    }
-}
+    let data = std::fs::read(pdf_path).expect("Failed to read sample PDF");
+    let doc = PdfDocument::open(Bytes::from(data)).expect("Failed to open PDF document");
 
-#[test]
-fn test_draw_op_state_stack() {
-    let content = b"q 1 0 0 1 10 20 cm S Q";
-    let nodes = parse_content_stream(content).unwrap();
+    let output_path = Path::new("test_output.png");
     
-    let mut processor = Processor::new(None, None, None);
-    processor.process_nodes(&nodes).unwrap();
-    
-    let dl = processor.display_list;
-    
-    // 1. PushState (q)
-    // 2. SetTransform (cm)
-    // 3. StrokePath (S)
-    // 4. PopState (Q)
-    assert_eq!(dl.len(), 4);
-    assert!(matches!(dl[0].op, DrawOp::PushState));
-    assert!(matches!(dl[1].op, DrawOp::SetTransform(_)));
-    assert!(matches!(dl[2].op, DrawOp::StrokePath { .. }));
-    assert!(matches!(dl[3].op, DrawOp::PopState));
-}
+    // Render page 0 (1st page)
+    doc.render_page_to_file(0, output_path).await.expect("Failed to render page to file");
 
-#[test]
-fn test_draw_op_fill_rules() {
-    let content = b"0 0 m 10 10 l f*";
-    let nodes = parse_content_stream(content).unwrap();
+    assert!(output_path.exists(), "Output PNG file was not created");
     
-    let mut processor = Processor::new(None, None, None);
-    processor.process_nodes(&nodes).unwrap();
+    let metadata = std::fs::metadata(output_path).expect("Failed to get metadata for output PNG");
+    assert!(metadata.len() > 0, "Output PNG file is empty");
     
-    let dl = processor.display_list;
-    
-    match &dl[0].op {
-        DrawOp::FillPath { rule, .. } => {
-            assert_eq!(*rule, ClippingRule::EvenOdd);
-        }
-        _ => panic!("Expected FillPath"),
-    }
+    println!("Successfully rendered sample PDF to {:?}", output_path);
 }

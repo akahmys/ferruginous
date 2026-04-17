@@ -1,83 +1,116 @@
-//! Ferruginous PDF Engine SDK.
+//! Ferruginous SDK: High-level PDF processing library.
 //!
-//! A high-integrity PDF parsing and manipulation library designed for
-//! Reliable Rust-15 (RR-15) compliance and ISO 32000-2:2020 adherence.
+//! This crate provides a high-level, easy-to-use interface for PDF document
+//! manipulation, rendering, and auditing, abstracting away the low-level
+//! complexities of the core type system and document model.
 
-/// Core PDF types, matrices, and error handling.
-pub mod core;
-/// Interactive Forms (AcroForm) management (Clause 12.7).
-pub mod forms;
-/// Optional Content Groups (Layers) management (Clause 8.11).
-pub mod ocg;
-/// Arlington PDF Model integration and validation.
-pub mod arlington;
-/// Document Catalog and root structure resolution (Clause 7.7.2).
-pub mod catalog;
-/// PDF content stream parsing and processing (ISO 32000-2:2020 Clause 7.8).
-pub mod content;
-/// Document metadata and XMP support (Clause 14.3).
-pub mod metadata;
-/// Color spaces and ICC profile support (Clause 8.6).
-pub mod colorspace;
-/// Font dictionary and glyph mapping (Clause 9).
-pub mod font;
-/// Graphics state and drawing primitives (Clause 8.4).
-pub mod graphics;
-/// Low-level PDF tokenization and parsing.
-pub mod lexer;
-/// Document loading and version detection.
-pub mod loader;
-/// Page tree and page leaf node management.
-pub mod page;
-/// Page tree resolution and inheritance.
-pub mod resolver;
-/// Resource dictionary management.
-pub mod resources;
-/// Text-specific state and operators.
-pub mod text;
-/// Trailer dictionary and document termination (Clause 7.5.5).
-pub mod trailer;
-/// Cross-reference table and stream management (Clause 7.5.4).
-pub mod xref;
-/// Navigation and outline management (Clause 12.3).
-pub mod navigation;
-/// Annotation and widget management (Clause 12.5).
-pub mod annotation;
-/// Logical Structure and Tagged PDF support (Clause 14.7).
-pub mod structure;
-/// Stream filters (Flate, DCT, etc.) (Clause 7.4).
-pub mod filter;
-/// Encryption and security handlers (Clause 7.6).
-pub mod security;
-/// Digital signatures and Cryptographic verification (Clause 12.8).
-pub mod signature;
-/// Redaction and content removal (Clause 12.5.6.23).
-pub mod redaction;
-/// ToUnicode CMaps and character mapping (Clause 9.10).
-pub mod cmap;
-/// Adobe-Japan1 CMap resources and character mapping.
-pub mod cmap_aj1;
-/// Physical PDF object serialization and file writing.
-pub mod serialize;
-/// Text layer extraction and management.
-pub mod text_layer;
-/// Full-text search engine for PDF content.
-pub mod search;
-/// Document-level editing and incremental updates.
-pub mod editor;
-/// Multimedia and 3D support (ISO 32000-2:2020 Clause 13).
-pub mod multimedia;
-/// Standard font encodings.
-pub mod encoding;
+use std::path::Path;
+use bytes::Bytes;
+use ferruginous_core::{PdfResult, Reference, Object, Resolver};
+use ferruginous_doc::{Document, PageTree, Page as DocPage};
+use ferruginous_render::{VelloBackend, headless::render_to_png};
 
-/// Advanced shading tessellation and mesh subdivision (ISO 32000-2:2020 Clause 8.7.4.5).
-pub mod shading_tess;
-/// Global document compliance and validation (PDF/A, PDF/UA).
-pub mod validator;
+/// The internal interpreter module for processing content streams.
+pub mod interpreter;
 
-pub use loader::PdfDocument;
-pub use editor::PdfEditor;
-pub use page::{Page, PageTree};
-pub use graphics::{GraphicsState, Color, DrawOp, GlyphInstance};
-pub use serialize as writer; // Backwards compatibility if needed, or just use serialize.
-pub use core::{Object, Reference, Resolver, PdfError, PdfResult};
+use crate::interpreter::Interpreter;
+
+/// High-level entry point for interacting with a PDF document.
+///
+/// This struct provides a simplified interface for common PDF tasks like
+/// reading, querying page trees, and rendering content.
+pub struct PdfDocument {
+    inner: Document,
+}
+
+impl PdfDocument {
+    /// Opens a PDF document from a byte buffer.
+    ///
+    /// This performs initial structure validation (header, XRef, and Catalog resolution).
+    pub fn open(data: Bytes) -> PdfResult<Self> {
+        let inner = Document::open(data)?;
+        Ok(Self { inner })
+    }
+
+    /// Returns the total number of pages in the document.
+    pub fn page_count(&self) -> PdfResult<usize> {
+        let root = self.pages_root()?;
+        let tree = PageTree::new(root, &self.inner);
+        tree.count()
+    }
+
+    /// Retrieves a handle to a specific page by its zero-based index.
+    pub fn get_page(&self, index: usize) -> PdfResult<Page<'_>> {
+        let root = self.pages_root()?;
+        let tree = PageTree::new(root, &self.inner);
+        let doc_page = tree.page(index)?;
+        Ok(Page { doc_page })
+    }
+
+    fn pages_root(&self) -> PdfResult<Reference> {
+        let catalog = self.inner.resolve(&self.inner.root())?;
+        let dict = catalog.as_dict().ok_or_else(|| ferruginous_core::PdfError::Other("Catalog is not a dictionary".into()))?;
+        let pages_ref = dict.get(&"Pages".into())
+            .and_then(|o| o.as_reference())
+            .ok_or_else(|| ferruginous_core::PdfError::Other("Missing /Pages in Catalog".into()))?;
+        Ok(pages_ref)
+    }
+
+    /// Renders a specific page to a PNG file.
+    ///
+    /// This is an asynchronous operation that utilizes the Vello GPU-accelerated
+    /// backend and the headless rendering pipeline.
+    pub async fn render_page_to_file(&self, index: usize, output_path: &Path) -> PdfResult<()> {
+        let page = self.get_page(index)?;
+        
+        let mut backend = VelloBackend::new();
+        let mut interpreter = Interpreter::new(&mut backend);
+        
+        // Resolve contents
+        let contents = page.doc_page.dictionary.get(&"Contents".into())
+            .ok_or_else(|| ferruginous_core::PdfError::Other("Missing /Contents".into()))?;
+            
+        let content_refs = match contents {
+            Object::Reference(r) => vec![*r],
+            Object::Array(a) => a.iter().filter_map(|o| {
+                if let Object::Reference(r) = o { Some(*r) } else { None }
+            }).collect(),
+            _ => return Err(ferruginous_core::PdfError::Other("Invalid /Contents".into())),
+        };
+
+        for r in content_refs {
+            let stream_obj = self.inner.resolve(&r)?;
+            if let Object::Stream(_, data) = stream_obj {
+                // Execute interpreter on stream data
+                interpreter.execute(&data)?;
+            }
+        }
+
+        // Get mediabox for dimensions
+        let mediabox = page.doc_page.media_box()
+            .and_then(|o| o.as_array().as_deref().cloned())
+            .ok_or_else(|| ferruginous_core::PdfError::Other("Missing /MediaBox".into()))?;
+            
+        let w = (mediabox[2].as_f64().ok_or_else(|| ferruginous_core::PdfError::Other("Invalid MediaBox width".into()))? 
+                 - mediabox[0].as_f64().ok_or_else(|| ferruginous_core::PdfError::Other("Invalid MediaBox x".into()))?).abs() as u32;
+        let h = (mediabox[3].as_f64().ok_or_else(|| ferruginous_core::PdfError::Other("Invalid MediaBox height".into()))? 
+                 - mediabox[1].as_f64().ok_or_else(|| ferruginous_core::PdfError::Other("Invalid MediaBox y".into()))?).abs() as u32;
+
+        render_to_png(backend.scene(), w, h, output_path).await
+            .map_err(|e| ferruginous_core::PdfError::Other(e.to_string()))?;
+
+        Ok(())
+    }
+}
+
+/// A handle to a specific page within a [PdfDocument].
+pub struct Page<'a> {
+    doc_page: DocPage<'a>,
+}
+
+impl Page<'_> {
+    /// Returns the indirect reference of this page object.
+    pub fn reference(&self) -> Reference {
+        self.doc_page.reference
+    }
+}

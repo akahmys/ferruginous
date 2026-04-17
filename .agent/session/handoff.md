@@ -1,29 +1,26 @@
-# Session Handoff (2026-04-14) - Phase 19 Complete & Phase 20 Ready
+# Session Handoff: Parser Hardening & Rendering Success
 
-- **Mode**: Execution & Cleanup
-- **Status**: **Phase 19 Complete (PDF/A-4 & PDF/X-6 Compliance) / Integrated into main**
-- **SSoT**: [ROADMAP.md](../../ROADMAP.md)
+## Current Status
+- **Build**: `cargo build --workspace` passes.
+- **Verification**: `cargo test -p ferruginous-sdk --test rendering_test` passes.
+- **Milestone**: Successfully rendered `samples/Simple PDF 2.0 file.pdf` to PNG.
 
-## Current Context (Snapshot)
+## Critical Lesson: COS Parser Multi-lookahead
+During this session, we identified a critical structural parsing failure in the `ferruginous-core` COS parser.
 
-In this session, we completed the advanced specification compliance required for PDF/A-4 and PDF/X-6 (XMP engine renewal, Unicode integrity, and Associated Files support). All artifacts have been integrated and merged into the `main` branch.
+### The Problem
+PDF indirect references are defined as `id generation R`. In high-density integer sequences (e.g., `MediaBox [0 0 612 396]`), the parser would consume the next integer as a potential `generation` number. If it turned out not to be an indirect reference (no `R` following), the token was pushed back, but subsequent `peek()` calls would incorrectly consume from the lexer, leading to token loss and structural mismatch (e.g., `Unexpected token: DictionaryClose`).
 
-### 1. Deliverables
-- **Phase 19**: Implemented `XmpManager` (ISO 16684-1), `UnicodeIntegrityChecker`, and `Associated Files` support.
-- **Validator**: Created `validator.rs` in the SDK and built an automated verification path for specification consistency.
-- **Core**: Performed minor refactoring such as adding `Object::as_bool`.
+### The Solution: `peeked: Vec<Token>`
+The `Parser` has been refactored to support multiple tokens of lookahead using a vector-based `peeked` buffer.
+- `peek_n(n)` allows checking any number of future tokens without consuming them from the lexer.
+- `next()` consume from the `peeked` buffer first.
 
-### 2. Compliance
-- Confirmed correct operation of specification compliance logic via `validator_test.rs` and `metadata_compliance_test.rs`.
-- Completed integration (merge) into the `main` branch.
+### RR-15 Compliance
+- **Stack Safety**: `parse_object` implements a strict recursion depth limit (64).
+- **Error Handling**: All lexical and syntactic errors now provide accurate position information.
 
-## Open Issues / Blockers
-
-- None.
-
-## Next Action Entry Point
-
-In the next session, we will start the following:
-
-1.  **Phase 20: Construction of the Sentinel UI Design System**: Start work on custom theme creation for `egui` and premium UI polish.
-2.  **Sentinel v2.0**: Implementation of UI/UX as a professional-grade PDF editor.
+## Next Steps
+1. **Interpreter Expansion**: The `Interpreter` currently only implements a few operators (`BT`, `ET`, etc.). Full text rendering operators and graphics state operators (`q`, `Q`, `cm`) need implementation.
+2. **Image Streams**: Implement `DCTDecode` and `CCITTFaxDecode` support for images.
+3. **Arlington Integration**: Use the Arlington PDF Model via MCP to validate the generated structures in a more granular way.

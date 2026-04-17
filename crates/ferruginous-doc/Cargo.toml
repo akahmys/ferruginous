@@ -1,0 +1,24 @@
+[package]
+name = "ferruginous-doc"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+legacy-bridge = ["ferruginous-bridge-legacy"]
+
+[dependencies]
+ferruginous-core = { path = "../ferruginous-core" }
+ferruginous-bridge-legacy = { path = "../ferruginous-bridge-legacy", optional = true }
+bytes.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+flate2.workspace = true
+skrifa = "0.40.0"
+read-fonts = "0.37.0"
+parking_lot = "0.12"
+
+[dev-dependencies]

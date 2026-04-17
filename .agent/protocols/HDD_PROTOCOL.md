@@ -1,36 +1,26 @@
 # Harness-Driven Development (HDD) Protocol
 
 > [!IMPORTANT]
-> **Build Mode**: Applied during new feature development.
-> Eliminate inference and prioritize "Mechanical Proof." Construct a verification environment (Harness) prior to implementation to dynamically prove consistency with ISO 32000-2.
+> **Build Mode**: Prioritize "Mechanical Proof." Construct a verification environment (Harness) prior to implementation to dynamically prove consistency with ISO 32000-2.
 
-## 1. Spec-First
+---
 
-- **Rule**: Prior to implementation, always use `pdf-spec-mcp` to extract the relevant ISO 32000-2 Clause and requirements (shall/must).
-- **Purpose**: Eliminate developer subjectivity and ensure "Full Compliance" with international standards at the design stage.
-- **Criterion**: The `implementation_plan.md` must cite Clause numbers and extracted requirements.
+## 1. Specification-First Design
+- **Rule**: Prior to implementation, extract requirements (shall/must) from ISO 32000-2 using `pdf-spec-mcp`.
+- **Purpose**: Eliminate developer subjectivity and ensure "Full Compliance" at the architectural stage.
+- **Compliance Criterion**: `implementation_plan.md` must cite specific ISO Clauses and their requirements.
 
-## 2. Harness-First
-
-- **Rule**: Prior to logic implementation, always write a "test that fails as expected" or a "probe to verify output."
-- **Purpose**: Confirm that the test itself correctly reflects the requirements and prevent debugging from going astray.
-- **Criterion**: In `task.md`, the construction of the harness must be completed before the logic implementation.
+## 2. Harness-First Implementation
+- **Rule**: Build a failing test or a diagnostic probe *before* implementing the production logic.
+- **Purpose**: Confirm that the verification mechanism correctly reflects the specification and prevents "lost-at-sea" debugging.
+- **Compliance Criterion**: `task.md` must list harness completion as a prerequisite for logic implementation.
 
 ## 3. Proof of Non-Regression
+- **Rule**: Every new feature must include unit tests for logical core and integration tests for document-wide side effects.
+- **Purpose**: Guarantee that new features do not destabilize existing foundational layers.
+- **Compliance Criterion**: All existing tests in the workspace must PASS, with 100% pass rate in `cargo test`.
 
-- **SDK**: Prove logical correctness via unit tests and boundary value tests.
-- **UI**: Demonstrate visual correctness through state transition tests using visual snapshots or unique IDs.
-
-## 4. Execution Process
-
-1.  **Define**: Confirm legal requirements using `pdf-spec-mcp`.
-2.  **Plan**: Create `implementation_plan.md` and immediately persist to ELM.
-3.  **Harness**: Build failing tests.
-4.  **Execute**: Implement in compliance with [RR-15](RELIABLE_RUST_15.md).
-5.  **Verify**: Complete `cargo test` and `verify_compliance.sh`.
-
-## 5. Completion Gate
-
-- **Test Passing [MUST]**: All tests for new and existing functions must PASS.
-- **Evidence [MUST]**: Test results and their mapping to Clauses must be recorded in `walkthrough.md`.
-- **ELM Sync [MUST]**: All records must be persisted to the project directory.
+## 4. Evidence Persistence
+- **Rule**: Persist all test logs and proof-of-compliance artifacts to the project's permanent record (`walkthrough.md`).
+- **Purpose**: Create a traceable audit trail for ISO compliance and feature stability.
+- **Compliance Criterion**: A feature is defined as [Complete] only when its evidence is documented in the project's ELM (External Long-Term Memory). For graphics/rendering, "Visual Proof" (e.g., screenshots or PNGs) is a mandatory requirement.

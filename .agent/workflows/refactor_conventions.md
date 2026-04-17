@@ -17,10 +17,12 @@ Eliminate redundancy in conventions as the project grows and rebuild the SSoT (S
 // turbo
 4. **Extension of Automation**: Add `// turbo` annotations to all workflows and fix link paths to reflect the latest layout.
 // turbo
-5. **Organization**: Delete unnecessary temporary files and integrate misplaced specifications into the `specs/` directory.
+5. **Organization**: Delete unnecessary temporary files, logs, and integrate misplaced specifications into the `specs/` directory.
+// turbo
+6. **Hardening Audit**: Verify compliance with `.agent/hardening_rules.md` (XRef support, caching patterns).
 
 // turbo
-6. **Sync Verification**: Execute [sync_docs](sync_docs.md) to perform a final consistency check across all documents.
+7. **Sync Verification**: Execute [sync_docs](sync_docs.md) to perform a final consistency check across all documents.
 
 ## Completion Requirements
 

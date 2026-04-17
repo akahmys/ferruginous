@@ -1,26 +1,26 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/ferruginous-sdk",
+    "crates/ferruginous-core",
+    "crates/ferruginous-doc",
     "crates/ferruginous-render",
-    "crates/ferruginous-ui",
+    "crates/ferruginous-sdk",
+    "crates/ferruginous-mcp",
+    "crates/ferruginous-bridge-legacy",
 ]
 
 [workspace.dependencies]
 thiserror = "2.0.11"
-serde = { version = "1.0", features = ["derive"] }
+serde = { version = "1.0", features = ["derive", "rc"] }
+tokio = { version = "1.43", features = ["full"] }
+rmcp = "1.5.0"
 vello = { git = "https://github.com/linebender/vello" }
+kurbo = { version = "0.13", features = ["serde"] }
 rayon = "1.10"
 ttf-parser = "0.21"
 lcms2 = "6.0"
-egui = "0.33.1"
-eframe = { version = "0.33.1", default-features = false }
-egui-wgpu = "0.33.1"
-
-[patch.crates-io]
-time = { git = "https://github.com/time-rs/time.git", tag = "v0.3.36" }
-serde_with = { git = "https://github.com/jonasbb/serde_with.git", tag = "v3.11.0" }
-tauri = { git = "https://github.com/tauri-apps/tauri.git", tag = "tauri-v2.0.0" }
+bytes = { version = "1.10", features = ["serde"] }
+flate2 = "1.0"
 
 [workspace.package]
 version = "0.1.0"
@@ -45,16 +45,13 @@ nursery = { level = "warn", priority = -1 }
 all = { level = "warn", priority = -1 }
 too_many_lines = "allow"
 module_name_repetitions = "allow"
-# Cast precision: PDF integer values are inherently bounded; precision loss is acceptable
 cast_precision_loss = "allow"
 cast_possible_truncation = "allow"
 cast_sign_loss = "allow"
 cast_possible_wrap = "allow"
 cast_lossless = "allow"
-# Doc sections: will be addressed incrementally
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
-# Style preferences that conflict with PDF domain patterns
 if_not_else = "allow"
 redundant_else = "allow"
 unnecessary_wraps = "allow"
@@ -62,14 +59,9 @@ items_after_statements = "allow"
 option_if_let_else = "allow"
 collapsible_if = "allow"
 collapsible_else_if = "allow"
-# Structure patterns: explicit type names aid readability in complex PDF object hierarchies
-unnecessary_struct_name_repetition = "allow"
-# Doc formatting: backtick insertion will be addressed via automated tooling
 doc_markdown = "allow"
-# Attribute additions: #[must_use] and const fn will be added incrementally
 must_use_candidate = "allow"
 missing_const_for_fn = "allow"
-# Pattern preferences
 match_same_arms = "allow"
 single_match_else = "allow"
 manual_let_else = "allow"

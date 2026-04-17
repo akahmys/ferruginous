@@ -1,0 +1,24 @@
+[package]
+name = "ferruginous-render"
+version = "0.1.0"
+authors = { workspace = true }
+edition = { workspace = true }
+rust-version = { workspace = true }
+license = { workspace = true }
+
+[lints]
+workspace = true
+
+[dependencies]
+ferruginous-sdk = { path = "../ferruginous-sdk" }
+vello = "0.7.0"
+wgpu = { version = "27.0.1", features = ["metal"] }
+winit = "0.30"
+log = "0.4"
+miniz_oxide = "0.7"
+rayon = { workspace = true }
+ttf-parser = { workspace = true }
+pollster = "0.3"
+image = "0.25"
+
+[dev-dependencies]
