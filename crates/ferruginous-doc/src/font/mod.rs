@@ -154,6 +154,41 @@ impl FontResource {
         }
     }
 
+    /// Maps a character code to a Unicode string.
+    pub fn to_unicode(&self, code: &[u8]) -> String {
+        match self {
+            Self::Simple(f) => {
+                // 1. Check ToUnicode CMap
+                if let Some(cmap) = &f.to_unicode {
+                    if let Some(MappingResult::Unicode(bytes)) = cmap.lookup(code) {
+                        return decode_unicode_bytes(&bytes);
+                    }
+                }
+                // 2. Fallback to Encoding
+                if code.len() == 1 {
+                    if let Some(encoding) = &f.encoding {
+                         if let Some(s) = encoding.to_unicode(code[0]) {
+                             return s.to_string();
+                         }
+                    }
+                    return String::from_utf8_lossy(code).into_owned();
+                }
+                String::new()
+            }
+            Self::Composite(f) => {
+                // 1. Check ToUnicode CMap
+                if let Some(cmap) = &f.to_unicode {
+                    if let Some(MappingResult::Unicode(bytes)) = cmap.lookup(code) {
+                        return decode_unicode_bytes(&bytes);
+                    }
+                }
+                String::new()
+            }
+            Self::CID(_) => String::new(),
+        }
+    }
+
+
     /// Recursively loads a FontResource from a PDF dictionary.
     pub fn load(dict: &BTreeMap<PdfName, Object>, resolver: &dyn Resolver) -> PdfResult<Self> {
         let subtype = dict.get(&"Subtype".into()).and_then(|o| o.as_name())
@@ -328,4 +363,18 @@ fn load_descriptor(dict: &BTreeMap<PdfName, Object>, _resolver: &dyn Resolver) -
         missing_width: dict.get(&"MissingWidth".into()).and_then(|o| o.as_f64()).unwrap_or(0.0),
         font_file: None,
     })
+}
+
+fn decode_unicode_bytes(bytes: &[u8]) -> String {
+    if bytes.len() >= 2 {
+        // Try UTF-16BE (Standard for ToUnicode)
+        let utf16: Vec<u16> = bytes.chunks_exact(2)
+            .map(|c| ((c[0] as u16) << 8) | (c[1] as u16))
+            .collect();
+        if let Ok(s) = String::from_utf16(&utf16) {
+            return s;
+        }
+    }
+    // Fallback to UTF-8 or ASCII
+    String::from_utf8_lossy(bytes).into_owned()
 }

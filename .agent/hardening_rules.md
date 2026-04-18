@@ -24,3 +24,9 @@ These rules capture the architectural hardening requirements identified during t
 ## 4. Performance & Concurrency
 - **Rule**: Prefer `parking_lot` over `std::sync` for high-performance concurrent data structures.
 - **Reasoning**: Avoids OS-level overhead and provides better performance in the high-frequency object resolution required for rendering.
+
+## 5. Identifier Safety (Rust 2024+)
+- **Rule**: Avoid using keywords that are reserved in modern Rust editions (e.g., Rust 2024) as identifiers.
+- **Criteria**:
+    - **`gen`**: Do NOT use `gen` as a variable or parameter name (it is reserved for generators). Use `generation` or `r#gen` instead.
+    - **Future-Proofing**: Proactively audit identifiers against upcoming reserved keywords to prevent breaking changes during library evolution.

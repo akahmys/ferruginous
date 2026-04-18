@@ -13,6 +13,8 @@ use ferruginous_render::{VelloBackend, headless::render_to_png};
 
 /// The internal interpreter module for processing content streams.
 pub mod interpreter;
+/// The internal writer module for generating PDF files.
+pub mod writer;
 
 use crate::interpreter::Interpreter;
 
@@ -117,6 +119,17 @@ impl PdfDocument {
 
         Ok(())
     }
+
+    /// Returns high-level compliance information about the document.
+    pub fn get_compliance(&self) -> PdfResult<ferruginous_doc::conformance::ComplianceInfo> {
+        self.inner.compliance_info()
+    }
+
+    /// Extracts text from a specific page.
+    pub fn extract_text(&self, index: usize) -> PdfResult<String> {
+        let page = self.get_page(index)?;
+        page.extract_text(&self.inner)
+    }
 }
 
 /// A handle to a specific page within a [PdfDocument].
@@ -128,5 +141,75 @@ impl Page<'_> {
     /// Returns the indirect reference of this page object.
     pub fn reference(&self) -> Reference {
         self.doc_page.reference
+    }
+
+    /// Extracts plain text from this page.
+    pub fn extract_text(&self, resolver: &dyn ferruginous_core::Resolver) -> PdfResult<String> {
+        let mut backend = TextExtractionBackend::new();
+        
+        let res_dict = if let Some(res_obj) = self.doc_page.resources() {
+            res_obj.as_dict_arc().unwrap_or_else(|| Arc::new(std::collections::BTreeMap::new()))
+        } else {
+            Arc::new(std::collections::BTreeMap::new())
+        };
+
+        let mut interpreter = Interpreter::new(&mut backend, resolver, res_dict);
+        
+        let contents = self.doc_page.dictionary.get(&"Contents".into())
+            .ok_or_else(|| ferruginous_core::PdfError::Other("Missing /Contents".into()))?;
+            
+        let content_refs = match contents {
+            Object::Reference(r) => vec![*r],
+            Object::Array(a) => a.iter().filter_map(|o| {
+                if let Object::Reference(r) = o { Some(*r) } else { None }
+            }).collect(),
+            Object::Stream(_, _) => vec![], // Handle direct below
+            _ => return Err(ferruginous_core::PdfError::Other("Invalid /Contents".into())),
+        };
+
+        if let Object::Stream(_, data) = contents {
+             interpreter.execute(data)?;
+        } else {
+            for r in content_refs {
+                let stream_obj = resolver.resolve(&r)?;
+                if let Object::Stream(_, data) = &stream_obj {
+                    interpreter.execute(data)?;
+                }
+            }
+        }
+
+        Ok(backend.text)
+    }
+}
+
+struct TextExtractionBackend {
+    text: String,
+}
+
+impl TextExtractionBackend {
+    fn new() -> Self {
+        Self { text: String::new() }
+    }
+}
+
+impl ferruginous_render::RenderBackend for TextExtractionBackend {
+    fn push_state(&mut self) {}
+    fn pop_state(&mut self) {}
+    fn transform(&mut self, _affine: kurbo::Affine) {}
+    fn fill_path(&mut self, _path: &kurbo::BezPath, _color: &ferruginous_core::graphics::Color, _rule: ferruginous_core::graphics::WindingRule) {}
+    fn stroke_path(&mut self, _path: &kurbo::BezPath, _color: &ferruginous_core::graphics::Color, _style: &ferruginous_core::graphics::StrokeStyle) {}
+    fn push_clip(&mut self, _path: &kurbo::BezPath, _rule: ferruginous_core::graphics::WindingRule) {}
+    fn pop_clip(&mut self) {}
+    fn draw_image(&mut self, _data: &[u8], _w: u32, _h: u32, _format: ferruginous_core::graphics::PixelFormat) {}
+    fn set_fill_alpha(&mut self, _alpha: f64) {}
+    fn set_stroke_alpha(&mut self, _alpha: f64) {}
+    fn set_blend_mode(&mut self, _mode: ferruginous_core::graphics::BlendMode) {}
+    
+    fn show_text(&mut self, text: &str, _font_name: &str, _size: f32, _transform: kurbo::Affine) {
+        self.text.push_str(text);
+        if !text.ends_with(' ') {
+             // Basic heuristic for spaces between Tj ops if needed, 
+             // but usually spaces are explicit in PDF or TJ.
+        }
     }
 }

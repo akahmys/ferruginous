@@ -1,0 +1,22 @@
+[package]
+name = "ferruginous-cli"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+ferruginous-sdk = { path = "../ferruginous-sdk" }
+ferruginous-core = { path = "../ferruginous-core" }
+ferruginous-mcp = { path = "../ferruginous-mcp" }
+clap = { version = "4.5", features = ["derive"] }
+tokio = { workspace = true }
+anyhow = "1.0"
+serde_json = "1.0"
+colored = "2.1"
+indicatif = "0.17"
+
+[lints]
+workspace = true

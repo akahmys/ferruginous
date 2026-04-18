@@ -7,6 +7,8 @@ members = [
     "crates/ferruginous-sdk",
     "crates/ferruginous-mcp",
     "crates/ferruginous-bridge-legacy",
+    "crates/ferruginous-cli",
+    "crates/ferruginous-wasm",
 ]
 
 [workspace.dependencies]

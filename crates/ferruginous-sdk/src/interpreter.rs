@@ -356,6 +356,22 @@ impl<'a> Interpreter<'a> {
         // Final transformation including Rise (Ts)
         let render_matrix = text_matrices.tm.concat(&Matrix::new(1.0, 0.0, 0.0, 1.0, 0.0, self.state.text_state.rise));
         
+        // --- Added: Call backend.show_text for extraction ---
+        let mut unicode_buf = String::new();
+        let mut current_pos_u = 0;
+        while current_pos_u < text.len() {
+             let (code, len) = match font_resource.as_ref() {
+                FontResource::Composite(f) => {
+                    f.encoding.next_code(&text[current_pos_u..]).unwrap_or((vec![text[current_pos_u]], 1))
+                }
+                _ => (vec![text[current_pos_u]], 1),
+            };
+            unicode_buf.push_str(&font_resource.to_unicode(&code));
+            current_pos_u += len;
+        }
+        self.backend.show_text(&unicode_buf, font_resource.base_font().as_str(), font_size as f32, render_matrix.0);
+        // ----------------------------------------------------
+
         let mut path = path;
         path.apply_affine(render_matrix.0);
         self.backend.fill_path(&path, &self.state.fill_color, WindingRule::NonZero);

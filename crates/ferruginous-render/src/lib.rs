@@ -32,6 +32,8 @@ pub trait RenderBackend: Send {
     fn set_fill_alpha(&mut self, alpha: f64);
     fn set_stroke_alpha(&mut self, alpha: f64);
     fn set_blend_mode(&mut self, mode: ferruginous_core::graphics::BlendMode);
+
+    fn show_text(&mut self, text: &str, font_name: &str, size: f32, transform: Affine);
 }
 
 /// Vello-based implementation of [RenderBackend].
@@ -180,6 +182,11 @@ impl RenderBackend for VelloBackend {
 
     fn set_blend_mode(&mut self, mode: ferruginous_core::graphics::BlendMode) {
         self.blend_mode = mode;
+    }
+
+    fn show_text(&mut self, _text: &str, _font_name: &str, _size: f32, _transform: Affine) {
+        // Vello currently renders text via paths in the interpreter, 
+        // but we could use vello's glyph caching here if we wanted.
     }
 }
 
