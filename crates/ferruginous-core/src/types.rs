@@ -190,4 +190,34 @@ impl Object {
     pub fn as_string(&self) -> Option<&Bytes> {
         if let Self::String(s) = self { Some(s) } else { None }
     }
+
+    /// Decodes stream data using filters specified in the stream dictionary.
+    pub fn decode_stream(&self) -> PdfResult<Bytes> {
+        match self {
+            Self::Stream(dict, data) => {
+                crate::filters::decode_stream_from_dict(dict, data.to_vec())
+            }
+            _ => Err(crate::error::PdfError::Other("Not a stream object".into())),
+        }
+    }
+
+    /// Recursively collects all indirect object IDs referenced by this object.
+    pub fn gather_references(&self, refs: &mut std::collections::HashSet<u32>) {
+        match self {
+            Self::Reference(r) => {
+                refs.insert(r.id);
+            }
+            Self::Array(a) => {
+                for obj in a.iter() {
+                    obj.gather_references(refs);
+                }
+            }
+            Self::Dictionary(d) | Self::Stream(d, _) => {
+                for obj in d.values() {
+                    obj.gather_references(refs);
+                }
+            }
+            _ => {}
+        }
+    }
 }

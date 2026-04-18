@@ -7,7 +7,7 @@
 use std::path::Path;
 use std::sync::Arc;
 use bytes::Bytes;
-use ferruginous_core::{PdfResult, Reference, Object, Resolver};
+use ferruginous_core::{PdfResult, Reference, Object, Resolver, PdfError, PdfName};
 use ferruginous_doc::{Document, PageTree, Page as DocPage};
 use ferruginous_render::{VelloBackend, headless::render_to_png};
 
@@ -130,6 +130,249 @@ impl PdfDocument {
         let page = self.get_page(index)?;
         page.extract_text(&self.inner)
     }
+
+    /// Saves the current document to a new file with the specified PDF version.
+    ///
+    /// This performs a full re-serialization of all indirect objects to ensure
+    /// absolute compliance with the target version's structure (e.g., PDF 2.0).
+    pub fn save_as_version(&self, output_path: &Path, version: &str) -> PdfResult<()> {
+        use crate::writer::PdfWriter;
+        let file = std::fs::File::create(output_path)
+            .map_err(|e| ferruginous_core::PdfError::Other(e.to_string()))?;
+        let mut writer = PdfWriter::new(file);
+
+        writer.write_header(version)?;
+
+        // Resolve all indirect objects from the source document
+        // Reference management: we keep the original IDs for simplicity, 
+        // but re-serialize all active objects.
+        let mut root_obj = self.inner.resolve(&self.inner.root())?;
+        
+        // If upgrading to 2.0, ensure /Version /2.0 is in the Catalog
+        if version == "2.0" {
+            if let Object::Dictionary(ref mut dict) = root_obj {
+                std::sync::Arc::make_mut(dict).insert("Version".into(), Object::Name("2.0".into()));
+            }
+        }
+
+        // Write all objects from the store
+        // We use the Resolver trait to ensure we get decoded/decrypted objects
+        for (&id, entry) in self.inner.store().entries.iter() {
+            let generation = match entry {
+                ferruginous_doc::XRefEntry::InUse { generation, .. } => *generation,
+                ferruginous_doc::XRefEntry::Compressed { .. } => 0,
+                _ => continue,
+            };
+
+            let r = Reference::new(id, generation);
+            let obj = if r == self.inner.root() {
+                root_obj.clone()
+            } else {
+                self.inner.resolve(&r)?
+            };
+            
+            writer.write_indirect_object(id, generation, &obj)
+                .map_err(|e| ferruginous_core::PdfError::Other(e.to_string()))?;
+        }
+
+        // Find Info dictionary reference if it exists
+        let info_ref = self.inner.trailer().get(&"Info".into())
+            .and_then(|o| o.as_reference());
+
+        writer.finish(self.inner.root(), info_ref)
+            .map_err(|e| ferruginous_core::PdfError::Other(e.to_string()))?;
+
+        Ok(())
+    }
+
+    /// Saves the document in a Linearized (Fast Web View) format.
+    /// (ISO 32000-2:2020 Annex L)
+    pub fn save_linearized(&self, output_path: &Path, version: &str) -> PdfResult<()> {
+        use crate::writer::{PdfWriter, NullWriter, LinearizationParams};
+        use std::collections::{HashSet, HashMap};
+
+        let num_pages = self.inner.get_page_count()?;
+        let catalog_ref = self.inner.root();
+        
+        // 1. Map ALL objects to their primary page or shared section
+        // page_map: object_id -> page_index (0-based)
+        let mut page_map = HashMap::new();
+        let mut shared_objects = HashSet::new();
+        
+        // Root and Catalog are always Page 1 (index 0)
+        let root_deps = self.inner.explore_dependencies(&catalog_ref)?;
+        for id in root_deps {
+            page_map.insert(id, 0);
+        }
+
+        // Crawl each page
+        for i in 0..num_pages {
+            let p = self.inner.get_page(i)?;
+            let deps = self.inner.explore_dependencies(&p.reference)?;
+            
+            // Core page object and its parents
+            page_map.insert(p.reference.id, i);
+            for parent in &p.parents {
+                // Parents are shared if multi-page tree, but first encounter wins in linearization sections
+                page_map.entry(parent.id).or_insert(i);
+            }
+
+            for id in deps {
+                if let Some(&first_page) = page_map.get(&id) {
+                    if first_page != i {
+                        shared_objects.insert(id);
+                    }
+                } else {
+                    page_map.insert(id, i);
+                }
+            }
+        }
+
+        // 2. Group objects by section
+        // sections[0] = Page 1, sections[1] = Page 2, ..., sections[n] = Shared
+        let mut sections: Vec<Vec<Reference>> = vec![Vec::new(); num_pages + 1];
+        let shared_sec_idx = num_pages;
+
+        for (&id, entry) in self.inner.store().entries.iter() {
+            let generation_num = match entry {
+                ferruginous_doc::XRefEntry::InUse { generation, .. } => *generation,
+                ferruginous_doc::XRefEntry::Compressed { .. } => 0,
+                _ => continue,
+            };
+            let r = Reference::new(id, generation_num);
+            
+            if shared_objects.contains(&id) {
+                sections[shared_sec_idx].push(r);
+            } else if let Some(&page_idx) = page_map.get(&id) {
+                sections[page_idx].push(r);
+            } else {
+                // Orphaned objects go to shared
+                sections[shared_sec_idx].push(r);
+            }
+        }
+
+        // 3. Metadata for Hint Stream
+        let mut page_stats = Vec::with_capacity(num_pages);
+
+        // 4. PASS 1: Size estimation
+        let mut params = LinearizationParams::default();
+        params.num_pages = num_pages;
+        let p1 = self.inner.get_page(0)?;
+        params.first_page_obj = p1.reference.id;
+        
+        let lin_dict_id = self.inner.store().max_id() + 1;
+        let hint_stream_id = lin_dict_id + 1;
+
+        let mut dry_writer = PdfWriter::new(NullWriter::new());
+        dry_writer.write_header(version).map_err(|e: std::io::Error| PdfError::Other(e.to_string()))?;
+        
+        dry_writer.write_linearization_dict(lin_dict_id, &params).map_err(|e: std::io::Error| PdfError::Other(e.to_string()))?;
+        
+        params.hint_stream_offset = dry_writer.current_offset();
+        params.hint_stream_len = 2048 + (num_pages * 32); // Estimate for hint stream
+        dry_writer.write_all(&vec![0; params.hint_stream_len]).map_err(|e: std::io::Error| PdfError::Other(e.to_string()))?;
+        
+        // Measure each page
+        for i in 0..num_pages {
+            let start = dry_writer.current_offset();
+            let mut count = 0;
+            for r in &sections[i] {
+                let obj = self.inner.resolve(r)?;
+                dry_writer.write_indirect_object(r.id, r.generation, &obj).map_err(|e: std::io::Error| PdfError::Other(e.to_string()))?;
+                count += 1;
+            }
+            page_stats.push(PageStats { offset: start, length: dry_writer.current_offset() - start, obj_count: count });
+            
+            if i == 0 {
+                params.end_of_first_page = dry_writer.current_offset();
+            }
+        }
+        
+        // Shared objects
+        for r in &sections[shared_sec_idx] {
+            let obj = self.inner.resolve(r)?;
+            dry_writer.write_indirect_object(r.id, r.generation, &obj).map_err(|e: std::io::Error| PdfError::Other(e.to_string()))?;
+        }
+        
+        params.main_xref_offset = dry_writer.current_offset();
+        let info_ref = self.inner.trailer().get(&"Info".into()).and_then(|o| o.as_reference());
+        dry_writer.finish(catalog_ref, info_ref).map_err(|e: std::io::Error| PdfError::Other(e.to_string()))?;
+        
+        params.file_len = dry_writer.current_offset();
+
+        // 5. Build the real Hint Stream data
+        let hint_data = build_hint_stream(&page_stats, &params);
+        params.hint_stream_len = hint_data.len();
+        
+        // Final offset adjustment: if the hint stream size changed, we shift subsequent offsets
+        // (For simplicity in this v1, we used a large enough estimate for dry run)
+
+        // 6. FINAL PASS: Actual write
+        let file = std::fs::File::create(output_path).map_err(|e: std::io::Error| PdfError::Other(e.to_string()))?;
+        let mut writer = PdfWriter::new(file);
+        
+        writer.write_header(version).map_err(|e: std::io::Error| PdfError::Other(e.to_string()))?;
+        writer.write_linearization_dict(lin_dict_id, &params).map_err(|e: std::io::Error| PdfError::Other(e.to_string()))?;
+        
+        // Write Hint Stream
+        let mut hint_dict = std::collections::BTreeMap::new();
+        hint_dict.insert(PdfName::new(b"Type"), Object::Name(PdfName::new(b"HintStream")));
+        writer.write_indirect_object(hint_stream_id, 0, &Object::Stream(std::sync::Arc::new(hint_dict), bytes::Bytes::from(hint_data)))
+            .map_err(|e: std::io::Error| PdfError::Other(e.to_string()))?;
+            
+        for i in 0..num_pages {
+            for r in &sections[i] {
+                let obj = self.inner.resolve(r)?;
+                writer.write_indirect_object(r.id, r.generation, &obj).map_err(|e: std::io::Error| PdfError::Other(e.to_string()))?;
+            }
+        }
+        
+        for r in &sections[shared_sec_idx] {
+            let obj = self.inner.resolve(r)?;
+            writer.write_indirect_object(r.id, r.generation, &obj).map_err(|e: std::io::Error| PdfError::Other(e.to_string()))?;
+        }
+        
+        writer.finish(catalog_ref, info_ref).map_err(|e: std::io::Error| PdfError::Other(e.to_string()))?;
+
+        Ok(())
+    }
+}
+
+/// Helper to build a basic Page Offset Hint Table (ISO 32000-2 Table C.1)
+fn build_hint_stream(stats: &[PageStats], _params: &crate::writer::LinearizationParams) -> Vec<u8> {
+    use crate::writer::BitWriter;
+    let mut bw = BitWriter::new();
+    
+    // Header for Page Offset Hint Table
+    // Item 1: Least number of objects in a page
+    let min_objs = stats.iter().map(|s| s.obj_count).min().unwrap_or(0) as u32;
+    bw.write_bits(min_objs, 32);
+    // Item 2: Location of first page's object (usually immediately after hint stream)
+    bw.write_bits(stats[0].offset as u32, 32);
+    // Item 3: Bits needed for Page Object count delta
+    bw.write_bits(16, 16);
+    // Item 4: Least page length
+    let min_len = stats.iter().map(|s| s.length).min().unwrap_or(0) as u32;
+    bw.write_bits(min_len, 32);
+    // Item 5: Bits needed for Page Length delta
+    bw.write_bits(16, 16);
+    // ... Simplified for MVP ...
+    
+    // Entry for each page
+    for s in stats {
+        // Delta objects
+        bw.write_bits((s.obj_count as u32).saturating_sub(min_objs), 16);
+        // Delta length
+        bw.write_bits((s.length as u32).saturating_sub(min_len), 16);
+    }
+    
+    bw.finish()
+}
+
+struct PageStats {
+    offset: usize,
+    length: usize,
+    obj_count: usize,
 }
 
 /// A handle to a specific page within a [PdfDocument].

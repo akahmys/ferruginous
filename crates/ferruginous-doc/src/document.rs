@@ -3,7 +3,7 @@ use bytes::Bytes;
 use parking_lot::RwLock;
 use ferruginous_core::{Object, Parser, PdfResult, PdfError, Reference, Resolver};
 use ferruginous_core::lexer::Token;
-use crate::xref::{XRefStore, XRefEntry, parse_xref_table, parse_xref_stream};
+use crate::xref::{XRefStore, XRefEntry, parse_xref_table, parse_xref_stream, is_pdf_whitespace};
 use crate::security::{SecurityHandler, StandardSecurityHandler, NullSecurityHandler};
 use crate::signature::Signature;
 use crate::validation::{SignatureVerifier, ValidationStatus};
@@ -42,10 +42,16 @@ impl Document {
     pub fn open_with_password(data: Bytes, password: &[u8]) -> PdfResult<Self> {
         let startxref_pos = find_startxref(&data)?;
         let mut store = XRefStore::new();
+        // ... (rest of the logic omitted for brevity in chunking, assuming standard open)
         
         // Chain traversal for incremental updates
         let mut next_xref = Some(startxref_pos);
-        while let Some(pos) = next_xref {
+        while let Some(mut pos) = next_xref {
+            // Skip leading whitespace before XRef
+            while pos < data.len() && is_pdf_whitespace(data[pos]) {
+                pos += 1;
+            }
+            
             let chunk = &data[pos..];
             let (index, next_prev) = if chunk.starts_with(b"xref") {
                 // Legacy table
@@ -70,26 +76,45 @@ impl Document {
                     _ => (idx, None)
                 }
             } else {
-                // Potential XRef stream
+                // Potential XRef stream (Standard 1.5+)
                 let mut parser = Parser::new(data.slice(pos..));
-                let obj = parser.parse_object()?;
-                let dict = obj.as_dict().ok_or_else(|| PdfError::Other("Expected XRef stream".into()))?;
-                if dict.get(&"Type".into()).and_then(|o| o.as_name()).map(|n| n.as_ref()) == Some(b"XRef") {
-                    if let Object::Stream(s_dict, s_data) = obj {
-                        let idx = parse_xref_stream(&s_dict, &s_data)?;
-                        
-                        // Merge XRef stream dict (latest takes precedence)
-                        for (k, v) in s_dict.as_ref() {
-                            store.trailer.entry(k.clone()).or_insert(v.clone());
-                        }
-                        
-                        let prev = s_dict.get(&"Prev".into()).and_then(|o| o.as_i64()).map(|i| i as usize);
-                        (idx, prev)
-                    } else {
-                        return Err(PdfError::Other("Expected stream for XRef".into()));
+                
+                // Try parsing as an indirect object header first
+                let obj_res = match parser.parse_indirect_object_header() {
+                    Ok(_) => parser.parse_object(),
+                    Err(_) => {
+                        // Fallback: try parsing as a literal object if header is missing
+                        let mut p2 = Parser::new(data.slice(pos..));
+                        p2.parse_object()
                     }
-                } else {
-                    return Err(PdfError::Other("Not an XRef section".into()));
+                };
+
+                match obj_res {
+                    Ok(obj) => {
+                        if let Some(dict) = obj.as_dict() {
+                            if dict.get(&"Type".into()).and_then(|o| o.as_name()).map(|n| n.as_ref()) == Some(b"XRef") {
+                                if let Object::Stream(ref s_dict, _) = obj {
+                                    let decoded_data = obj.decode_stream()?;
+                                    let idx = parse_xref_stream(s_dict, &decoded_data)?;
+                                    merge_trailer(&mut store, s_dict);
+                                    let prev = s_dict.get(&"Prev".into()).and_then(|o| o.as_i64()).map(|i| i as usize);
+                                    (idx, prev)
+                                } else {
+                                    return Err(PdfError::Other("Expected stream for XRef".into()));
+                                }
+                            } else {
+                                // Not an XRef stream, maybe malformed legacy?
+                                parse_malformed_legacy(chunk, &data, &mut store)?
+                            }
+                        } else {
+                            // Not a dictionary, check for malformed legacy
+                            parse_malformed_legacy(chunk, &data, &mut store)?
+                        }
+                    }
+                    Err(_) => {
+                        // Object parsing failed, check for malformed legacy
+                        parse_malformed_legacy(chunk, &data, &mut store)?
+                    }
                 }
             };
             
@@ -99,12 +124,12 @@ impl Document {
 
         // Finalize root from the last effective trailer (the one encountered first in our chain walk)
         let root = store.trailer.get(&"Root".into())
-            .and_then(|o| if let Object::Reference(r) = o { Some(*r) } else { None })
+            .and_then(|o| if let Object::Reference(r) = o { Some(r.clone()) } else { None })
             .ok_or_else(|| PdfError::Other("Missing /Root in trailer".into()))?;
 
         // Initialize Security Handler
         let security: Arc<dyn SecurityHandler> = if let Some(Object::Dictionary(e_dict)) = store.trailer.get(&"Encrypt".into()) {
-            Arc::new(StandardSecurityHandler::new(e_dict, password)?)
+            Arc::new(StandardSecurityHandler::new(&e_dict, password)?)
         } else {
             Arc::new(NullSecurityHandler)
         };
@@ -120,6 +145,24 @@ impl Document {
 
     pub fn root(&self) -> Reference {
         self.root
+    }
+
+    pub fn get_page_root(&self) -> PdfResult<Reference> {
+        let catalog = self.resolve(&self.root)?.as_dict()
+            .ok_or_else(|| PdfError::Other("Invalid catalog".into()))?.clone();
+        catalog.get(&"Pages".into())
+            .and_then(|o| o.as_reference())
+            .ok_or_else(|| PdfError::Other("Missing /Pages in catalog".into()))
+    }
+
+    pub fn get_page_count(&self) -> PdfResult<usize> {
+        let pages_root = self.get_page_root()?;
+        crate::page::PageTree::new(pages_root, self).count()
+    }
+
+    pub fn get_page(&self, index: usize) -> PdfResult<crate::page::Page<'_>> {
+        let pages_root = self.get_page_root()?;
+        crate::page::PageTree::new(pages_root, self).page(index)
     }
 
     fn is_encryption_dict(&self, reference: &Reference) -> bool {
@@ -241,6 +284,86 @@ impl Document {
     pub fn compliance_info(&self) -> PdfResult<crate::conformance::ComplianceInfo> {
         crate::conformance::ComplianceInfo::extract(self, &self.root)
     }
+
+    /// Exposes the internal object store.
+    pub fn store(&self) -> &XRefStore {
+        &self.store
+    }
+
+    /// Exposes the unified document trailer (after incremental updates).
+    pub fn trailer(&self) -> &BTreeMap<ferruginous_core::PdfName, Object> {
+        &self.store.trailer
+    }
+
+    /// Recursively discovers all unique object IDs reachable from the given root reference.
+    /// This is essential for Phase 12 Linearization discovery.
+    pub fn explore_dependencies(&self, root: &Reference) -> PdfResult<std::collections::HashSet<u32>> {
+        let mut visited = std::collections::HashSet::new();
+        let mut stack = vec![*root];
+        
+        while let Some(r) = stack.pop() {
+            if visited.contains(&r.id) {
+                continue;
+            }
+            visited.insert(r.id);
+            
+            // Resolve object to find its internal nested references
+            // We use a lenient match here to skip potentially broken references during the crawl
+            if let Ok(obj) = self.resolve(&r) {
+                let mut refs = std::collections::HashSet::new();
+                obj.gather_references(&mut refs);
+                
+                for id in refs {
+                    if let Some(entry) = self.store.get(id) {
+                        let generation_num = match entry {
+                            crate::xref::XRefEntry::InUse { generation, .. } => generation,
+                            crate::xref::XRefEntry::Compressed { .. } => 0,
+                            _ => 0,
+                        };
+                        stack.push(Reference::new(id, generation_num));
+                    }
+                }
+            }
+        }
+        Ok(visited)
+    }
+
+    fn resolve_compressed_object(&self, container_id: u32, index: u32) -> PdfResult<Object> {
+        // Resolve the container stream
+        let container_ref = Reference::new(container_id, 0);
+        let container_obj = self.resolve(&container_ref)?;
+        
+        let (dict, _) = container_obj.as_stream().ok_or_else(|| PdfError::Other("Object stream container is not a stream".into()))?;
+        if dict.get(&"Type".into()).and_then(|o| o.as_name()).map(|n| n.as_ref()) != Some(b"ObjStm") {
+             return Err(PdfError::Other("Object stream container lacks /Type /ObjStm".into()));
+        }
+
+        let n = dict.get(&"N".into()).and_then(|o| o.as_i64()).ok_or_else(|| PdfError::Other("Missing /N in ObjStm".into()))? as usize;
+        let first = dict.get(&"First".into()).and_then(|o| o.as_i64()).ok_or_else(|| PdfError::Other("Missing /First in ObjStm".into()))? as usize;
+
+        let decoded_data = container_obj.decode_stream()?;
+        
+        // Parse the index portion of the ObjStm
+        // Header is N pairs of [obj_id offset]
+        let mut parser = Parser::new(decoded_data.slice(..first));
+        let mut target_offset = None;
+        
+        for i in 0..n {
+            let _obj_id = parser.parse_object()?.as_i64().ok_or_else(|| PdfError::Other("Invalid obj_id in ObjStm header".into()))? as u32;
+            let offset = parser.parse_object()?.as_i64().ok_or_else(|| PdfError::Other("Invalid offset in ObjStm header".into()))? as usize;
+            
+            if i == index as usize {
+                target_offset = Some(offset);
+            }
+        }
+
+        let offset = target_offset.ok_or_else(|| PdfError::Other(format!("Compressed index {} out of range in ObjStm {}", index, container_id)))?;
+        
+        // Parse the object at the calculated offset
+        let mut obj_parser = Parser::new(decoded_data.slice(first + offset..))
+            .with_resolver(self);
+        obj_parser.parse_object()
+    }
 }
 
 impl Resolver for Document {
@@ -258,8 +381,8 @@ impl Resolver for Document {
                 parser.parse_indirect_object_header()?;
                 parser.parse_object()?
             }
-            XRefEntry::Compressed { .. } => {
-                return Err(PdfError::Other("Object streams not yet implemented".into()));
+            XRefEntry::Compressed { container_id, index } => {
+                self.resolve_compressed_object(container_id, index)?
             }
             _ => return Err(PdfError::Other("Attempted to resolve free or invalid object".into())),
         };
@@ -275,19 +398,52 @@ impl Resolver for Document {
             if !skip_decryption {
                 match &mut obj {
                     Object::String(b) => {
-                        *b = self.security.decrypt_bytes(b, reference.id, reference.generation)?;
+                        let decrypted = self.security.decrypt_bytes(b, reference.id, reference.generation)?;
+                        *b = Bytes::from(decrypted);
                     }
                     Object::Stream(_d, b) => {
-                        *b = self.security.decrypt_bytes(b, reference.id, reference.generation)?;
+                        let decrypted = self.security.decrypt_bytes(b, reference.id, reference.generation)?;
+                        *b = Bytes::from(decrypted);
                     }
                     _ => {}
                 }
             }
         }
 
-        // Cache the result
         self.cache.write().insert(*reference, obj.clone());
         Ok(obj)
+    }
+}
+
+fn parse_malformed_legacy(
+    chunk: &[u8],
+    data: &Bytes,
+    store: &mut XRefStore,
+) -> PdfResult<(crate::xref::XRefIndex, Option<usize>)> {
+    if chunk.is_empty() || !(chunk[0] as char).is_ascii_digit() {
+        return Err(PdfError::Other("Not a malformed legacy XRef section".into()));
+    }
+    
+    use crate::xref::parse_xref_table_inner;
+    let (idx, remaining_buf) = parse_xref_table_inner(chunk, 0)?;
+    let remaining_offset = data.len() - remaining_buf.len();
+    
+    let mut parser = Parser::new(data.slice(remaining_offset..));
+    match parser.next()? {
+        Some(Token::Keyword(ref b)) if b.as_ref() == b"trailer" => {
+            let trailer = parser.parse_object()?.as_dict()
+                .ok_or_else(|| PdfError::Other("Invalid trailer".into()))?.clone();
+            merge_trailer(store, &trailer);
+            let prev = trailer.get(&"Prev".into()).and_then(|o| o.as_i64()).map(|i| i as usize);
+            Ok((idx, prev))
+        }
+        _ => Ok((idx, None))
+    }
+}
+
+fn merge_trailer(store: &mut XRefStore, trailer: &BTreeMap<ferruginous_core::PdfName, Object>) {
+    for (k, v) in trailer {
+        store.trailer.entry(k.clone()).or_insert(v.clone());
     }
 }
 

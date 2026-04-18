@@ -54,6 +54,12 @@ impl XRefStore {
         Self::default()
     }
 
+    pub fn max_id(&self) -> u32 {
+        self.entries.keys().copied().max().unwrap_or(0)
+    }
+}
+
+impl XRefStore {
     /// Merges an index into the store. Entries from newer sections (merged latest)
     /// take precedence if they overlap.
     pub fn merge(&mut self, index: XRefIndex) {
@@ -79,6 +85,11 @@ pub fn parse_xref_table(input: &[u8]) -> PdfResult<(XRefIndex, &[u8])> {
         pos += 1;
     }
 
+    parse_xref_table_inner(input, pos)
+}
+
+/// Internal helper to parse subsections after the initial 'xref' keyword or if the keyword is missing.
+pub fn parse_xref_table_inner(input: &[u8], mut pos: usize) -> PdfResult<(XRefIndex, &[u8])> {
     let mut index = XRefIndex::new();
     
     // Parse subsections
@@ -200,13 +211,19 @@ fn read_int(data: &[u8], default: i64) -> i64 {
 }
 
 fn parse_subsection_header(chunk: &[u8]) -> PdfResult<(u32, u32, usize)> {
-    let s = std::str::from_utf8(chunk).map_err(|_| PdfError::Other("Invalid UTF-8 in XRef header".into()))?;
+    // Find the end of the line first to avoid decoding binary data as UTF-8
+    let mut line_end = 0;
+    while line_end < chunk.len() && chunk[line_end] != b'\n' && chunk[line_end] != b'\r' {
+        line_end += 1;
+    }
+    
+    let s = std::str::from_utf8(&chunk[..line_end]).map_err(|_| PdfError::Other("Invalid UTF-8 in XRef header".into()))?;
     let mut parts = s.split_whitespace();
     let first_id = parts.next().ok_or_else(|| PdfError::Syntactic { pos: 0, message: "Missing first ID".into() })?.parse::<u32>().map_err(|_| PdfError::Other("Invalid ID".into()))?;
     let count = parts.next().ok_or_else(|| PdfError::Syntactic { pos: 0, message: "Missing count".into() })?.parse::<u32>().map_err(|_| PdfError::Other("Invalid count".into()))?;
     
-    // Find the end of the line
-    let mut pos = 0;
+    // Skip trailing whitespace/newlines to find the total header length
+    let mut pos = line_end;
     while pos < chunk.len() && chunk[pos] != b'\n' && chunk[pos] != b'\r' {
         pos += 1;
     }
@@ -233,7 +250,7 @@ fn parse_xref_entry(chunk: &[u8]) -> PdfResult<(XRefEntry, usize)> {
     Ok((entry, 20))
 }
 
-fn is_pdf_whitespace(c: u8) -> bool {
+pub(crate) fn is_pdf_whitespace(c: u8) -> bool {
     matches!(c, 0 | 9 | 10 | 12 | 13 | 32)
 }
 

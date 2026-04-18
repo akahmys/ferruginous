@@ -9,6 +9,100 @@ pub struct PdfWriter<W: Write> {
     xref: BTreeMap<u32, usize>,
 }
 
+/// A dummy writer used for size estimation passes.
+pub struct NullWriter {
+    /// Total count of bytes processed.
+    pub count: usize,
+}
+
+impl NullWriter {
+    /// Creates a new NullWriter.
+    pub fn new() -> Self {
+        Self { count: 0 }
+    }
+}
+
+impl Write for NullWriter {
+    fn write(&mut self, buf: &[u8]) -> Result<usize> {
+        self.count += buf.len();
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> Result<()> {
+        Ok(())
+    }
+}
+
+/// Parameters for the Linearization Dictionary (Object 1).
+#[derive(Debug, Default, Clone)]
+/// Parameters for the PDF linearization process.
+pub struct LinearizationParams {
+    /// Total file length in bytes.
+    pub file_len: usize,
+    /// Offset to the beginning of the hint stream.
+    pub hint_stream_offset: usize,
+    /// Length of the hint stream in bytes.
+    pub hint_stream_len: usize,
+    /// Object ID of the first page.
+    pub first_page_obj: u32,
+    /// Offset to the end of the first page section.
+    pub end_of_first_page: usize,
+    /// Total number of pages in the document.
+    pub num_pages: usize,
+    /// Offset to the main cross-reference table.
+    pub main_xref_offset: usize,
+}
+
+/// A simple bit-packer for Hint Stream generation.
+pub struct BitWriter {
+    data: Vec<u8>,
+    current_byte: u8,
+    bits_left: u8,
+}
+
+impl BitWriter {
+    /// Creates a new BitWriter for bit-packing.
+    pub fn new() -> Self {
+        Self {
+            data: Vec::new(),
+            current_byte: 0,
+            bits_left: 8,
+        }
+    }
+
+    /// Writes a value using the specified number of bits.
+    pub fn write_bits(&mut self, value: u32, num_bits: u8) {
+        let mut bits_to_write = num_bits;
+        let val = if num_bits == 32 { value } else { value & ((1 << num_bits) - 1) };
+
+        while bits_to_write > 0 {
+            let chunk = std::cmp::min(bits_to_write, self.bits_left);
+            let shift = bits_to_write - chunk;
+            let mask = if chunk == 32 { 0xFFFFFFFF } else { ((1 << chunk) - 1) << shift };
+            
+            let bits = ((val & mask) >> shift) as u8;
+            self.current_byte |= bits << (self.bits_left - chunk);
+            
+            self.bits_left -= chunk;
+            bits_to_write -= chunk;
+            
+            if self.bits_left == 0 {
+                self.data.push(self.current_byte);
+                self.current_byte = 0;
+                self.bits_left = 8;
+            }
+        }
+    }
+
+    /// Finalizes the bit-packing and returns the resulting byte vector.
+    pub fn finish(mut self) -> Vec<u8> {
+        if self.bits_left < 8 {
+            self.data.push(self.current_byte);
+        }
+        self.data
+    }
+}
+
 impl<W: Write> PdfWriter<W> {
     /// Creates a new PdfWriter from a writable stream.
     pub fn new(inner: W) -> Self {
@@ -19,11 +113,30 @@ impl<W: Write> PdfWriter<W> {
         }
     }
 
+    /// Returns the current byte offset in the output stream.
+    pub fn current_offset(&self) -> usize {
+        self.current_offset
+    }
+
     /// Writes the PDF header with the specified version and binary marker.
     pub fn write_header(&mut self, version: &str) -> Result<()> {
         self.write_all(format!("%PDF-{}\r\n", version).as_bytes())?;
         // High-bit characters to indicate binary file
         self.write_all(b"%\xE2\xE3\xCF\xD3\r\n")?;
+        Ok(())
+    }
+
+    /// Writes the Linearization Dictionary (Object 1).
+    pub fn write_linearization_dict(&mut self, id: u32, params: &LinearizationParams) -> Result<()> {
+        self.xref.insert(id, self.current_offset);
+        self.write_all(format!("{} 0 obj\r\n<<\r\n/Linearized 1.0\r\n", id).as_bytes())?;
+        self.write_all(format!("/L {}\r\n", params.file_len).as_bytes())?;
+        self.write_all(format!("/H [{} {}]\r\n", params.hint_stream_offset, params.hint_stream_len).as_bytes())?;
+        self.write_all(format!("/O {}\r\n", params.first_page_obj).as_bytes())?;
+        self.write_all(format!("/E {}\r\n", params.end_of_first_page).as_bytes())?;
+        self.write_all(format!("/N {}\r\n", params.num_pages).as_bytes())?;
+        self.write_all(format!("/T {}\r\n", params.main_xref_offset).as_bytes())?;
+        self.write_all(b">>\r\nendobj\r\n")?;
         Ok(())
     }
 
@@ -101,7 +214,8 @@ impl<W: Write> PdfWriter<W> {
         self.write_all(b")")
     }
 
-    fn write_all(&mut self, data: &[u8]) -> Result<()> {
+    /// Writes raw bytes to the output stream and updates the offset.
+    pub fn write_all(&mut self, data: &[u8]) -> Result<()> {
         self.inner.write_all(data)?;
         self.current_offset += data.len();
         Ok(())
