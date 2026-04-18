@@ -2,9 +2,10 @@
 
 **Ferruginous** is a high-precision, ISO 32000-2 compliant PDF 2.0 toolkit built with Rust. This "Rebirth" project is a total reconstruction focused on "Absolute Compliance" and "Reliable Rust-15" (RR-15) engineering.
 
-### 🌟 Latest Achievement (2026-04-18)
-- **Phase 7 Completion**: Implemented full **Transparency & Blend Modes** (ca, CA, BM) and enforced the **Context Propagation Guard** (RR-15 Clause 16) for architectural stability.
-- **XObject Rendering**: GPU-accelerated Form and Image XObject support with recursive safety.
+### 🌟 Latest Achievement (2026-04-19)
+- **Phase 9 Completion**: Hardened **Security & Digital Signatures (PAdES)**. Implemented AES-256 encryption, ECDSA/RSA signature verification, and full LTV (DSS) support with DocMDP/FieldMDP modification detection.
+- **Phase 8 Completion**: Advanced **Typography & Font Resolution**. Implemented token-based CMap parsing, CIDFont metrics support, and Standard 14 font fallbacks.
+- **Audit-Ready Tooling**: Integrated `verify_signatures` into the MCP layer for automated cryptographic auditing.
 
 ## 🏗️ Architecture
 

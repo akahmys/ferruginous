@@ -33,6 +33,12 @@ pub enum PdfError {
     #[error("Integer overflow")]
     Overflow,
 
+    #[error("Authentication failed: {0}")]
+    AuthenticationFailed(String),
+
+    #[error("Encryption not supported: {0}")]
+    EncryptionNotSupported(String),
+
     #[error("Other error: {0}")]
     Other(String),
 }

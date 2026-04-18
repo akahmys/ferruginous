@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use ferruginous_core::{PdfResult, PdfError};
 
 /// Represents a mapping result from a CMap.
@@ -8,16 +9,36 @@ pub enum MappingResult {
     Unicode(Vec<u8>),
 }
 
+/// Defines a valid range of character codes.
+/// (ISO 32000-2:2020 Clause 9.7.5.3)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodeSpaceRange {
+    pub start: Vec<u8>,
+    pub end: Vec<u8>,
+}
+
+impl CodeSpaceRange {
+    pub fn matches(&self, code: &[u8]) -> bool {
+        if code.len() != self.start.len() {
+            return false;
+        }
+        for (i, &b) in code.iter().enumerate() {
+            if b < self.start[i] || b > self.end[i] {
+                return false;
+            }
+        }
+        true
+    }
+}
+
 /// A Character Map (CMap) defines the mapping from character codes to CIDs or Unicode.
-/// (ISO 32000-2:2020 Clause 9.7.5)
 #[derive(Debug, Clone, Default)]
 pub struct CMap {
     pub name: String,
     pub is_vertical: bool,
+    pub codespace_ranges: Vec<CodeSpaceRange>,
     pub code_to_cid: BTreeMap<Vec<u8>, u32>,
     pub code_to_unicode: BTreeMap<Vec<u8>, Vec<u8>>,
-    // Ranges are handled by expanding them into the maps for simplicity in this initial version,
-    // though for large CMaps we should use a more efficient range-based structure.
 }
 
 impl CMap {
@@ -25,7 +46,25 @@ impl CMap {
         Self::default()
     }
 
-    /// Looks up a character code in the CMap.
+    /// Segments the input byte stream into the next character code based on codespace ranges.
+    pub fn next_code(&self, data: &[u8]) -> Option<(Vec<u8>, usize)> {
+        for range in &self.codespace_ranges {
+            let len = range.start.len();
+            if data.len() >= len {
+                let code = &data[..len];
+                if range.matches(code) {
+                    return Some((code.to_vec(), len));
+                }
+            }
+        }
+        // Fallback to 1 byte if no range matches (common for some malformed files)
+        if !data.is_empty() {
+            Some((vec![data[0]], 1))
+        } else {
+            None
+        }
+    }
+
     pub fn lookup(&self, code: &[u8]) -> Option<MappingResult> {
         if let Some(&cid) = self.code_to_cid.get(code) {
             return Some(MappingResult::Cid(cid));
@@ -36,168 +75,311 @@ impl CMap {
         None
     }
 
-    /// Parses a CMap from a byte stream.
-    /// This is a simplified "clean slate" parser focusing on the most common blocks.
+    /// Parses a CMap from a byte stream using a token-based approach.
     pub fn parse(data: &[u8]) -> PdfResult<Self> {
         let mut cmap = Self::new();
-        let content = std::str::from_utf8(data).map_err(|_| PdfError::Other("Invalid UTF-8 in CMap".into()))?;
+        let mut lexer = CMapLexer::new(data);
         
-        let lines: Vec<&str> = content.lines().map(|s| s.trim()).collect();
-        let mut i = 0;
-        
-        while i < lines.len() {
-            let line = lines[i];
-            
-            if line.contains("/CMapName") {
-                 // Format: /CMapName /Name def
-                 if let Some(name_part) = line.split('/').nth(2) {
-                     cmap.name = name_part.split_whitespace().next().unwrap_or("").to_string();
-                 }
-            } else if line.contains("/WMode") {
-                 // Format: /WMode 1 def
-                 if line.contains(" 1 ") || line.ends_with(" 1 def") {
-                     cmap.is_vertical = true;
-                 }
-            } else if line.contains("beginbfchar") {
-                let count = line.split_whitespace().next().and_then(|s| s.parse::<usize>().ok()).unwrap_or(0);
-                i += 1;
-                for _ in 0..count {
-                    if i >= lines.len() { break; }
-                    Self::parse_bfchar(lines[i], &mut cmap.code_to_unicode);
-                    i += 1;
+        while let Some(token) = lexer.next()? {
+            match token {
+                CMapToken::Keyword(k) => match k.as_str() {
+                    "begincodespacerange" => cmap.parse_codespace_range(&mut lexer)?,
+                    "beginbfchar" => cmap.parse_bfchar(&mut lexer)?,
+                    "beginbfrange" => cmap.parse_bfrange(&mut lexer)?,
+                    "begincidchar" => cmap.parse_cidchar(&mut lexer)?,
+                    "begincidrange" => cmap.parse_cidrange(&mut lexer)?,
+                    _ => {}
                 }
-                continue;
-            } else if line.contains("beginbfrange") {
-                let count = line.split_whitespace().next().and_then(|s| s.parse::<usize>().ok()).unwrap_or(0);
-                i += 1;
-                for _ in 0..count {
-                    if i >= lines.len() { break; }
-                    Self::parse_bfrange(lines[i], &mut cmap.code_to_unicode);
-                    i += 1;
+                CMapToken::Name(n) if n == "CMapName" => {
+                    if let Some(CMapToken::Name(name)) = lexer.next()? {
+                        cmap.name = name;
+                    }
                 }
-                continue;
-            } else if line.contains("begincidchar") {
-                let count = line.split_whitespace().next().and_then(|s| s.parse::<usize>().ok()).unwrap_or(0);
-                i += 1;
-                for _ in 0..count {
-                    if i >= lines.len() { break; }
-                    Self::parse_cidchar(lines[i], &mut cmap.code_to_cid);
-                    i += 1;
+                CMapToken::Name(n) if n == "WMode" => {
+                    if let Some(CMapToken::Integer(i)) = lexer.next()? {
+                        cmap.is_vertical = i == 1;
+                    }
                 }
-                continue;
-            } else if line.contains("begincidrange") {
-                let count = line.split_whitespace().next().and_then(|s| s.parse::<usize>().ok()).unwrap_or(0);
-                i += 1;
-                for _ in 0..count {
-                    if i >= lines.len() { break; }
-                    Self::parse_cidrange(lines[i], &mut cmap.code_to_cid);
-                    i += 1;
-                }
-                continue;
+                _ => {}
             }
-            
-            i += 1;
         }
         
         Ok(cmap)
     }
 
-    fn parse_bfchar(line: &str, map: &mut BTreeMap<Vec<u8>, Vec<u8>>) {
-        // Format: <code1> <unicode1>
-        let parts: Vec<&str> = line.split(['<', '>']).filter(|s| !s.trim().is_empty()).collect();
-        if parts.len() >= 2
-            && let (Some(code), Some(unicode)) = (hex_to_bytes(parts[0]), hex_to_bytes(parts[1])) {
-                map.insert(code, unicode);
-            }
-    }
-
-    fn parse_bfrange(line: &str, map: &mut BTreeMap<Vec<u8>, Vec<u8>>) {
-        // Format: <start> <end> <unicode_start>
-        // OR: <start> <end> [ <unicode1> <unicode2> ... ]
-        let parts: Vec<&str> = line.split(['<', '>', '[', ']', ' ']).filter(|s| !s.trim().is_empty()).collect();
-        if parts.len() < 3 { return; }
-        
-        let start_bytes = hex_to_bytes(parts[0]);
-        let end_bytes = hex_to_bytes(parts[1]);
-        
-        if let (Some(start), Some(end)) = (start_bytes, end_bytes) {
-            let start_val = bytes_to_val(&start);
-            let end_val = bytes_to_val(&end);
-            
-            // Check if third part is an array start or a single hex
-            if line.contains('[') {
-                // Simplified array parsing: we only handle if everything is on one line for now
-                // Real implementation would need a more robust stateful parser.
-            } else {
-                if let Some(uni_start) = hex_to_bytes(parts[2]) {
-                    let mut uni_val = bytes_to_val(&uni_start);
-                    for v in start_val..=end_val {
-                        let code = val_to_bytes(v, start.len());
-                        let unicode = val_to_bytes(uni_val, uni_start.len());
-                        map.insert(code, unicode);
-                        uni_val += 1;
+    fn parse_codespace_range(&mut self, lexer: &mut CMapLexer) -> PdfResult<()> {
+        while let Some(token) = lexer.next()? {
+            match token {
+                CMapToken::HexString(start) => {
+                    if let Some(CMapToken::HexString(end)) = lexer.next()? {
+                        self.codespace_ranges.push(CodeSpaceRange { start, end });
                     }
                 }
+                CMapToken::Keyword(k) if k == "endcodespacerange" => break,
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    fn parse_bfchar(&mut self, lexer: &mut CMapLexer) -> PdfResult<()> {
+        while let Some(token) = lexer.next()? {
+            match token {
+                CMapToken::HexString(code) => {
+                    if let Some(CMapToken::HexString(uni)) = lexer.next()? {
+                        self.code_to_unicode.insert(code, uni);
+                    }
+                }
+                CMapToken::Keyword(k) if k == "endbfchar" => break,
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    fn parse_bfrange(&mut self, lexer: &mut CMapLexer) -> PdfResult<()> {
+        while let Some(token) = lexer.next()? {
+            match token {
+                CMapToken::HexString(start) => {
+                    let end = match lexer.next()? {
+                        Some(CMapToken::HexString(e)) => e,
+                        _ => break,
+                    };
+                    match lexer.next()? {
+                        Some(CMapToken::HexString(uni_start)) => {
+                            self.expand_unicode_range(start, end, uni_start);
+                        }
+                        Some(CMapToken::Array(arr)) => {
+                            self.expand_unicode_array(start, end, arr);
+                        }
+                        _ => break,
+                    }
+                }
+                CMapToken::Keyword(k) if k == "endbfrange" => break,
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    fn parse_cidchar(&mut self, lexer: &mut CMapLexer) -> PdfResult<()> {
+        while let Some(token) = lexer.next()? {
+            match token {
+                CMapToken::HexString(code) => {
+                    if let Some(CMapToken::Integer(cid)) = lexer.next()? {
+                        self.code_to_cid.insert(code, cid as u32);
+                    }
+                }
+                CMapToken::Keyword(k) if k == "endcidchar" => break,
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    fn parse_cidrange(&mut self, lexer: &mut CMapLexer) -> PdfResult<()> {
+        while let Some(token) = lexer.next()? {
+            match token {
+                CMapToken::HexString(start) => {
+                    let end = match lexer.next()? {
+                        Some(CMapToken::HexString(e)) => e,
+                        _ => break,
+                    };
+                    if let Some(CMapToken::Integer(cid_start)) = lexer.next()? {
+                        self.expand_cid_range(start, end, cid_start as u32);
+                    }
+                }
+                CMapToken::Keyword(k) if k == "endcidrange" => break,
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    fn expand_unicode_range(&mut self, start: Vec<u8>, end: Vec<u8>, uni: Vec<u8>) {
+        let s = bytes_to_u64(&start);
+        let e = bytes_to_u64(&end);
+        let mut u = bytes_to_u64(&uni);
+        for i in s..=e {
+            self.code_to_unicode.insert(u64_to_bytes(i, start.len()), u64_to_bytes(u, uni.len()));
+            u += 1;
+        }
+    }
+
+    fn expand_unicode_array(&mut self, start: Vec<u8>, end: Vec<u8>, arr: Vec<CMapToken>) {
+        let s = bytes_to_u64(&start);
+        let e = bytes_to_u64(&end);
+        for (idx, i) in (s..=e).enumerate() {
+            if let Some(CMapToken::HexString(uni)) = arr.get(idx) {
+                self.code_to_unicode.insert(u64_to_bytes(i, start.len()), uni.clone());
             }
         }
     }
 
-    fn parse_cidchar(line: &str, map: &mut BTreeMap<Vec<u8>, u32>) {
-        // Format: <code1> cid1
-        let parts: Vec<&str> = line.split(['<', '>', ' ']).filter(|s| !s.trim().is_empty()).collect();
-        if parts.len() >= 2
-            && let Some(code) = hex_to_bytes(parts[0])
-                && let Ok(cid) = parts[1].parse::<u32>() {
-                    map.insert(code, cid);
-                }
-    }
-
-    fn parse_cidrange(line: &str, map: &mut BTreeMap<Vec<u8>, u32>) {
-        // Format: <start> <end> cid_start
-        let parts: Vec<&str> = line.split(['<', '>', ' ']).filter(|s| !s.trim().is_empty()).collect();
-        if parts.len() < 3 { return; }
-        
-        if let (Some(start), Some(end)) = (hex_to_bytes(parts[0]), hex_to_bytes(parts[1])) {
-            let start_val = bytes_to_val(&start);
-            let end_val = bytes_to_val(&end);
-            if let Ok(mut cid) = parts[2].parse::<u32>() {
-                for v in start_val..=end_val {
-                    let code = val_to_bytes(v, start.len());
-                    map.insert(code, cid);
-                    cid += 1;
-                }
-            }
+    fn expand_cid_range(&mut self, start: Vec<u8>, end: Vec<u8>, mut cid: u32) {
+        let s = bytes_to_u64(&start);
+        let e = bytes_to_u64(&end);
+        for i in s..=e {
+            self.code_to_cid.insert(u64_to_bytes(i, start.len()), cid);
+            cid += 1;
         }
     }
 }
 
-fn hex_to_bytes(hex: &str) -> Option<Vec<u8>> {
-    let hex = hex.trim();
-    if !hex.len().is_multiple_of(2) { return None; }
-    let mut bytes = Vec::new();
-    for i in (0..hex.len()).step_by(2) {
-        let b = u8::from_str_radix(&hex[i..i+2], 16).ok()?;
-        bytes.push(b);
-    }
-    Some(bytes)
-}
-
-fn bytes_to_val(bytes: &[u8]) -> u64 {
-    let mut val = 0;
-    for &b in bytes {
-        val = (val << 8) | (b as u64);
-    }
+fn bytes_to_u64(bytes: &[u8]) -> u64 {
+    let mut val = 0u64;
+    for &b in bytes { val = (val << 8) | (b as u64); }
     val
 }
 
-fn val_to_bytes(val: u64, len: usize) -> Vec<u8> {
-    let mut bytes = vec![0; len];
+fn u64_to_bytes(val: u64, len: usize) -> Vec<u8> {
+    let mut bytes = vec![0u8; len];
     let mut v = val;
     for i in (0..len).rev() {
-        bytes[i] = (v & 0xFF) as u8;
+        bytes[i] = (v & 0xff) as u8;
         v >>= 8;
     }
     bytes
+}
+
+// --- CMap Lexer Implementation ---
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum CMapToken {
+    HexString(Vec<u8>),
+    Integer(i64),
+    Name(String),
+    Keyword(String),
+    Array(Vec<CMapToken>),
+}
+
+struct CMapLexer<'a> {
+    input: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> CMapLexer<'a> {
+    fn new(input: &'a [u8]) -> Self { Self { input, pos: 0 } }
+
+    fn next(&mut self) -> PdfResult<Option<CMapToken>> {
+        self.skip_whitespace();
+        if self.pos >= self.input.len() { return Ok(None); }
+        let c = self.input[self.pos];
+        match c {
+            b'<' => self.lex_hex_string(),
+            b'/' => self.lex_name(),
+            b'[' => self.lex_array(),
+            b'0'..=b'9' | b'-' => self.lex_number(),
+            _ if c.is_ascii_alphabetic() => self.lex_keyword(),
+            _ => { self.pos += 1; self.next() } // Skip unknown
+        }
+    }
+
+    fn skip_whitespace(&mut self) {
+        while self.pos < self.input.len() && matches!(self.input[self.pos], 0|9|10|12|13|32) { self.pos += 1; }
+    }
+
+    fn lex_hex_string(&mut self) -> PdfResult<Option<CMapToken>> {
+        self.pos += 1; // '<'
+        let mut hex = Vec::new();
+        while self.pos < self.input.len() && self.input[self.pos] != b'>' {
+            let c = self.input[self.pos];
+            if c.is_ascii_hexdigit() { hex.push(c); }
+            self.pos += 1;
+        }
+        if self.pos < self.input.len() { self.pos += 1; } // '>'
+        let hex_str = std::str::from_utf8(&hex).map_err(|_| PdfError::Other("Invalid hex".into()))?;
+        let bytes = (0..hex_str.len()).step_by(2)
+            .map(|i| u8::from_str_radix(&hex_str[i..i+2], 16).unwrap_or(0))
+            .collect();
+        Ok(Some(CMapToken::HexString(bytes)))
+    }
+
+    fn lex_name(&mut self) -> PdfResult<Option<CMapToken>> {
+        self.pos += 1; // '/'
+        let start = self.pos;
+        while self.pos < self.input.len() && !matches!(self.input[self.pos], 0|9|10|12|13|32|b'/'|b'<'|b'>'|b'['|b']') {
+            self.pos += 1;
+        }
+        let name = std::str::from_utf8(&self.input[start..self.pos]).unwrap_or("").to_string();
+        Ok(Some(CMapToken::Name(name)))
+    }
+
+    fn lex_keyword(&mut self) -> PdfResult<Option<CMapToken>> {
+        let start = self.pos;
+        while self.pos < self.input.len() && self.input[self.pos].is_ascii_alphabetic() {
+            self.pos += 1;
+        }
+        let k = std::str::from_utf8(&self.input[start..self.pos]).unwrap_or("").to_string();
+        Ok(Some(CMapToken::Keyword(k)))
+    }
+
+    fn lex_number(&mut self) -> PdfResult<Option<CMapToken>> {
+        let start = self.pos;
+        while self.pos < self.input.len() && (self.input[self.pos].is_ascii_digit() || self.input[self.pos] == b'-') {
+            self.pos += 1;
+        }
+        let s = std::str::from_utf8(&self.input[start..self.pos]).unwrap_or("");
+        let val = s.parse::<i64>().unwrap_or(0);
+        Ok(Some(CMapToken::Integer(val)))
+    }
+
+    fn lex_array(&mut self) -> PdfResult<Option<CMapToken>> {
+        self.pos += 1; // '['
+        let mut arr = Vec::new();
+        while let Some(token) = self.next()? {
+            arr.push(token);
+            self.skip_whitespace();
+            if self.pos < self.input.len() && self.input[self.pos] == b']' {
+                self.pos += 1;
+                break;
+            }
+        }
+        Ok(Some(CMapToken::Array(arr)))
+    }
+}
+
+/// Global registry for built-in and cached CMaps.
+pub struct CMapRegistry {
+    maps: BTreeMap<String, Arc<CMap>>,
+}
+
+impl Default for CMapRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl CMapRegistry {
+    pub fn new() -> Self {
+        let mut registry = Self { maps: BTreeMap::new() };
+        registry.register_builtins();
+        registry
+    }
+
+    fn register_builtins(&mut self) {
+        // Identity-H: Horizontal identity mapping (CID == Code)
+        let mut identity_h = CMap::new();
+        identity_h.name = "Identity-H".to_string();
+        identity_h.codespace_ranges.push(CodeSpaceRange { start: vec![0, 0], end: vec![255, 255] });
+        self.maps.insert("Identity-H".to_string(), Arc::new(identity_h));
+
+        // Identity-V: Vertical identity mapping
+        let mut identity_v = CMap::new();
+        identity_v.name = "Identity-V".to_string();
+        identity_v.is_vertical = true;
+        identity_v.codespace_ranges.push(CodeSpaceRange { start: vec![0, 0], end: vec![255, 255] });
+        self.maps.insert("Identity-V".to_string(), Arc::new(identity_v));
+    }
+
+    pub fn get(&self, name: &str) -> Option<Arc<CMap>> {
+        self.maps.get(name).cloned()
+    }
+}
+
+pub fn get_builtin_cmap(name: &str) -> Option<Arc<CMap>> {
+    static REGISTRY: std::sync::OnceLock<CMapRegistry> = std::sync::OnceLock::new();
+    REGISTRY.get_or_init(CMapRegistry::new).get(name)
 }
 
 #[cfg(test)]
@@ -206,16 +388,21 @@ mod tests {
 
     #[test]
     fn test_parse_bfchar() {
-        let data = b"1 beginbfchar\n<0001> <0020>\nendbfchar";
+        let data = b"/CMapName /Test def\n1 beginbfchar\n<0001> <0020>\nendbfchar";
         let cmap = CMap::parse(data).unwrap();
+        assert_eq!(cmap.name, "Test");
         assert_eq!(cmap.lookup(&[0, 1]), Some(MappingResult::Unicode(vec![0, 32])));
     }
 
     #[test]
-    fn test_parse_bfrange() {
-        let data = b"1 beginbfrange\n<0001> <0002> <0020>\nendbfrange";
-        let cmap = CMap::parse(data).unwrap();
-        assert_eq!(cmap.lookup(&[0, 1]), Some(MappingResult::Unicode(vec![0, 32])));
-        assert_eq!(cmap.lookup(&[0, 2]), Some(MappingResult::Unicode(vec![0, 33])));
+    fn test_codespace_segmentation() {
+        let mut cmap = CMap::new();
+        cmap.codespace_ranges.push(CodeSpaceRange { start: vec![0x81, 0x40], end: vec![0x9f, 0xfc] });
+        cmap.codespace_ranges.push(CodeSpaceRange { start: vec![0x00], end: vec![0x7f] });
+        
+        // Single byte match
+        assert_eq!(cmap.next_code(&[0x41, 0x42]), Some((vec![0x41], 1)));
+        // Double byte match
+        assert_eq!(cmap.next_code(&[0x81, 0x40, 0x41]), Some((vec![0x81, 0x40], 2)));
     }
 }

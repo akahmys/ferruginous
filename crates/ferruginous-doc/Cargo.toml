@@ -11,6 +11,18 @@ repository.workspace = true
 legacy-bridge = ["ferruginous-bridge-legacy"]
 
 [dependencies]
+cms = "0.2" 
+x509-parser = "0.16" 
+reqwest = { version = "0.11", features = ["blocking", "rustls-tls"] } 
+der = { version = "0.7", features = ["derive"] } 
+spki = "0.7" 
+rustls-native-certs = "0.7" 
+rsa = { version = "0.9", features = ["sha2"] }
+ecdsa = "0.16"
+p256 = { version = "0.13", features = ["ecdsa", "pkcs8"] }
+signature = "2.2"
+sha1 = "0.10"
+encoding_rs = "0.8"
 ferruginous-core = { path = "../ferruginous-core" }
 ferruginous-bridge-legacy = { path = "../ferruginous-bridge-legacy", optional = true }
 bytes.workspace = true
@@ -20,5 +32,11 @@ flate2.workspace = true
 skrifa = "0.40.0"
 read-fonts = "0.37.0"
 parking_lot = "0.12"
+aes = "0.8"
+cbc = "0.1"
+pbkdf2 = "0.12"
+sha2 = "0.10"
+hmac = "0.12"
+rand = "0.8"
 
 [dev-dependencies]

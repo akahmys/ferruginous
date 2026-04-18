@@ -4,16 +4,42 @@ use parking_lot::RwLock;
 use ferruginous_core::{Object, Parser, PdfResult, PdfError, Reference, Resolver};
 use ferruginous_core::lexer::Token;
 use crate::xref::{XRefStore, XRefEntry, parse_xref_table, parse_xref_stream};
+use crate::security::{SecurityHandler, StandardSecurityHandler, NullSecurityHandler};
+use crate::signature::Signature;
+use crate::validation::{SignatureVerifier, ValidationStatus};
+use std::sync::Arc;
 
 pub struct Document {
     data: Bytes,
     store: XRefStore,
     root: Reference,
     cache: RwLock<BTreeMap<Reference, Object>>,
+    security: Arc<dyn SecurityHandler>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SignatureVerificationResult {
+    pub signature_id: u32,
+    pub status: ValidationStatus,
+    pub name: Option<String>,
+    pub date: Option<String>,
+    pub mdp_status: MdpStatus,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum MdpStatus {
+    NoModifications,
+    AllowedModifications,
+    DisallowedModifications(String),
+    NotSignatoryRevision,
 }
 
 impl Document {
     pub fn open(data: Bytes) -> PdfResult<Self> {
+        Self::open_with_password(data, b"")
+    }
+
+    pub fn open_with_password(data: Bytes, password: &[u8]) -> PdfResult<Self> {
         let startxref_pos = find_startxref(&data)?;
         let mut store = XRefStore::new();
         
@@ -76,16 +102,141 @@ impl Document {
             .and_then(|o| if let Object::Reference(r) = o { Some(*r) } else { None })
             .ok_or_else(|| PdfError::Other("Missing /Root in trailer".into()))?;
 
+        // Initialize Security Handler
+        let security: Arc<dyn SecurityHandler> = if let Some(Object::Dictionary(e_dict)) = store.trailer.get(&"Encrypt".into()) {
+            Arc::new(StandardSecurityHandler::new(e_dict, password)?)
+        } else {
+            Arc::new(NullSecurityHandler)
+        };
+
         Ok(Self {
             data,
             store,
             root,
             cache: RwLock::new(BTreeMap::new()),
+            security,
         })
     }
 
     pub fn root(&self) -> Reference {
         self.root
+    }
+
+    fn is_encryption_dict(&self, reference: &Reference) -> bool {
+        if let Some(Object::Reference(r)) = self.store.trailer.get(&"Encrypt".into()) {
+            return r == reference;
+        }
+        false
+    }
+
+    /// Discovers all digital signatures in the document.
+    pub fn signatures(&self) -> PdfResult<Vec<Signature>> {
+        let mut signatures = Vec::new();
+        
+        // Scan all pages for /Sig widget annotations
+        let catalog = self.resolve(&self.root)?.as_dict()
+            .ok_or_else(|| PdfError::Other("Invalid catalog".into()))?.clone();
+        
+        let pages_ref = catalog.get(&"Pages".into())
+            .and_then(|o| o.as_reference())
+            .ok_or_else(|| PdfError::Other("Missing /Pages in catalog".into()))?;
+            
+        let mut stack = vec![pages_ref];
+        while let Some(current_ref) = stack.pop() {
+            let node = self.resolve(&current_ref)?.as_dict()
+                .ok_or_else(|| PdfError::Other("Invalid page tree node".into()))?.clone();
+                
+            if node.get(&"Type".into()).and_then(|o| o.as_name()).map(|n| n.as_ref()) == Some(b"Pages") {
+                if let Some(kids) = node.get(&"Kids".into()).and_then(|o| o.as_array()) {
+                    for kid in kids.iter() {
+                        if let Some(r) = kid.as_reference() {
+                            stack.push(r);
+                        }
+                    }
+                }
+            } else {
+                // It's a Page
+                if let Some(annots) = node.get(&"Annots".into()).and_then(|o| o.as_array()) {
+                    for annot_ref in annots.iter() {
+                        if let Some(r) = annot_ref.as_reference() {
+                            let annot = self.resolve(&r)?.as_dict()
+                                .ok_or_else(|| PdfError::Other("Invalid annotation".into()))?.clone();
+                                
+                            if let Some(v) = annot.get(&"Subtype".into())
+                                .and_then(|o| o.as_name())
+                                .filter(|n| n.as_ref() == b"Widget")
+                                .and_then(|_| annot.get(&"FT".into()))
+                                .and_then(|o| o.as_name())
+                                .filter(|n| n.as_ref() == b"Sig")
+                                .and_then(|_| annot.get(&"V".into()))
+                                .and_then(|o| o.as_reference()) 
+                            {
+                                let sig_dict = self.resolve(&v)?.as_dict()
+                                    .ok_or_else(|| PdfError::Other("Invalid signature dictionary".into()))?.clone();
+                                signatures.push(Signature::from_object(v.id, &sig_dict)?);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        Ok(signatures)
+    }
+
+    /// Verifies all digital signatures in the document.
+    pub fn verify_signatures(&self) -> PdfResult<Vec<SignatureVerificationResult>> {
+        let signatures = self.signatures()?;
+        let mut results = Vec::new();
+        let verifier = SignatureVerifier::with_root(self, self.root.id);
+
+        for sig in signatures {
+            let status = verifier.verify(&sig, &self.data)?;
+            
+            // Check for modifications after this signature
+            let mdp_status = self.check_mdp_compliance(&sig)?;
+
+            results.push(SignatureVerificationResult {
+                signature_id: sig.obj_id,
+                status,
+                name: sig.name.clone(),
+                date: sig.date.clone(),
+                mdp_status,
+            });
+        }
+
+        Ok(results)
+    }
+
+    fn check_mdp_compliance(&self, sig: &Signature) -> PdfResult<MdpStatus> {
+        if sig.byte_range.len() < 4 {
+            return Err(PdfError::Other("Invalid ByteRange".into()));
+        }
+
+        let last_offset = sig.byte_range[2];
+        let last_len = sig.byte_range[3];
+        let covered_end = last_offset + last_len;
+
+        if covered_end < self.data.len() {
+            // Document has been modified after this signature
+            if let Some(doc_mdp) = &sig.doc_mdp {
+                match doc_mdp.p {
+                    1 => return Ok(MdpStatus::DisallowedModifications("DocMDP Level 1: No changes permitted".into())),
+                    2 => {
+                        // Level 2: Permits form filling.
+                        // For now, we flag as "Allowed" if we don't have detailed diffing logic
+                        return Ok(MdpStatus::AllowedModifications);
+                    }
+                    3 => return Ok(MdpStatus::AllowedModifications),
+                    _ => return Ok(MdpStatus::DisallowedModifications(format!("Unknown DocMDP Level: {}", doc_mdp.p))),
+                }
+            }
+            
+            // If no MDP is specified, any modification might be suspicious but not strictly prohibited by MDP
+            return Ok(MdpStatus::DisallowedModifications("Incremental update detected without MDP permission".into()));
+        }
+
+        Ok(MdpStatus::NoModifications)
     }
 }
 
@@ -97,7 +248,7 @@ impl Resolver for Document {
         }
 
         let entry = self.store.get(reference.id).ok_or(PdfError::ObjectNotFound(*reference))?;
-        let obj = match entry {
+        let mut obj = match entry {
             XRefEntry::InUse { offset, .. } => {
                 let mut parser = Parser::new(self.data.slice(offset as usize..))
                     .with_resolver(self);
@@ -109,6 +260,27 @@ impl Resolver for Document {
             }
             _ => return Err(PdfError::Other("Attempted to resolve free or invalid object".into())),
         };
+
+        // Decryption
+        if !self.is_encryption_dict(reference) {
+            let skip_decryption = if let Object::Stream(dict, _) = &obj {
+                dict.get(&"Type".into()).and_then(|o| o.as_name()).map(|n| n.as_ref()) == Some(b"Metadata") && !self.security.encrypt_metadata()
+            } else {
+                false
+            };
+
+            if !skip_decryption {
+                match &mut obj {
+                    Object::String(b) => {
+                        *b = self.security.decrypt_bytes(b, reference.id, reference.generation)?;
+                    }
+                    Object::Stream(_d, b) => {
+                        *b = self.security.decrypt_bytes(b, reference.id, reference.generation)?;
+                    }
+                    _ => {}
+                }
+            }
+        }
 
         // Cache the result
         self.cache.write().insert(*reference, obj.clone());

@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use ferruginous_core::{Object, Parser, PdfResult, PdfError, PdfName, lexer::Token};
 use ferruginous_render::{RenderBackend, path::PathBuilder};
 use ferruginous_core::graphics::{WindingRule, GraphicsState, TextMatrices, TextRenderingMode, Matrix, BlendMode};
+use ferruginous_doc::font::{FontResource, cmap::MappingResult};
 
 /// A content stream interpreter that translates PDF operators into [RenderBackend] calls.
 pub struct Interpreter<'a> {
@@ -22,6 +23,10 @@ pub struct Interpreter<'a> {
     state: GraphicsState,
     /// Current text object state (managed by BT/ET).
     text_matrices: Option<TextMatrices>,
+    /// Bounding box of the current text object (between BT and ET).
+    pub current_text_bbox: Option<ferruginous_core::graphics::Rect>,
+    /// Bounding box of all text objects combined on the page.
+    pub page_text_bbox: Option<ferruginous_core::graphics::Rect>,
     /// Guard for circular references.
     recursion_depth: usize,
 }
@@ -42,6 +47,8 @@ impl<'a> Interpreter<'a> {
             state_stack: Vec::new(),
             state: GraphicsState::default(),
             text_matrices: None,
+            current_text_bbox: None,
+            page_text_bbox: None,
             recursion_depth: 0,
         }
     }
@@ -188,8 +195,16 @@ impl<'a> Interpreter<'a> {
 
     fn handle_text_scope_operator(&mut self, op: &str) -> PdfResult<()> {
         match op {
-            "BT" => self.text_matrices = Some(TextMatrices::default()),
-            "ET" => self.text_matrices = None,
+            "BT" => {
+                 self.text_matrices = Some(TextMatrices::default());
+                 self.current_text_bbox = None;
+            }
+            "ET" => {
+                 if let Some(current) = self.current_text_bbox {
+                     self.page_text_bbox = Some(self.page_text_bbox.map_or(current, |p| p.union(&current)));
+                 }
+                 self.text_matrices = None;
+            }
             _ => return Err(PdfError::Other(format!("Invalid text scope op: {op}"))),
         }
         Ok(())
@@ -268,13 +283,10 @@ impl<'a> Interpreter<'a> {
     }
 
     fn show_text(&mut self, text: &[u8]) -> PdfResult<()> {
-        let font_name = self.state.text_state.font.as_ref().ok_or_else(|| PdfError::Other("No font set".into()))?;
-        let font_data_opt = self.resolve_font_data(font_name)?;
+        let font_name = self.state.text_state.font.clone().ok_or_else(|| PdfError::Other("No font set".into()))?;
         
-        let font_data = match font_data_opt {
-            Some(d) => d,
-            None => return Ok(()), // Skip rendering if no font data
-        };
+        // Resolve font resource
+        let font_resource = self.resolve_font_resource(&font_name)?;
 
         let options = ferruginous_render::text::TextLayoutOptions {
             font_size: self.state.text_state.font_size as f32,
@@ -283,24 +295,115 @@ impl<'a> Interpreter<'a> {
             horizontal_scaling: self.state.text_state.horizontal_scaling as f32,
         };
 
-        let glyphs: Vec<(u32, f32)> = text.iter().map(|&b| (b as u32, 1000.0)).collect();
-        let bridge = ferruginous_render::text::SkrifaBridge::new();
-        let path = bridge.render_glyphs(&font_data, &glyphs, &options);
+        let mut current_pos = 0;
+        let mut glyphs = Vec::new();
+        
+        // Extract font data for rendering
+        let font_data = match font_resource.as_ref() {
+            FontResource::Simple(f) => f.descriptor.as_ref().and_then(|d| d.font_file.as_ref()),
+            FontResource::Composite(f) => {
+                f.descendant_fonts.first().and_then(|d| {
+                    if let FontResource::CID(cid) = d.as_ref() {
+                        cid.descriptor.font_file.as_ref()
+                    } else { None }
+                })
+            }
+            FontResource::CID(f) => f.descriptor.font_file.as_ref(),
+        };
 
-        let font_size = self.state.text_state.font_size;
+        let font_data = font_data.ok_or_else(|| PdfError::Other("Missing font stream data".into()))?;
+
+        // Segmentation and mapping
+        while current_pos < text.len() {
+            let (code, len) = match font_resource.as_ref() {
+                FontResource::Composite(f) => {
+                    f.encoding.next_code(&text[current_pos..]).unwrap_or((vec![text[current_pos]], 1))
+                }
+                _ => (vec![text[current_pos]], 1),
+            };
+            
+            let width = font_resource.glyph_width(&code);
+            
+            let gid = match font_resource.as_ref() {
+                FontResource::Composite(f) => {
+                    match f.encoding.lookup(&code) {
+                        Some(MappingResult::Cid(cid)) => cid,
+                        _ => code[0] as u32,
+                    }
+                }
+                FontResource::Simple(_) => {
+                    // map byte to unicode via encoding, then could map to GID
+                    // For now, let's use the byte as GID (works for many fonts)
+                    // or map to unicode if we want to support fallback fonts better
+                    code[0] as u32
+                }
+                FontResource::CID(_) => code[0] as u32,
+            };
+
+            glyphs.push((gid, width as f32));
+            current_pos += len;
+        }
+
+        let bridge = ferruginous_render::text::SkrifaBridge::new();
+        let path = bridge.render_glyphs(font_data, &glyphs, &options);
+
         let text_matrices = self.text_matrices.as_mut().ok_or_else(|| PdfError::Other("Tj outside of BT/ET".into()))?;
+        let font_metrics = font_resource.get_metrics();
+        let font_size = self.state.text_state.font_size;
+        let scale = font_size / 1000.0;
+        let h_scale = self.state.text_state.horizontal_scaling / 100.0;
+        
+        // Final transformation including Rise (Ts)
+        let render_matrix = text_matrices.tm.concat(&Matrix::new(1.0, 0.0, 0.0, 1.0, 0.0, self.state.text_state.rise));
         
         let mut path = path;
-        path.apply_affine(text_matrices.tm.0);
-        
-        // Use current fill color from state
+        path.apply_affine(render_matrix.0);
         self.backend.fill_path(&path, &self.state.fill_color, WindingRule::NonZero);
 
-        let scale = font_size / 1000.0;
-        let total_width: f64 = glyphs.iter().map(|(_, w)| *w as f64 * scale).sum();
-        text_matrices.tm = text_matrices.tm.concat(&Matrix::new(1.0, 0.0, 0.0, 1.0, total_width, 0.0));
+        // Update BBox
+        let user_matrix = render_matrix.concat(&self.state.ctm);
+        for (_, w) in &glyphs {
+            // Glyph box in text space
+            let g_box = ferruginous_core::graphics::Rect::new(0.0, font_metrics.descent * scale, (*w as f64) * scale, font_metrics.ascent * scale);
+            // Transform to user space using current Tm (including rise) and CTM
+            // This is a simplification: we just transform the corners
+            let p1 = user_matrix.0 * kurbo::Point::new(g_box.x1, g_box.y1);
+            let p2 = user_matrix.0 * kurbo::Point::new(g_box.x2, g_box.y2);
+            let u_box = ferruginous_core::graphics::Rect::new(p1.x.min(p2.x), p1.y.min(p2.y), p1.x.max(p2.x), p1.y.max(p2.y));
+            
+            self.current_text_bbox = Some(self.current_text_bbox.map_or(u_box, |b| b.union(&u_box)));
+        }
+
+        // Update Text Matrix (TM)
+        let mut total_advance = 0.0;
+        for (gid, w) in &glyphs {
+            total_advance += (*w as f64).mul_add(scale, self.state.text_state.char_spacing) * h_scale;
+            // Word spacing (Tw) applies if space char (GID 32 in simple fonts or specific CIDs)
+            if *gid == 32 {
+                total_advance += self.state.text_state.word_spacing * h_scale;
+            }
+        }
+        text_matrices.tm = text_matrices.tm.concat(&Matrix::new(1.0, 0.0, 0.0, 1.0, total_advance, 0.0));
 
         Ok(())
+    }
+
+    fn resolve_font_resource(&self, name: &PdfName) -> PdfResult<Arc<FontResource>> {
+        let mut font_entry = None;
+        for res in self.resource_stack.iter().rev() {
+            if let Some(Object::Dictionary(f_dict)) = res.get(&"Font".into()) {
+                if let Some(f_ref) = f_dict.get(name) {
+                    font_entry = Some(f_ref.clone());
+                    break;
+                }
+            }
+        }
+        
+        let font_obj_ref = font_entry.ok_or_else(|| PdfError::Other(format!("Font {:?} not found", name.0)))?;
+        let font_dict_obj = self.resolver.resolve_if_ref(&font_obj_ref)?;
+        let font_dict = font_dict_obj.as_dict().ok_or_else(|| PdfError::Other("Invalid font dictionary".into()))?;
+        
+        Ok(Arc::new(FontResource::load(font_dict, self.resolver)?))
     }
 
     fn show_text_array(&mut self, arr: &[Object]) -> PdfResult<()> {
@@ -323,59 +426,6 @@ impl<'a> Interpreter<'a> {
         Ok(())
     }
 
-    fn resolve_font_data(&self, name: &PdfName) -> PdfResult<Option<Vec<u8>>> {
-        let resolver = self.resolver;
-        
-        // 1. Find the font entry in /Resources/Font (searching hierarchy)
-        let mut font_entry = None;
-        for res in self.resource_stack.iter().rev() {
-            if let Some(Object::Dictionary(f_dict)) = res.get(&"Font".into()) {
-                if let Some(f_ref) = f_dict.get(name) {
-                    font_entry = Some(f_ref.clone());
-                    break;
-                }
-            }
-        }
-        
-        let font_obj_ref = font_entry.ok_or_else(|| PdfError::Other(format!("Font {:?} not found", name.0)))?;
-        
-        // 2. Resolve the font dictionary
-        let font_dict_obj = match font_obj_ref {
-            Object::Reference(r) => resolver.resolve(&r)?,
-            _ => font_obj_ref,
-        };
-        let font_dict = font_dict_obj.as_dict().ok_or_else(|| PdfError::Other("Invalid font dictionary".into()))?;
-        
-        // 3. Find /FontDescriptor
-        let descriptor_ref = font_dict.get(&"FontDescriptor".into()).ok_or_else(|| PdfError::Other("Missing /FontDescriptor".into()))?;
-        let descriptor_obj = match descriptor_ref {
-            Object::Reference(r) => resolver.resolve(r)?,
-            _ => descriptor_ref.clone(),
-        };
-        let descriptor = descriptor_obj.as_dict().ok_or_else(|| PdfError::Other("Invalid FontDescriptor".into()))?;
-        
-        // 4. Find /FontFile2 (for TrueType) or /FontFile3 (for OpenType/Type1)
-        let file_key = if descriptor.contains_key(&"FontFile2".into()) { 
-            "FontFile2" 
-        } else if descriptor.contains_key(&"FontFile3".into()) {
-            "FontFile3"
-        } else {
-            return Ok(None);
-        };
-        let file_ref = descriptor.get(&file_key.into()).unwrap(); // Guaranteed by check above
-        
-        // 5. Extract stream data
-        let file_stream_obj = match file_ref {
-            Object::Reference(r) => resolver.resolve(r)?,
-            _ => file_ref.clone(),
-        };
-        
-        if let Object::Stream(_, data) = file_stream_obj {
-            Ok(Some(data.to_vec()))
-        } else {
-            Ok(None)
-        }
-    }
 
     fn pop_string(&mut self) -> PdfResult<bytes::Bytes> {
         match self.stack.pop() {
@@ -556,7 +606,7 @@ impl<'a> Interpreter<'a> {
                 _ => "Normal".into(),
             };
             let bm_str = String::from_utf8_lossy(&bm_name);
-            let mode = <BlendMode as std::str::FromStr>::from_str(&bm_str).unwrap();
+            let mode = <BlendMode as std::str::FromStr>::from_str(&bm_str).unwrap_or(BlendMode::Normal);
             self.state.blend_mode = mode;
             self.backend.set_blend_mode(mode);
         }

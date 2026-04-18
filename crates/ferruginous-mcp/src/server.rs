@@ -1,6 +1,7 @@
 use rmcp::{tool, tool_router, tool_handler, ServiceExt, handler::server::{ServerHandler, router::Router, wrapper::Parameters}};
 use crate::tools::render::{RenderArgs, render_page_impl};
 use crate::tools::audit::{AuditArgs, audit_document_impl};
+use crate::tools::signature::{VerifySignaturesArgs, verify_signatures_impl};
 
 /// The Ferruginous MCP Server implementation.
 ///
@@ -34,6 +35,15 @@ impl FerruginousServer {
     /// MCP tool: audit_document
     pub async fn audit_document(&self, Parameters(args): Parameters<AuditArgs>) -> Result<String, String> {
         audit_document_impl(args).await
+    }
+
+    #[tool(
+        name = "verify_signatures",
+        description = "Analyzes and verifies all digital signatures in a PDF, including integrity checks (MD5/SHA) and signer certificate validation."
+    )]
+    /// MCP tool: verify_signatures
+    pub async fn verify_signatures(&self, Parameters(args): Parameters<VerifySignaturesArgs>) -> Result<String, String> {
+        verify_signatures_impl(args).await
     }
 }
 

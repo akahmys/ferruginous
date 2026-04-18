@@ -186,4 +186,8 @@ impl Object {
     pub fn as_reference(&self) -> Option<Reference> {
         if let Self::Reference(r) = self { Some(*r) } else { None }
     }
+
+    pub fn as_string(&self) -> Option<&Bytes> {
+        if let Self::String(s) = self { Some(s) } else { None }
+    }
 }

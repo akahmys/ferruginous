@@ -61,6 +61,16 @@ impl Rect {
     pub fn height(&self) -> f64 {
         (self.y2 - self.y1).abs()
     }
+
+    /// Extends the rectangle to include another rectangle.
+    pub fn union(&self, other: &Self) -> Self {
+        Self {
+            x1: self.x1.min(other.x1),
+            y1: self.y1.min(other.y1),
+            x2: self.x2.max(other.x2),
+            y2: self.y2.max(other.y2),
+        }
+    }
 }
 
 /// ISO 32000-2:2020 Clause 9.3 - Text State Parameters
@@ -169,6 +179,13 @@ impl Default for TextMatrices {
             tm: Matrix::IDENTITY,
             tlm: Matrix::IDENTITY,
         }
+    }
+}
+
+impl TextMatrices {
+    /// Returns the combined matrix that transforms text space to user space (Tm * CTM).
+    pub fn text_to_user_space(&self, ctm: &Matrix) -> Matrix {
+        self.tm.concat(ctm)
     }
 }
 
