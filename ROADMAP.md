@@ -31,13 +31,18 @@ The "Rebirth" project aims to achieve the world's most robust and ISO-compliant 
 - **M16-MCP: Structural Compliance Auditing Tool** [x]
 - **M17-HARD: Architectural Hardening (XRef Stream, Caching, Parser Lookahead)** [x]
 
-## Phase 7: Advanced Content & Transparency
-- **M17-CONTENT: Image Streams (DCT, CCITT, JPX)** [ ]
-- **M18-CONTENT: Form XObjects & Resource Nesting** [ ]
-- **M19-RENDER: Transparency Groups & Blend Modes** [ ]
-
-## Phase 8: Interactive Elements & Forms
-- **M20-INTERACT: Annotation Framework** [ ]
+## Phase 7: Advanced Content & Transparency [x]
+- **M17-CONTENT: Advanced Text Interpreter (Stateful positioning & Showing)** [x]
+- **M18-CONTENT: Image Streams (DCTDecode & multiple filters)** [x]
+- **M19-CONTENT: Form XObjects & Resource Nesting (16-level limit)** [x]
+- [x] Phase 7: Transparency & Hardening
+  - [x] Implement BlendModes and Alpha support (ca, CA, BM)
+  - [x] Enforce Context Propagation Guard (RR-15 Clause 16)
+  - [x] Audit-ready codebase with zero Clippy warnings
+- [ ] Phase 8: Text & Fonts (In Progress)
+  - [ ] Complete CIDFont and CMap resolution
+  - [ ] Standard 14 font fallbacks
+  - [ ] Advanced text rendering pipeline
 - **M21-INTERACT: AcroForm Field Management** [ ]
 - **M22-INTERACT: Navigation (Bookmarks, Links, Dests)** [ ]
 
@@ -56,4 +61,4 @@ The "Rebirth" project aims to achieve the world's most robust and ISO-compliant 
 - **M31-SDK: v1.0 Production Readiness & Audit** [ ]
 
 ---
-*Roadmap updated: 2026-04-18 (Phase 6 Verification Complete)*
+*Roadmap updated: 2026-04-18 (Phase 7: XObject Rendering & Recursive Safety Complete)*

@@ -5,6 +5,7 @@
 //! complexities of the core type system and document model.
 
 use std::path::Path;
+use std::sync::Arc;
 use bytes::Bytes;
 use ferruginous_core::{PdfResult, Reference, Object, Resolver};
 use ferruginous_doc::{Document, PageTree, Page as DocPage};
@@ -63,8 +64,15 @@ impl PdfDocument {
     pub async fn render_page_to_file(&self, index: usize, output_path: &Path) -> PdfResult<()> {
         let page = self.get_page(index)?;
         
+        // Get inherited page resources
+        let res_dict = if let Some(res_obj) = page.doc_page.resources() {
+            res_obj.as_dict_arc().unwrap_or_else(|| Arc::new(std::collections::BTreeMap::new()))
+        } else {
+            Arc::new(std::collections::BTreeMap::new())
+        };
+
         let mut backend = VelloBackend::new();
-        let mut interpreter = Interpreter::new(&mut backend);
+        let mut interpreter = Interpreter::new(&mut backend, &self.inner, res_dict);
         
         // Resolve contents
         let contents = page.doc_page.dictionary.get(&"Contents".into())
@@ -75,20 +83,28 @@ impl PdfDocument {
             Object::Array(a) => a.iter().filter_map(|o| {
                 if let Object::Reference(r) = o { Some(*r) } else { None }
             }).collect(),
+            Object::Stream(_, _) => {
+                // Handle direct stream object (rare but possible)
+                if let Object::Reference(r) = contents { vec![*r] } else { vec![] }
+            }
             _ => return Err(ferruginous_core::PdfError::Other("Invalid /Contents".into())),
         };
 
-        for r in content_refs {
-            let stream_obj = self.inner.resolve(&r)?;
-            if let Object::Stream(_, data) = stream_obj {
-                // Execute interpreter on stream data
-                interpreter.execute(&data)?;
+        // If it was already a stream in-place (not a reference)
+        if let Object::Stream(_, data) = contents {
+             interpreter.execute(data)?;
+        } else {
+            for r in content_refs {
+                let stream_obj = self.inner.resolve(&r)?;
+                if let Object::Stream(_, data) = &stream_obj {
+                    interpreter.execute(data)?;
+                }
             }
         }
 
         // Get mediabox for dimensions
         let mediabox = page.doc_page.media_box()
-            .and_then(|o| o.as_array().as_deref().cloned())
+            .and_then(|o| o.as_array())
             .ok_or_else(|| ferruginous_core::PdfError::Other("Missing /MediaBox".into()))?;
             
         let w = (mediabox[2].as_f64().ok_or_else(|| ferruginous_core::PdfError::Other("Invalid MediaBox width".into()))? 

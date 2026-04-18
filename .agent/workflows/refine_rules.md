@@ -9,7 +9,7 @@ Autonomously improve (Self-Refinement) the conventions to increase predictabilit
 ## Procedure
 
 // turbo
-1. **Analysis**: Execute the [analyze_friction](../skills/analyze_friction.md) skill to identify causes of friction.
+1. **Analysis**: Read the latest insights from `.agent/reflections.md` and execute the [analyze_friction](../skills/analyze_friction.md) skill to identify causes of friction.
 2. **Verification**: Verify whether the proposed improvements align with the philosophy of [RR-15](../protocols/RELIABLE_RUST_15.md) and can resolve the current issues.
 3. **Operational Optimization**: Determine which layer (Protocol / Skill / Workflow) is most efficient for operating the improved rule.
 4. **Proposal**: Present the proposed improvements and changes in operation to the user for consensus.

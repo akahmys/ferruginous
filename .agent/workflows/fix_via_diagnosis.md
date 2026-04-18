@@ -24,7 +24,9 @@ Fixing is not development. Identify the root cause of the bug and resolve it wit
 // turbo
 8. **Regression Check**: Run `scripts/verify_compliance.sh` and all automated tests to prove that no new breakage has occurred.
 // turbo
-9. **Record & Finish**: Record the results in task.md, regression_log.md, and handoff.md, then end the session.
+9. **Root-Cause Reflection**: Analyze the bug's cause into a lesson in `.agent/reflections.md`. Determine if a new protocol entry is required to prevent recurrence.
+// turbo
+10. **Record & Finish**: Record the results in task.md, regression_log.md, and handoff.md, then end the session.
 
 ## Completion Requirements
 

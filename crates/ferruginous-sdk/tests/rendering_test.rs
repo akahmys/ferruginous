@@ -1,3 +1,4 @@
+//! Integration tests for the Ferruginous SDK rendering pipeline.
 use std::path::Path;
 use bytes::Bytes;
 use ferruginous_sdk::PdfDocument;
@@ -5,7 +6,7 @@ use ferruginous_sdk::PdfDocument;
 #[tokio::test]
 async fn test_render_sample_pdf() {
     let pdf_path = Path::new("../../samples/pdf20/pdf-association/Simple PDF 2.0 file.pdf");
-    assert!(pdf_path.exists(), "Sample PDF not found at {:?}", pdf_path);
+    assert!(pdf_path.exists(), "Sample PDF not found at {pdf_path:?}");
 
     let data = std::fs::read(pdf_path).expect("Failed to read sample PDF");
     let doc = PdfDocument::open(Bytes::from(data)).expect("Failed to open PDF document");
@@ -20,5 +21,5 @@ async fn test_render_sample_pdf() {
     let metadata = std::fs::metadata(output_path).expect("Failed to get metadata for output PNG");
     assert!(metadata.len() > 0, "Output PNG file is empty");
     
-    println!("Successfully rendered sample PDF to {:?}", output_path);
+    println!("Successfully rendered sample PDF to {output_path:?}");
 }

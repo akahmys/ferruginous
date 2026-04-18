@@ -15,7 +15,7 @@ pub struct LopdfResolver {
 #[cfg(feature = "legacy-bridge")]
 impl LopdfResolver {
     pub fn new(data: &[u8]) -> PdfResult<Self> {
-        let doc = lopdf::Document::load_mem(data)
+        let doc = lopdf::Reader::load_document(data)
             .map_err(|e| ferruginous_core::error::PdfError::Other(format!("lopdf error: {}", e)))?;
         Ok(Self { doc })
     }
@@ -24,9 +24,8 @@ impl LopdfResolver {
 #[cfg(feature = "legacy-bridge")]
 impl Resolver for LopdfResolver {
     fn resolve(&self, reference: &Reference) -> PdfResult<Object> {
-        let lopdf_ref = lopdf::ObjectId::new(reference.id, reference.generation);
-        let obj = self.doc.get_object(lopdf_ref)
-            .map_err(|_| ferruginous_core::error::PdfError::ObjectNotFound(*reference))?;
+        let obj = self.doc.get_object(reference.id)
+            .ok_or(ferruginous_core::error::PdfError::ObjectNotFound(*reference))?;
         
         Ok(convert_object(obj))
     }
@@ -59,6 +58,6 @@ fn convert_object(obj: &lopdf::Object) -> Object {
             Object::Stream(Arc::new(converted_dict), bytes::Bytes::copy_from_slice(&s.content))
         }
         lopdf::Object::Null => Object::Null,
-        lopdf::Object::Reference(r) => Object::Reference(Reference::new(r.0, r.1)),
+        lopdf::Object::Reference(r) => Object::Reference(Reference::new(r.id, r.r#gen)),
     }
 }

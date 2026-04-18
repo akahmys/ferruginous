@@ -10,7 +10,7 @@
 - **Diagnostics**: Eliminate guess-based coding; enforce specification-first development using `pdf-spec-mcp`.
 
 ### II. Unbreakable Architecture (The Unwavering Shield)
-- **Language**: Rust (Edition 2024 / MSRV 1.83+).
+- **Language**: Rust (Edition 2024 / MSRV 1.94+).
 - **Protocols**: Strict application of **RR-15 (Reliable Rust 15)** and **HDD (Harness-Driven Development)**.
 - **Data Model**: Immutable, zero-copy design utilizing `bytes::Bytes` and `Arc<T>`. Balancing high performance with total memory safety.
 

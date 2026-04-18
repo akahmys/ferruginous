@@ -34,3 +34,4 @@ clippy_*.txt
 # PDF Specifications & Tools
 /specs/*.pdf
 /.agent/tools/
+.agent/tools/pdf-spec-mcp/node_modules/

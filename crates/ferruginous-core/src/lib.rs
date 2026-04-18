@@ -11,6 +11,6 @@ pub mod graphics;
 pub mod filters;
 
 pub use error::{PdfError, PdfResult};
-pub use graphics::{Color, Matrix, Rect};
+pub use graphics::{Color, Matrix, Rect, GraphicsState, BlendMode};
 pub use parser::Parser;
 pub use types::{Object, PdfName, Reference, Resolver};

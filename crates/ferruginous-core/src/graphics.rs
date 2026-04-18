@@ -70,6 +70,7 @@ pub struct TextState {
     pub word_spacing: f64,    // Tw
     pub horizontal_scaling: f64, // Th (100.0 is normal)
     pub leading: f64,         // Tl
+    pub font: Option<crate::PdfName>, // Tf (font name)
     pub font_size: f64,       // Tfs
     pub rendering_mode: TextRenderingMode, // Tmode
     pub rise: f64,            // Trise
@@ -83,10 +84,43 @@ impl Default for TextState {
             word_spacing: 0.0,
             horizontal_scaling: 100.0,
             leading: 0.0,
-            font_size: 0.0,
+            font: None,
+            font_size: 1.0, 
             rendering_mode: TextRenderingMode::Fill,
             rise: 0.0,
             knockout: true,
+        }
+    }
+}
+
+/// ISO 32000-2:2020 Clause 8.4 - Graphics State
+///
+/// Encapsulates all state parameters that are saved/restored via q/Q operators.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GraphicsState {
+    pub ctm: Matrix,
+    pub stroke_style: StrokeStyle,
+    pub fill_color: Color,
+    pub stroke_color: Color,
+    pub text_state: TextState,
+    pub winding_rule: WindingRule,
+    pub fill_alpha: f64,   // ca
+    pub stroke_alpha: f64, // CA
+    pub blend_mode: BlendMode, // BM
+}
+
+impl Default for GraphicsState {
+    fn default() -> Self {
+        Self {
+            ctm: Matrix::IDENTITY,
+            stroke_style: StrokeStyle::default(),
+            fill_color: Color::Gray(0.0),
+            stroke_color: Color::Gray(0.0),
+            text_state: TextState::default(),
+            winding_rule: WindingRule::NonZero,
+            fill_alpha: 1.0,
+            stroke_alpha: 1.0,
+            blend_mode: BlendMode::Normal,
         }
     }
 }
@@ -202,5 +236,63 @@ impl Default for StrokeStyle {
             miter_limit: 10.0,
             dash_pattern: None,
         }
+    }
+}
+
+/// Supported pixel formats for Image XObjects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PixelFormat {
+    /// 8-bit Gray (1 byte per pixel)
+    Gray8,
+    /// 8-bit RGB (3 bytes per pixel)
+    Rgb8,
+    /// 8-bit CMYK (4 bytes per pixel)
+    Cmyk8,
+}
+
+/// ISO 32000-2:2020 Clause 11.3.5 - Blend Modes
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum BlendMode {
+    #[default]
+    Normal,
+    Multiply,
+    Screen,
+    Overlay,
+    Darken,
+    Lighten,
+    ColorDodge,
+    ColorBurn,
+    HardLight,
+    SoftLight,
+    Difference,
+    Exclusion,
+    Hue,
+    Saturation,
+    Color,
+    Luminosity,
+}
+
+impl std::str::FromStr for BlendMode {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
+            "Multiply" => Self::Multiply,
+            "Screen" => Self::Screen,
+            "Overlay" => Self::Overlay,
+            "Darken" => Self::Darken,
+            "Lighten" => Self::Lighten,
+            "ColorDodge" => Self::ColorDodge,
+            "ColorBurn" => Self::ColorBurn,
+            "HardLight" => Self::HardLight,
+            "SoftLight" => Self::SoftLight,
+            "Difference" => Self::Difference,
+            "Exclusion" => Self::Exclusion,
+            "Hue" => Self::Hue,
+            "Saturation" => Self::Saturation,
+            "Color" => Self::Color,
+            "Luminosity" => Self::Luminosity,
+            _ => Self::Normal,
+        })
     }
 }

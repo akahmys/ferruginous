@@ -13,6 +13,7 @@ serde = { version = "1.0", features = ["derive", "rc"] }
 thiserror.workspace = true
 kurbo.workspace = true
 flate2.workspace = true
+jpeg-decoder.workspace = true
 
 [dev-dependencies]
 # Future test deps

@@ -1,5 +1,4 @@
 use crate::path::PathBuilder;
-use kurbo::ParamCurve;
 
 #[cfg(test)]
 mod tests {

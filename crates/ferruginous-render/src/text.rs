@@ -40,6 +40,24 @@ impl OutlinePen for KurboPen {
     }
 }
 
+pub struct TextLayoutOptions {
+    pub font_size: f32,
+    pub char_spacing: f32,
+    pub word_spacing: f32,
+    pub horizontal_scaling: f32, // Percentage (100.0)
+}
+
+impl Default for TextLayoutOptions {
+    fn default() -> Self {
+        Self {
+            font_size: 1.0,
+            char_spacing: 0.0,
+            word_spacing: 0.0,
+            horizontal_scaling: 100.0,
+        }
+    }
+}
+
 pub struct SkrifaBridge {}
 
 impl Default for SkrifaBridge {
@@ -52,18 +70,54 @@ impl SkrifaBridge {
     pub fn new() -> Self {
         Self {}
     }
+
     pub fn extract_path(&self, font_data: &[u8], glyph_id: u32) -> Option<BezPath> {
         let font_ref = FontRef::new(font_data).ok()?;
         let outlines = font_ref.outline_glyphs();
-        // Try direct construction
         let gid = GlyphId::from(glyph_id as u16);
         let glyph = outlines.get(gid)?;
         
         let mut pen = KurboPen::new();
-        // Try fallback size if unscaled is not found
+        // PDF fonts are usually 1000 units per em
         let settings = DrawSettings::unhinted(Size::new(1000.0), LocationRef::default());
         glyph.draw(settings, &mut pen).ok()?;
         
         Some(pen.finish())
+    }
+
+    /// Renders a sequence of glyphs into a single path, applying PDF-specific layout rules.
+    pub fn render_glyphs(
+        &self, 
+        font_data: &[u8], 
+        glyphs: &[(u32, f32)], // (GlyphId, Width override if any)
+        options: &TextLayoutOptions
+    ) -> BezPath {
+        let mut combined_path = BezPath::new();
+        let mut x_offset = 0.0;
+        
+        let scale = options.font_size / 1000.0;
+        let h_scale = options.horizontal_scaling / 100.0;
+
+        for (gid, width) in glyphs {
+            if let Some(path) = self.extract_path(font_data, *gid) {
+                // Scale and position the glyph
+                let transform = kurbo::Affine::translate((x_offset, 0.0))
+                    * kurbo::Affine::scale_non_uniform(scale as f64 * h_scale as f64, -scale as f64);
+                
+                // Apply transform to the glyph path
+                let mut path = path;
+                path.apply_affine(transform);
+                combined_path.extend(path);
+            }
+            
+            // Update x_offset (ISO 32000 Section 9.4.4)
+            // tx = ((w0 - Tj/1000) * Th + Tc + Tw) * Tf
+            // Wait, that's complex. Simple version for now:
+            x_offset += *width as f64 * scale as f64 * h_scale as f64;
+            x_offset += options.char_spacing as f64 * h_scale as f64;
+            // TODO: handle word spacing (Tc) if glyph is a space
+        }
+        
+        combined_path
     }
 }

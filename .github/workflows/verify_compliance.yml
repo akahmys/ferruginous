@@ -17,7 +17,7 @@ jobs:
       with:
         fetch-depth: 0
 
-    - name: Install Rust (Edition 2024 / MSRV 1.85)
+    - name: Install Rust (Edition 2024 / MSRV 1.94)
       uses: dtolnay/rust-toolchain@stable
       with:
         toolchain: 1.94

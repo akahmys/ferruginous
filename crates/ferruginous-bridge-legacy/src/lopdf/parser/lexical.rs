@@ -65,7 +65,7 @@ mod tests {
 
     #[test]
     fn test_boolean() {
-        assert_eq!(boolean(b"true").unwrap().1, true);
-        assert_eq!(boolean(b"false").unwrap().1, false);
+        assert!(boolean(b"true").unwrap().1);
+        assert!(!boolean(b"false").unwrap().1);
     }
 }

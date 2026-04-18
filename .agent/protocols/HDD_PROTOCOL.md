@@ -24,3 +24,13 @@
 - **Rule**: Persist all test logs and proof-of-compliance artifacts to the project's permanent record (`walkthrough.md`).
 - **Purpose**: Create a traceable audit trail for ISO compliance and feature stability.
 - **Compliance Criterion**: A feature is defined as [Complete] only when its evidence is documented in the project's ELM (External Long-Term Memory). For graphics/rendering, "Visual Proof" (e.g., screenshots or PNGs) is a mandatory requirement.
+
+## 5. Atomic Interface Compliance
+- **Rule**: When a shared trait (e.g., `RenderBackend`) or public interface is modified, all implementations (Mock, Vello, SDK etc.) and their call-sites MUST be updated within the same task block.
+- **Purpose**: Prevent "broken state" commits and minimize iterative compilation loops.
+- **Compliance Criterion**: `cargo check --all` must pass after every interface-modifying task.
+
+## 6. Fail-Fast Integration
+- **Rule**: For features involving complex context propagation (e.g., Resolvers, Resource Stacks), a basic integration test MUST be executed early in the harness phase.
+- **Purpose**: Detect architectural misalignments before deep implementation.
+- **Compliance Criterion**: `rendering_test` must be confirmed green for basic context initialization before proceeding beyond the harness phase.

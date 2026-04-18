@@ -58,7 +58,7 @@
 ## 11. Explicit Error Handling
 - **Rule**: Prohibit `String` errors. Use concrete Enum types and the `thiserror` crate.
 - **Purpose**: Ensure error traceability and programmatic recoverability.
-- **Compliance Criterion**: All errors must be defined as domain-specific Enum types with mandatory contextual enrichment (e.g., lexical position, object hierarchy, or operation name).
+- **Compliance Criterion**: All errors must be defined as domain-specific Enum types with mandatory contextual enrichment (e.g., lexical position, object hierarchy, or operation name). Error messages MUST capture the failing context (e.g., "resolving font in ExtGState X").
 
 ## 12. Bound & Invariant Enforcement
 - **Rule**: Enforce a 256MB limit on external inputs (PDF streams) and explicitly state invariants using `assert!`.
@@ -79,3 +79,8 @@
 - **Rule**: Prohibit `.clone()` for the purpose of avoiding borrow checker errors. Rethink ownership structure instead.
 - **Purpose**: Visualize inefficient memory allocations and design distortions.
 - **Compliance Criterion**: Use of `.clone()` must be limited to cases where "logical duplication of data" is truly required.
+
+## 16. Context Propagation Guard
+- **Rule**: Interpretation of document data MUST enforce type-level provision of a `Resolver` and `ResourceStack`.
+- **Purpose**: Eliminate runtime "Missing Resolver" or "Missing Resource" errors.
+- **Compliance Criterion**: Public high-level interpreters MUST NOT have default constructors that omit these dependencies.

@@ -134,7 +134,14 @@ impl Object {
 
     pub fn as_dict(&self) -> Option<&BTreeMap<PdfName, Object>> {
         match self {
-            Self::Dictionary(d) | Self::Stream(d, _) => Some(d),
+            Self::Dictionary(d) | Self::Stream(d, _) => Some(d.as_ref()),
+            _ => None,
+        }
+    }
+
+    pub fn as_dict_arc(&self) -> Option<Arc<BTreeMap<PdfName, Object>>> {
+        match self {
+            Self::Dictionary(d) | Self::Stream(d, _) => Some(d.clone()),
             _ => None,
         }
     }

@@ -89,7 +89,7 @@ mod tests {
 
     #[test]
     fn test_ctm_flip() {
-        let mut ctm = CtmStack::new(100.0);
+        let ctm = CtmStack::new(100.0);
         // Current is identity
         let p_pdf = kurbo::Point::new(10.0, 10.0); // 10 up from bottom
         let p_disp = ctm.current_for_display() * p_pdf;

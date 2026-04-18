@@ -198,7 +198,7 @@ mod tests {
             path: sample_path.into(),
         };
         let result = audit_document_impl(args).await.unwrap();
-        println!("Audit Result:\n{}", result);
+        println!("Audit Result:\n{result}");
         assert!(result.contains("\"status\": \"PASSED\""));
     }
 }

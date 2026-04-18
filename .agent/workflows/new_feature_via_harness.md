@@ -16,6 +16,8 @@ Complete the implementation with a verification-led approach based on [HDD](../p
 3. **Self-Audit**: Execute [verify_compliance](verify_compliance.md) to ensure static analysis and type safety.
 // turbo
 4. **Document Reflection**: Execute [sync_docs](sync_docs.md) to synchronize the ROADMAP and task with the latest actual state.
+// turbo
+5. **Phase Retrospective**: Perform a post-mortem on development friction, update `.agent/reflections.md`, and execute [refine_rules](refine_rules.md) if needed.
 
 ## Completion Requirements
 
