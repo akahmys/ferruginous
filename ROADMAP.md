@@ -45,20 +45,40 @@ The "Rebirth" project aims to achieve the world's most robust and ISO-compliant 
   - [ ] Advanced text rendering pipeline
 - **M21-INTERACT: AcroForm Field Management** [ ]
 - **M22-INTERACT: Navigation (Bookmarks, Links, Dests)** [ ]
+- [ ] **Phase Closure (Ritual)**
+  - [ ] Codebase Validation & Refactoring (Data Structure & Data Flow Audit)
+  - [ ] Rule Refinement & Retrospective (`REFLECTION_PROTOCOL`)
+  - [ ] Update Documentation (ROADMAP, README, DESIGN_SPEC)
+  - [ ] GitHub Synchronization (Commit/Push)
 
 ## Phase 9: Security & Protection
 - **M23-SEC: PDF Encryption (AES-256, Unicode Passwords)** [ ]
 - **M24-SEC: Digital Signatures & LTV (PAdES)** [ ]
+- [ ] **Phase Closure (Ritual)**
+  - [ ] Codebase Validation & Refactoring (Data Structure & Data Flow Audit)
+  - [ ] Rule Refinement & Retrospective (`REFLECTION_PROTOCOL`)
+  - [ ] Update Documentation (ROADMAP, README, DESIGN_SPEC)
+  - [ ] GitHub Synchronization (Commit/Push)
 
 ## Phase 10: Standards & Compliance
 - **M25-COMP: PDF/A-4 & PDF/X-6 Conformance** [ ]
 - **M26-COMP: Tagged PDF & Accessibility (PDF/UA-2)** [ ]
 - **M27-COMP: Associated Files (PDF/A-4f)** [ ]
+- [ ] **Phase Closure (Ritual)**
+  - [ ] Codebase Validation & Refactoring (Data Structure & Data Flow Audit)
+  - [ ] Rule Refinement & Retrospective (`REFLECTION_PROTOCOL`)
+  - [ ] Update Documentation (ROADMAP, README, DESIGN_SPEC)
+  - [ ] GitHub Synchronization (Commit/Push)
 
 ## Phase 11: Production & Ecosystem
 - **M28-SDK: High-Performance CLI Tooling** [ ]
 - **M30-SDK: WASM / Web Integration** [ ]
 - **M31-SDK: v1.0 Production Readiness & Audit** [ ]
+- [ ] **Phase Closure (Ritual)**
+  - [ ] Codebase Validation & Refactoring (Data Structure & Data Flow Audit)
+  - [ ] Rule Refinement & Retrospective (`REFLECTION_PROTOCOL`)
+  - [ ] Update Documentation (ROADMAP, README, DESIGN_SPEC)
+  - [ ] GitHub Synchronization (Commit/Push)
 
 ---
 *Roadmap updated: 2026-04-18 (Phase 7: XObject Rendering & Recursive Safety Complete)*

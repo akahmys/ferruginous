@@ -19,3 +19,8 @@
 - **Rule**: If a workflow (e.g., `initialize_harness.md`) consistently leads to downstream failures, the workflow itself MUST be modified to include preventative steps.
 - **Purpose**: Optimize the AI-developer collaboration for maximum reliability.
 - **Compliance Criterion**: Updates to workflows must be verified through the next execution cycle.
+
+## 4. Architectural Validation (Phase Closure)
+- **Rule**: Every phase MUST include a step for validating core data structures and data flows to ensure they adhere to RR-15 and HDD principles.
+- **Purpose**: Prevent architectural drift and accumulate technical debt.
+- **Compliance Criterion**: A visual check (e.g., Mermaid diagrams) or static analysis report of the changed components must be reviewed and documented in the phase walkthrough.
