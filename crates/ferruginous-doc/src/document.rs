@@ -238,6 +238,9 @@ impl Document {
 
         Ok(MdpStatus::NoModifications)
     }
+    pub fn compliance_info(&self) -> PdfResult<crate::conformance::ComplianceInfo> {
+        crate::conformance::ComplianceInfo::extract(self, &self.root)
+    }
 }
 
 impl Resolver for Document {

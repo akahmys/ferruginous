@@ -22,6 +22,7 @@ lcms2 = "6.0"
 bytes = { version = "1.10", features = ["serde"] }
 flate2 = "1.0"
 jpeg-decoder = "0.3.1"
+roxmltree = "0.20"
 
 [workspace.package]
 version = "0.1.0"

@@ -10,6 +10,7 @@ pub mod legacy;
 pub mod security;
 pub mod signature;
 pub mod validation;
+pub mod conformance;
 
 pub use document::{Document, SignatureVerificationResult, MdpStatus};
 pub use page::{Page, PageTree};

@@ -69,6 +69,7 @@ fn audit_document_internal(args: AuditArgs) -> McpResult<String> {
     let root_ref = doc.root();
     validate_catalog(&doc, &root_ref, &mut findings);
     validate_page_tree(&doc, &root_ref, &mut findings);
+    validate_compliance(&doc, &mut findings);
 
     let status = if findings.iter().any(|f| f.severity == "Error") {
         "FAILED"
@@ -183,6 +184,76 @@ fn check_page_range(tree: &PageTree, count: usize, findings: &mut Vec<Finding>) 
                     message: format!("Failed to resolve last page: {e}"),
                 });
             }
+        }
+    }
+}
+
+fn validate_compliance(doc: &Document, findings: &mut Vec<Finding>) {
+    match doc.compliance_info() {
+        Ok(info) => {
+            // 1. PDF/A Checks
+            if let Some(part) = info.metadata.pdf_a_part {
+                findings.push(Finding {
+                    severity: "Info".into(),
+                    category: "Compliance".into(),
+                    message: format!("Document claims PDF/A conformance (Part {part})."),
+                });
+                
+                if part == 4 && info.output_intents.is_empty() {
+                    findings.push(Finding {
+                        severity: "Warning".into(),
+                        category: "Compliance".into(),
+                        message: "PDF/A-4 usually requires at least one OutputIntent for color management.".into(),
+                    });
+                }
+            }
+
+            // 2. PDF/X Checks
+            if let Some(version) = &info.metadata.pdf_x_version {
+                findings.push(Finding {
+                    severity: "Info".into(),
+                    category: "Compliance".into(),
+                    message: format!("Document claims PDF/X conformance ({version})."),
+                });
+            }
+
+            // 3. PDF/UA (Accessibility) Checks
+            if let Some(part) = info.metadata.pdf_ua_part {
+                findings.push(Finding {
+                    severity: "Info".into(),
+                    category: "Compliance".into(),
+                    message: format!("Document claims PDF/UA conformance (Part {part})."),
+                });
+                
+                if !info.has_struct_tree {
+                    findings.push(Finding {
+                        severity: "Error".into(),
+                        category: "Compliance".into(),
+                        message: "PDF/UA compliant files MUST have a /StructTreeRoot in the Catalog.".into(),
+                    });
+                }
+                
+                if !info.is_marked {
+                    findings.push(Finding {
+                        severity: "Error".into(),
+                        category: "Compliance".into(),
+                        message: "PDF/UA compliant files MUST have /MarkInfo << /Marked true >> in the Catalog.".into(),
+                    });
+                }
+            } else if info.has_struct_tree {
+                findings.push(Finding {
+                    severity: "Info".into(),
+                    category: "Compliance".into(),
+                    message: "Document contains logical structure (/StructTreeRoot) but no PDF/UA claim.".into(),
+                });
+            }
+        }
+        Err(e) => {
+            findings.push(Finding {
+                severity: "Warning".into(),
+                category: "Compliance".into(),
+                message: format!("Compliance metadata extraction failed or missing: {e}"),
+            });
         }
     }
 }
