@@ -53,3 +53,20 @@ This document tracks development friction, failures, and subsequent protocol imp
 - **Observation**: Documents using Standard 14 fonts without embedding caused the `Interpreter` to fail during rendering with "Missing font stream data".
 - **Cause**: The parser correctly didn't find the font stream (as expected for Standard 14), but the renderer didn't have a metric-only fallback.
 - **Protocol Feedback**: Updated **RR-15 Clause 16 (Context Propagation Guard)** to include "Requirement for Optional Non-Fatal Failures". High-level SDK components MUST distinguish between structural errors (invalid PDF) and rendering-quality gaps (missing fonts), allowing execution to continue for diagnostic and metadata tasks.
+
+---
+
+## [2026-04-19] Phase 16: Stream Filter & Security Hardening
+
+### 1. Phenomenon: 'Corrupt Deflate Stream' on Encrypted PDFs
+- **Observation**: Encryption was recognized, but content streams failed to decompress with "invalid block type" or "corrupt header".
+- **Cause**: 
+    - Attempted to decrypt `ObjStm` container, which corrupted the underlying objects.
+    - Incorrect salt offset used for PBKDF2 in Revision 6 (U[32] vs U[40]).
+    - Refusal to handle unaligned AES blocks (AESV3).
+- **Protocol Feedback**: Added **HDD Clause 8: Compliance-First Security Auditing**. When a cryptographic layer is suspect, first verify decryption exclusions (ISO 7.6.2) and field offsets against the ISO 32000-2 bit-spec before attempting architectural fixes.
+
+### 2. Phenomenon: Zlib Header Mismatch
+- **Observation**: Some PDF producers use Raw Deflate (RFC 1951) instead of Zlib (RFC 1950) despite the `FlateDecode` filter name.
+- **Cause**: Rigid adherence to Zlib headers in initial filter implementation.
+- **Protocol Feedback**: Added **HDD Clause 9: Forgiving Decompression Fallback**. Decompression filters SHOULD attempt Raw Deflate fallback if the primary RFC-compliant header is missing or corrupted.

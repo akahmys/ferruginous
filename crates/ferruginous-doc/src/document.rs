@@ -128,8 +128,25 @@ impl Document {
             .ok_or_else(|| PdfError::Other("Missing /Root in trailer".into()))?;
 
         // Initialize Security Handler
-        let security: Arc<dyn SecurityHandler> = if let Some(Object::Dictionary(e_dict)) = store.trailer.get(&"Encrypt".into()) {
-            Arc::new(StandardSecurityHandler::new(e_dict, password)?)
+        let security: Arc<dyn SecurityHandler> = if let Some(e_obj) = store.trailer.get(&"Encrypt".into()) {
+            let e_dict = match e_obj {
+                Object::Dictionary(d) => d.clone(),
+                Object::Reference(r) => {
+                    let entry = store.get(r.id).ok_or_else(|| PdfError::Other("Encrypt object not found".into()))?;
+                    let offset = match entry {
+                        XRefEntry::InUse { offset, .. } => offset,
+                        _ => return Err(PdfError::Other("Encrypt object must not be compressed or free".into())),
+                    };
+                    let mut parser = Parser::new(data.slice(offset as usize..));
+                    parser.parse_indirect_object_header()?;
+                    let obj = parser.parse_object()?;
+                    let d = obj.as_dict()
+                        .ok_or_else(|| PdfError::Other("Encrypt object is not a dictionary".into()))?;
+                    std::sync::Arc::new(d.clone())
+                }
+                _ => return Err(PdfError::Other("Invalid /Encrypt type".into())),
+            };
+            Arc::new(StandardSecurityHandler::new(&e_dict, password)?)
         } else {
             Arc::new(NullSecurityHandler)
         };
@@ -550,7 +567,11 @@ impl Resolver for Document {
         // Decryption
         if !self.is_encryption_dict(reference) {
             let skip_decryption = if let Object::Stream(dict, _) = &obj {
-                dict.get(&"Type".into()).and_then(|o| o.as_name()).map(|n| n.as_ref()) == Some(b"Metadata") && !self.security.encrypt_metadata()
+                let is_metadata = dict.get(&"Type".into()).and_then(|o| o.as_name()).map(|n| n.as_ref()) == Some(b"Metadata") && !self.security.encrypt_metadata();
+                let is_obj_stm = dict.get(&"Type".into()).and_then(|o| o.as_name()).map(|n| n.as_ref()) == Some(b"ObjStm");
+                let is_xref = dict.get(&"Type".into()).and_then(|o| o.as_name()).map(|n| n.as_ref()) == Some(b"XRef");
+                
+                is_metadata || is_obj_stm || is_xref
             } else {
                 false
             };

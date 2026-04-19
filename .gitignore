@@ -40,3 +40,8 @@ clippy_*.txt
 
 # External tools
 .agent/tools/
+
+# Test data & Results
+/fepdf_test/ja/
+/fepdf_test/en/
+/fepdf_test/results/

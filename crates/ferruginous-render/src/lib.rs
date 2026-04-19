@@ -189,18 +189,50 @@ impl RenderBackend for VelloBackend {
     
     fn draw_image(&mut self, data: &[u8], width: u32, height: u32, format: PixelFormat) {
         use vello::peniko::{Blob, ImageFormat, ImageData, ImageAlphaType};
-        
-        let v_format = match format {
-            PixelFormat::Gray8 => ImageFormat::Rgba8, 
-            PixelFormat::Rgb8 => ImageFormat::Rgba8, 
-            PixelFormat::Cmyk8 => ImageFormat::Rgba8, 
+
+        // Convert input data to RGBA8 for Vello compatibility and to prevent buffer overruns
+        let rgba_data = match format {
+            PixelFormat::Gray8 => {
+                let mut rgba = Vec::with_capacity(width as usize * height as usize * 4);
+                let expected_len = width as usize * height as usize;
+                for i in 0..expected_len {
+                    let g = data.get(i).copied().unwrap_or(0);
+                    rgba.extend_from_slice(&[g, g, g, 255]);
+                }
+                rgba
+            }
+            PixelFormat::Rgb8 => {
+                let mut rgba = Vec::with_capacity(width as usize * height as usize * 4);
+                let expected_len = width as usize * height as usize;
+                for i in 0..expected_len {
+                    let r = data.get(i * 3).copied().unwrap_or(0);
+                    let g = data.get(i * 3 + 1).copied().unwrap_or(0);
+                    let b = data.get(i * 3 + 2).copied().unwrap_or(0);
+                    rgba.extend_from_slice(&[r, g, b, 255]);
+                }
+                rgba
+            }
+            PixelFormat::Cmyk8 => {
+                let mut rgba = Vec::with_capacity(width as usize * height as usize * 4);
+                let expected_len = width as usize * height as usize;
+                for i in 0..expected_len {
+                    let c = data.get(i * 4).copied().map(|v| v as f32 / 255.0).unwrap_or(0.0);
+                    let m = data.get(i * 4 + 1).copied().map(|v| v as f32 / 255.0).unwrap_or(0.0);
+                    let y = data.get(i * 4 + 2).copied().map(|v| v as f32 / 255.0).unwrap_or(0.0);
+                    let k = data.get(i * 4 + 3).copied().map(|v| v as f32 / 255.0).unwrap_or(0.0);
+                    let r = (1.0 - c) * (1.0 - k);
+                    let g = (1.0 - m) * (1.0 - k);
+                    let b = (1.0 - y) * (1.0 - k);
+                    rgba.extend_from_slice(&[(r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8, 255]);
+                }
+                rgba
+            }
         };
 
-        let data_vec = data.to_vec();
-        let blob_data: std::sync::Arc<dyn AsRef<[u8]> + Send + Sync> = std::sync::Arc::new(data_vec);
+        let blob_data: std::sync::Arc<dyn AsRef<[u8]> + Send + Sync> = std::sync::Arc::new(rgba_data);
         let image = ImageData {
             data: Blob::new(blob_data),
-            format: v_format,
+            format: ImageFormat::Rgba8,
             alpha_type: ImageAlphaType::Alpha,
             width,
             height,

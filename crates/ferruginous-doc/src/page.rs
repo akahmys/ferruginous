@@ -115,7 +115,7 @@ impl<'a> Page<'a> {
     }
 
     pub fn resources(&self) -> Option<Object> {
-        self.attribute(&"Resources".into())
+        self.attribute(&"Resources".into()).and_then(|o| self.resolver.resolve_if_ref(&o).ok())
     }
 
     pub fn media_box(&self) -> Option<Object> {

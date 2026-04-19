@@ -30,3 +30,10 @@ These rules capture the architectural hardening requirements identified during t
 - **Criteria**:
     - **`gen`**: Do NOT use `gen` as a variable or parameter name (it is reserved for generators). Use `generation` or `r#gen` instead.
     - **Future-Proofing**: Proactively audit identifiers against upcoming reserved keywords to prevent breaking changes during library evolution.
+
+## 6. Security & Encryption Compliance
+- **Rule**: All security handlers MUST strictly adhere to the decryption exclusions defined in ISO 32000-2 Section 7.6.2.
+- **Mandate**:
+    - **No Decryption for Containers**: Object Streams (`/ObjStm`) and Cross-Reference Streams (`/XRef`) must NEVER be decrypted, even in an encrypted document.
+    - **AESV3 Partial Blocks**: Revision 6+ decryption must handle non-16-byte blocks using the ECB-mask XOR method rather than padding.
+    - **Revision 6 Key Salt**: The FEK derivation for Revision 6 must use the Key Salt at `U[40..48]`, NOT the validation salt.

@@ -20,6 +20,13 @@ The "Rebirth" project aims to achieve the world's most robust and ISO-compliant 
 - **M8-ARCH: Documentation Synchronization** [x]
 - **M9-CORE: RR-15 Hardening & Refactoring** [x]
 
+### [x] Phase 6: Functional Verification & Crash Stabilization
+- [x] Comprehensive test suite execution (日・英 10 files)
+- [x] Implementation of full Object-based Interpreter (Fixed TJ parsing)
+- [x] Support for Resource Inheritance & Reference Resolution
+- [x] GPU Rendering stabilization (Indexed color detection & Buffer guards)
+- [x] 100% SUCCESS rate for core rendering/text extraction
+
 ## Phase 4: Graphics & Rendering (`ferruginous-render`) [Complete]
 
 - **M10-RENDER: Vello Integration** [x]
@@ -133,7 +140,20 @@ The "Rebirth" project aims to achieve the world's most robust and ISO-compliant 
 - [x] **Phase 15 Closure (Ritual)**
   - [x] Codebase Validation & Refactoring (100% Clippy & Test success)
   - [x] Rule Refinement & Retrospective ([docs/retrospectives/cjk_mojibake_resolution.md])
+  
+## [COMPLETED] Phase 16: Stream Filter & Security Hardening
+- [x] **M48: Filter Hardening**: Implemented Raw Deflate (RFC 1951) fallback and improved skip logic for non-standard EOL markers.
+- [x] **M49: Advanced Predictors**: Integrated TIFF Predictor 2 (Horizontal Differencing) and variable bit-depth support.
+- [x] **M50: Security Integration**:
+  - [x] Implemented legacy key derivation (Algorithm 3.2, Revision 2/3/4).
+  - [x] Hardened AESV3 (Revision 6) decryption via specialized partial block masking.
+  - [x] Enforced ISO 32000-2 compliance: Bypassed decryption for `ObjStm` and `XRef` streams.
+- [x] **Verified stabilization** of complex administrative and legal Japanese PDF samples (cao_guide.pdf, mext_report.pdf).
+
+- [x] **Phase 16 Closure (Ritual)**
+  - [x] Codebase Validation & Refactoring (Resolved AESV3 salt offset and trailer resolution bugs)
+  - [x] Rule Refinement & Reflection ([.agent/hardening_rules.md], [.agent/reflections.md])
   - [x] Update Documentation (ROADMAP, README)
 
 ---
-*Roadmap updated: 2026-04-19 (Phase 15 Closure Completed)*
+*Roadmap updated: 2026-04-19 (Phase 16 Closure Completed)*

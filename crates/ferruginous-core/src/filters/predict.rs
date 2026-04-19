@@ -15,9 +15,36 @@ pub fn decode_predictor(
 ) -> PdfResult<Vec<u8>> {
     match predictor {
         1 => Ok(data.to_vec()), // No predictor
+        2 => decode_tiff_predictor(colors, bits_per_component, columns, data),
         10..=15 => decode_png_predictor(predictor, colors, bits_per_component, columns, data),
         _ => Err(PdfError::Other(format!("Unsupported Predictor: {}", predictor))),
     }
+}
+
+fn decode_tiff_predictor(
+    colors: usize,
+    bits_per_component: usize,
+    columns: usize,
+    data: &[u8],
+) -> PdfResult<Vec<u8>> {
+    let row_size = (columns * colors * bits_per_component).div_ceil(8);
+    let bpp = (colors * bits_per_component).div_ceil(8);
+    
+    if !data.len().is_multiple_of(row_size) {
+        return Err(PdfError::Other("Invalid data length for TIFF predictor".into()));
+    }
+    
+    let mut decoded = data.to_vec();
+    let num_rows = data.len() / row_size;
+    
+    for row_idx in 0..num_rows {
+        let row_start = row_idx * row_size;
+        for i in bpp..row_size {
+            decoded[row_start + i] = decoded[row_start + i].wrapping_add(decoded[row_start + i - bpp]);
+        }
+    }
+    
+    Ok(decoded)
 }
 
 fn decode_png_predictor(

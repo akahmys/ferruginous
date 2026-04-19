@@ -57,26 +57,24 @@ impl<'a> Interpreter<'a> {
     pub fn execute(&mut self, data: &[u8]) -> PdfResult<()> {
         if data.is_empty() { return Ok(()); }
         
-        let preview = String::from_utf8_lossy(&data[..data.len().min(200)]);
-        eprintln!("DEBUG: Interpreter::execute stream (len={}):\n{}", data.len(), preview);
-
         let mut parser = Parser::new(bytes::Bytes::copy_from_slice(data))
             .with_resolver(self.resolver);
 
-        while let Some(token) = parser.next()? {
+        while let Ok(Some(token)) = parser.peek() {
             match token {
-                Token::Keyword(s) if s.as_ref() == b"true" => self.stack.push(Object::Boolean(true)),
-                Token::Keyword(s) if s.as_ref() == b"false" => self.stack.push(Object::Boolean(false)),
-                Token::Keyword(op) => {
-                    let s = std::str::from_utf8(op.as_ref()).unwrap_or("");
-                    self.execute_operator(s)?;
+                Token::Keyword(s) if s.as_ref() == b"true" || s.as_ref() == b"false" || s.as_ref() == b"null" => {
+                    self.stack.push(parser.parse_object()?);
                 }
-                Token::Integer(i) => self.stack.push(Object::Integer(i)),
-                Token::Real(f) => self.stack.push(Object::Real(f)),
-                Token::Name(n) => self.stack.push(Object::Name(PdfName(n))),
-                Token::LiteralString(s) => self.stack.push(Object::String(s)),
-                Token::HexString(s) => self.stack.push(Object::String(s)),
-                _ => {}
+                Token::Keyword(op) => {
+                    // It's an operator
+                    let op_str = std::str::from_utf8(op.as_ref()).unwrap_or("").to_string();
+                    parser.next()?; // Consume the operator name
+                    self.execute_operator(&op_str)?;
+                }
+                _ => {
+                    // It's an operand (Number, Name, String, Array, Dict)
+                    self.stack.push(parser.parse_object()?);
+                }
             }
         }
         Ok(())
@@ -113,6 +111,8 @@ impl<'a> Interpreter<'a> {
 
             _ => { /* Ignore unknown operators for now */ }
         }
+        // In stable production, we clear the stack after each operator to prevent
+        // operand leakage between operators, which is a major source of Desync.
         self.stack.clear();
         Ok(())
     }
@@ -489,10 +489,13 @@ impl<'a> Interpreter<'a> {
     fn resolve_font_resource(&self, name: &PdfName) -> PdfResult<Arc<FontResource>> {
         let mut font_entry = None;
         for res in self.resource_stack.iter().rev() {
-            if let Some(Object::Dictionary(f_dict)) = res.get(&"Font".into()) {
-                if let Some(f_ref) = f_dict.get(name) {
-                    font_entry = Some(f_ref.clone());
-                    break;
+            if let Some(category_obj) = res.get(&"Font".into()) {
+                let category_dict_obj = self.resolver.resolve_if_ref(category_obj)?;
+                if let Some(f_dict) = category_dict_obj.as_dict() {
+                    if let Some(f_ref) = f_dict.get(name) {
+                        font_entry = Some(f_ref.clone());
+                        break;
+                    }
                 }
             }
         }
@@ -548,24 +551,10 @@ impl<'a> Interpreter<'a> {
 
     fn handle_xobject_operator(&mut self) -> PdfResult<()> {
         let name = self.pop_name()?;
-        let resolver = self.resolver;
         
-        // 1. Resolve /XObject dict from resource stack
-        let mut xobjects_dict = None;
-        for res in self.resource_stack.iter().rev() {
-            if let Some(Object::Dictionary(d)) = res.get(&"XObject".into()) {
-                if let Some(xobj_ref) = d.get(&name) {
-                    xobjects_dict = Some(xobj_ref.clone());
-                    break;
-                }
-            }
-        }
-        
-        let xobj_ref = xobjects_dict.ok_or_else(|| PdfError::Other(format!("XObject {:?} not found", name.0)))?;
-        let xobj = match xobj_ref {
-            Object::Reference(r) => resolver.resolve(&r)?,
-            _ => xobj_ref,
-        };
+        // 1. Resolve /XObject entry from resource stack
+        let entry = self.find_resource(&"XObject".into(), &name)?;
+        let xobj = self.resolver.resolve_if_ref(&entry)?;
 
         // 2. Identify subtype
         let (dict, data) = xobj.as_stream().ok_or_else(|| PdfError::Other("XObject must be a stream".into()))?;
@@ -584,13 +573,31 @@ impl<'a> Interpreter<'a> {
     fn render_image_xobject(&mut self, dict: &std::collections::BTreeMap<ferruginous_core::PdfName, Object>, data: &[u8]) -> PdfResult<()> {
         let width = dict.get(&PdfName::from("Width")).and_then(|o| o.as_i64()).unwrap_or(0) as u32;
         let height = dict.get(&PdfName::from("Height")).and_then(|o| o.as_i64()).unwrap_or(0) as u32;
+
+        if width == 0 || height == 0 { return Ok(()); }
         
         // Resolve ColorSpace
-        let format = match dict.get(&PdfName::from("ColorSpace")) {
-            Some(Object::Name(n)) => match n.as_str() {
+        let default_cs = Object::Name("DeviceRGB".into());
+        let cs_obj_raw = dict.get(&PdfName::from("ColorSpace"))
+            .or_else(|| dict.get(&PdfName::from("CS")))
+            .unwrap_or(&default_cs);
+        
+        let cs_obj = self.resolver.resolve_if_ref(cs_obj_raw)?;
+            
+        let format = match &cs_obj {
+            Object::Name(n) => match n.as_str() {
                 "DeviceGray" | "G" => ferruginous_core::graphics::PixelFormat::Gray8,
                 "DeviceCMYK" | "CMYK" => ferruginous_core::graphics::PixelFormat::Cmyk8,
-                _ => ferruginous_core::graphics::PixelFormat::Rgb8, // Default to RGB for now
+                _ => ferruginous_core::graphics::PixelFormat::Rgb8,
+            },
+            Object::Array(a) if !a.is_empty() => {
+                let cs_name = a[0].as_name().map(|n| n.as_str()).unwrap_or("");
+                if cs_name == "Indexed" || cs_name == "I" {
+                    // Indexed images typically use 1 byte per pixel (index)
+                    ferruginous_core::graphics::PixelFormat::Gray8
+                } else {
+                    ferruginous_core::graphics::PixelFormat::Rgb8
+                }
             }
             _ => ferruginous_core::graphics::PixelFormat::Rgb8,
         };
@@ -683,8 +690,11 @@ impl<'a> Interpreter<'a> {
 
     fn find_resource(&self, res_type: &PdfName, name: &PdfName) -> PdfResult<Object> {
         for res in self.resource_stack.iter().rev() {
-            if let Some(Object::Dictionary(d)) = res.get(res_type) {
-                if let Some(entry) = d.get(name) { return Ok(entry.clone()); }
+            if let Some(category_obj) = res.get(res_type) {
+                let category_dict_obj = self.resolver.resolve_if_ref(category_obj)?;
+                if let Some(d) = category_dict_obj.as_dict() {
+                    if let Some(entry) = d.get(name) { return Ok(entry.clone()); }
+                }
             }
         }
         Err(PdfError::Other(format!("Resource {:?}/{:?} not found", res_type.0, name.0)))

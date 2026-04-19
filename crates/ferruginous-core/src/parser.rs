@@ -29,11 +29,11 @@ impl<'a> Parser<'a> {
         self
     }
 
-    fn peek(&mut self) -> PdfResult<Option<&Token>> {
+    pub fn peek(&mut self) -> PdfResult<Option<&Token>> {
         self.peek_n(0)
     }
 
-    fn peek_n(&mut self, n: usize) -> PdfResult<Option<&Token>> {
+    pub fn peek_n(&mut self, n: usize) -> PdfResult<Option<&Token>> {
         while self.peeked.len() <= n {
             if let Some(t) = self.lexer.next_token()? {
                 self.peeked.push(t);
@@ -170,16 +170,9 @@ impl<'a> Parser<'a> {
         let mut pos = 0;
         let input = self.lexer.input_remaining();
         
-        // Skip leading whitespace after 'stream'
-        if input.starts_with(b"\r\n") {
-            pos = 2;
-        } else if input.starts_with(b"\n") {
-            pos = 1;
-        } else {
-            // ISO 32000 says exactly \r\n or \n, but some be lenient
-            while pos < input.len() && (input[pos] == b'\r' || input[pos] == b'\n') {
-                pos += 1;
-            }
+        // ISO 32000 says exactly \r\n or \n, but we allow flexible whitespace for robustness
+        while pos < input.len() && (input[pos] == b'\r' || input[pos] == b'\n' || input[pos] == b' ' || input[pos] == b'\t') {
+            pos += 1;
         }
         self.lexer.advance(pos);
 

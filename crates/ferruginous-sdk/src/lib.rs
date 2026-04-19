@@ -313,7 +313,9 @@ impl PdfDocument {
         backend.transform(flip);
  
         // 3. Resolve Resources and setup Interpreter
-        let res_dict = page.doc_page.resources().and_then(|o| o.as_dict_arc()).unwrap_or_else(|| Arc::new(std::collections::BTreeMap::new()));
+        let res_obj = page.doc_page.resources().unwrap_or(Object::Dictionary(Arc::new(std::collections::BTreeMap::new())));
+        let res_dict_obj = self.inner.resolve_if_ref(&res_obj)?;
+        let res_dict = res_dict_obj.as_dict_arc().unwrap_or_else(|| Arc::new(std::collections::BTreeMap::new()));
         let mut interpreter = Interpreter::new(&mut backend, &self.inner, res_dict);
         
         // 4. Resolve and execute Contents
