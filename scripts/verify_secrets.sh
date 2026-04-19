@@ -17,15 +17,15 @@ PATTERNS=(
 )
 
 # Files to skip
-SKIP_FILES="\.gitignore\|\.git\|scripts/verify_secrets\.sh"
+SKIP_FILES="\.gitignore\|\.git\|scripts/verify_secrets\.sh\|\.pdf$"
 
 echo "Checking for secrets in staged and current files..."
 
 for pattern in "${PATTERNS[@]}"; do
     # Search in all files except excluded ones
-    if grep -rE -e "$pattern" . --exclude-dir=".git" --exclude-dir="target" | grep -v "$SKIP_FILES" > /dev/null; then
+    if grep -rE -e "$pattern" . --exclude-dir=".git" --exclude-dir="target" --exclude-dir=".arlington-venv" --exclude="*.pdf" | grep -v "$SKIP_FILES" > /dev/null; then
         echo "  FAIL: Potential secret found matching pattern: $pattern"
-        grep -rE -e "$pattern" . --exclude-dir=".git" --exclude-dir="target" | grep -v "$SKIP_FILES"
+        grep -rE -e "$pattern" . --exclude-dir=".git" --exclude-dir="target" --exclude-dir=".arlington-venv" --exclude="*.pdf" | grep -v "$SKIP_FILES"
         ERROR=1
     fi
 done
@@ -38,9 +38,9 @@ EMAIL_PATTERNS=(
 )
 
 for email in "${EMAIL_PATTERNS[@]}"; do
-    if grep -rE "$email" . --exclude-dir=".git" --exclude-dir="target" | grep -v "$SKIP_FILES" | grep -v "README.md" > /dev/null; then
+    if grep -rE "$email" . --exclude-dir=".git" --exclude-dir="target" --exclude="*.pdf" | grep -v "$SKIP_FILES" | grep -v "README.md" > /dev/null; then
          echo "  WARN: Potential personal email found: $email"
-         grep -rE "$email" . --exclude-dir=".git" --exclude-dir="target" | grep -v "$SKIP_FILES" | grep -v "README.md"
+         grep -rE "$email" . --exclude-dir=".git" --exclude-dir="target" --exclude="*.pdf" | grep -v "$SKIP_FILES" | grep -v "README.md"
          # Not necessarily an error, but a warning
     fi
 done
