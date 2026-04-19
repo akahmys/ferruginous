@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::collections::BTreeMap;
 use ferruginous_core::{Object, Parser, PdfResult, PdfError, PdfName, lexer::Token};
 use ferruginous_render::{RenderBackend, path::PathBuilder};
-use ferruginous_core::graphics::{WindingRule, GraphicsState, TextMatrices, TextRenderingMode, Matrix, BlendMode};
+use ferruginous_core::graphics::{WindingRule, GraphicsState, TextMatrices, TextRenderingMode, Matrix, BlendMode, Color};
 use ferruginous_doc::font::{FontResource, cmap::MappingResult};
 
 /// A content stream interpreter that translates PDF operators into [RenderBackend] calls.
@@ -55,6 +55,11 @@ impl<'a> Interpreter<'a> {
 
     /// Executes a content stream by parsing and processing its operators.
     pub fn execute(&mut self, data: &[u8]) -> PdfResult<()> {
+        if data.is_empty() { return Ok(()); }
+        
+        let preview = String::from_utf8_lossy(&data[..data.len().min(200)]);
+        eprintln!("DEBUG: Interpreter::execute stream (len={}):\n{}", data.len(), preview);
+
         let mut parser = Parser::new(bytes::Bytes::copy_from_slice(data))
             .with_resolver(self.resolver);
 
@@ -82,11 +87,14 @@ impl<'a> Interpreter<'a> {
             // Path Construction (m, l, c, re, h)
             "m" | "l" | "c" | "re" | "h" => self.handle_path_operator(op)?,
             
-            // Path Painting (S, f, F, f*)
-            "S" | "f" | "F" | "f*" => self.handle_painting_operator(op)?,
+            // Path Painting & Clipping (S, f, F, f*, W, W*, n)
+            "S" | "f" | "F" | "f*" | "W" | "W*" | "n" => self.handle_painting_operator(op)?,
 
             // Graphics State (q, Q, cm, gs)
             "q" | "Q" | "cm" | "gs" => self.handle_state_operator(op)?,
+
+            // Color (g, G, rg, RG, k, K)
+            "g" | "G" | "rg" | "RG" | "k" | "K" => self.handle_color_operator(op)?,
 
             // Text State (Tc, Tw, Tz, TL, Tf, Tr, Ts)
             "Tc" | "Tw" | "Tz" | "TL" | "Tf" | "Tr" | "Ts" => self.handle_text_state_operator(op)?,
@@ -137,11 +145,26 @@ impl<'a> Interpreter<'a> {
     }
 
     fn handle_painting_operator(&mut self, op: &str) -> PdfResult<()> {
-        let p = std::mem::replace(&mut self.path, PathBuilder::new()).finish();
         match op {
-            "S" => self.backend.stroke_path(&p, &self.state.stroke_color, &self.state.stroke_style),
-            "f" | "F" => self.backend.fill_path(&p, &self.state.fill_color, WindingRule::NonZero),
-            "f*" => self.backend.fill_path(&p, &self.state.fill_color, WindingRule::EvenOdd),
+            "S" => {
+                let p = std::mem::replace(&mut self.path, PathBuilder::new()).finish();
+                self.backend.stroke_path(&p, &self.state.stroke_color, &self.state.stroke_style);
+            }
+            "f" | "F" => {
+                let p = std::mem::replace(&mut self.path, PathBuilder::new()).finish();
+                self.backend.fill_path(&p, &self.state.fill_color, WindingRule::NonZero);
+            }
+            "f*" => {
+                let p = std::mem::replace(&mut self.path, PathBuilder::new()).finish();
+                self.backend.fill_path(&p, &self.state.fill_color, WindingRule::EvenOdd);
+            }
+            "W" | "W*" => {
+                // Temporarily disabled for debugging visibility
+            }
+            "n" => {
+                // Clear path without painting
+                self.path = PathBuilder::new();
+            }
             _ => return Err(PdfError::Other(format!("Invalid painting op: {op}"))),
         }
         Ok(())
@@ -155,11 +178,12 @@ impl<'a> Interpreter<'a> {
                 self.backend.push_state();
             }
             "Q" => {
-                self.state = self.state_stack.pop().ok_or_else(|| PdfError::Other("Graphics stack underflow".into()))?;
-                self.backend.pop_state();
+                if let Some(old) = self.state_stack.pop() {
+                    self.state = old;
+                    self.backend.pop_state();
+                }
             }
             "cm" => {
-                #[allow(clippy::many_single_char_names)]
                 let f = self.pop_f64()?; let e = self.pop_f64()?;
                 let d = self.pop_f64()?; let c = self.pop_f64()?;
                 let b = self.pop_f64()?; let a = self.pop_f64()?;
@@ -176,11 +200,83 @@ impl<'a> Interpreter<'a> {
         Ok(())
     }
 
+    fn handle_color_operator(&mut self, op: &str) -> PdfResult<()> {
+        match op {
+            "g" => {
+                let gray = self.pop_f64()?;
+                let color = Color::Gray(gray);
+                self.state.fill_color = color;
+                self.backend.set_fill_color(color);
+            }
+            "G" => {
+                let gray = self.pop_f64()?;
+                let color = Color::Gray(gray);
+                self.state.stroke_color = color;
+                self.backend.set_stroke_color(color);
+            }
+            "rg" => {
+                let b = self.pop_f64()?;
+                let g = self.pop_f64()?;
+                let r = self.pop_f64()?;
+                let color = Color::Rgb(r, g, b);
+                self.state.fill_color = color;
+                self.backend.set_fill_color(color);
+            }
+            "RG" => {
+                let b = self.pop_f64()?;
+                let g = self.pop_f64()?;
+                let r = self.pop_f64()?;
+                let color = Color::Rgb(r, g, b);
+                self.state.stroke_color = color;
+                self.backend.set_stroke_color(color);
+            }
+            "k" => {
+                let k = self.pop_f64()?;
+                let y = self.pop_f64()?;
+                let m = self.pop_f64()?;
+                let c = self.pop_f64()?;
+                let color = Color::Cmyk(c, m, y, k);
+                self.state.fill_color = color;
+                self.backend.set_fill_color(color);
+            }
+            "K" => {
+                let k = self.pop_f64()?;
+                let y = self.pop_f64()?;
+                let m = self.pop_f64()?;
+                let c = self.pop_f64()?;
+                let color = Color::Cmyk(c, m, y, k);
+                self.state.stroke_color = color;
+                self.backend.set_stroke_color(color);
+            }
+            _ => return Err(PdfError::Other(format!("Invalid color op: {op}"))),
+        }
+        Ok(())
+    }
+
     fn handle_text_state_operator(&mut self, op: &str) -> PdfResult<()> {
         match op {
             "Tf" => {
                 self.state.text_state.font_size = self.pop_f64()?;
-                self.state.text_state.font = Some(self.pop_name()?);
+                let name = self.pop_name()?;
+                self.state.text_state.font = Some(name.clone());
+                
+                // Pre-define font in backend if possible
+                if let Ok(font_res) = self.find_resource(&PdfName::from("Font"), &name) {
+                    if let Some(dict) = font_res.as_dict() {
+                        if let Ok(font) = FontResource::load(dict, self.resolver) {
+                             let font_data = match &font {
+                                FontResource::Simple(f) => f.descriptor.as_ref().and_then(|d| d.font_file.as_ref()),
+                                FontResource::Composite(f) => f.descendant_fonts.first().and_then(|d| {
+                                    if let FontResource::CID(cid) = d.as_ref() { cid.descriptor.font_file.as_ref() } else { None }
+                                }),
+                                FontResource::CID(f) => f.descriptor.font_file.as_ref(),
+                            };
+                            if let Some(data) = font_data {
+                                self.backend.define_font(name.as_str(), data.clone());
+                            }
+                        }
+                    }
+                }
             }
             "Tc" => self.state.text_state.char_spacing = self.pop_f64()?,
             "Tw" => self.state.text_state.word_spacing = self.pop_f64()?,
@@ -284,123 +380,109 @@ impl<'a> Interpreter<'a> {
 
     fn show_text(&mut self, text: &[u8]) -> PdfResult<()> {
         let font_name = self.state.text_state.font.clone().ok_or_else(|| PdfError::Other("No font set".into()))?;
-        
-        // Resolve font resource
         let font_resource = self.resolve_font_resource(&font_name)?;
-
-        let options = ferruginous_render::text::TextLayoutOptions {
-            font_size: self.state.text_state.font_size as f32,
-            char_spacing: self.state.text_state.char_spacing as f32,
-            word_spacing: self.state.text_state.word_spacing as f32,
-            horizontal_scaling: self.state.text_state.horizontal_scaling as f32,
-        };
-
-        let mut current_pos = 0;
-        let mut glyphs = Vec::new();
         
-        // Extract font data for rendering
-        let font_data = match font_resource.as_ref() {
-            FontResource::Simple(f) => f.descriptor.as_ref().and_then(|d| d.font_file.as_ref()),
-            FontResource::Composite(f) => {
-                f.descendant_fonts.first().and_then(|d| {
-                    if let FontResource::CID(cid) = d.as_ref() {
-                        cid.descriptor.font_file.as_ref()
-                    } else { None }
-                })
-            }
-            FontResource::CID(f) => f.descriptor.font_file.as_ref(),
-        };
+        // DEBUG: HEX DUMP
+        let hex: String = text.iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(" ");
+        eprintln!("DEBUG: TJ_RAW: font={:?}, bytes=[{}]", font_name.as_str(), hex);
 
-        let font_data = font_data.ok_or_else(|| PdfError::Other("Missing font stream data".into()))?;
+        let (glyphs, unicode_buf) = self.map_text_to_glyphs(text, &font_resource)?;
+        
+        let text_matrices = self.text_matrices.as_mut().ok_or_else(|| PdfError::Other("Text operation outside of BT/ET".into()))?;
+        let font_size = self.state.text_state.font_size;
+        let render_matrix = text_matrices.tm.concat(&Matrix::new(1.0, 0.0, 0.0, 1.0, 0.0, self.state.text_state.rise));
+        
+        // Use the base font name for fallback
+        let base_font = font_resource.base_font();
+        
+        // Force fallback for stable Japanese rendering in this phase
+        let _ = self.render_glyphs_if_available(&font_resource, &glyphs, &render_matrix);
 
-        // Segmentation and mapping
+        eprintln!("DEBUG: show_text: font={:?}, glyphs={}, unicode={:?}", base_font, glyphs.len(), unicode_buf);
+        self.backend.show_text(&unicode_buf, base_font.as_str(), font_size as f32, render_matrix.0);
+
+        self.update_text_state_after_show(&font_resource, &glyphs, &render_matrix, font_size)
+    }
+
+    fn map_text_to_glyphs(&self, text: &[u8], font: &FontResource) -> PdfResult<(Vec<(u32, f32)>, String)> {
+        let mut glyphs = Vec::new();
+        let mut unicode_buf = String::new();
+        let mut current_pos = 0;
+        
         while current_pos < text.len() {
-            let (code, len) = match font_resource.as_ref() {
-                FontResource::Composite(f) => {
-                    f.encoding.next_code(&text[current_pos..]).unwrap_or((vec![text[current_pos]], 1))
-                }
+            let (code, len) = match font {
+                FontResource::Composite(f) => f.encoding.next_code(&text[current_pos..]).unwrap_or((vec![text[current_pos]], 1)),
                 _ => (vec![text[current_pos]], 1),
             };
             
-            let width = font_resource.glyph_width(&code);
-            
-            let gid = match font_resource.as_ref() {
-                FontResource::Composite(f) => {
-                    match f.encoding.lookup(&code) {
-                        Some(MappingResult::Cid(cid)) => cid,
-                        _ => code[0] as u32,
-                    }
-                }
-                FontResource::Simple(_) => {
-                    // map byte to unicode via encoding, then could map to GID
-                    // For now, let's use the byte as GID (works for many fonts)
-                    // or map to unicode if we want to support fallback fonts better
-                    code[0] as u32
-                }
-                FontResource::CID(_) => code[0] as u32,
+            let width = font.glyph_width(&code);
+            let gid = match font {
+                FontResource::Composite(f) => match f.encoding.lookup(&code) {
+                    Some(MappingResult::Cid(cid)) => cid,
+                    _ => code[0] as u32,
+                },
+                _ => code[0] as u32,
             };
 
             glyphs.push((gid, width as f32));
+            unicode_buf.push_str(&font.to_unicode(&code));
             current_pos += len;
         }
+        Ok((glyphs, unicode_buf))
+    }
 
-        let bridge = ferruginous_render::text::SkrifaBridge::new();
-        let path = bridge.render_glyphs(font_data, &glyphs, &options);
+    fn render_glyphs_if_available(&mut self, font: &FontResource, glyphs: &[(u32, f32)], matrix: &Matrix) -> PdfResult<bool> {
+        let font_data = match font {
+            FontResource::Simple(f) => f.descriptor.as_ref().and_then(|d| d.font_file.as_ref()),
+            FontResource::Composite(f) => f.descendant_fonts.first().and_then(|d| {
+                if let FontResource::CID(cid) = d.as_ref() { cid.descriptor.font_file.as_ref() } else { None }
+            }),
+            FontResource::CID(f) => f.descriptor.font_file.as_ref(),
+        };
 
-        let text_matrices = self.text_matrices.as_mut().ok_or_else(|| PdfError::Other("Tj outside of BT/ET".into()))?;
-        let font_metrics = font_resource.get_metrics();
-        let font_size = self.state.text_state.font_size;
+        if let Some(data) = font_data {
+            let options = ferruginous_render::text::TextLayoutOptions {
+                font_size: self.state.text_state.font_size as f32,
+                char_spacing: self.state.text_state.char_spacing as f32,
+                word_spacing: self.state.text_state.word_spacing as f32,
+                horizontal_scaling: self.state.text_state.horizontal_scaling as f32,
+            };
+            let bridge = ferruginous_render::text::SkrifaBridge::new();
+            let mut path = bridge.render_glyphs(data, glyphs, &options);
+            if path.is_empty() {
+                return Ok(false);
+            }
+            path.apply_affine(matrix.0);
+            
+            self.backend.fill_path(&path, &self.state.fill_color, WindingRule::NonZero);
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    fn update_text_state_after_show(&mut self, font: &FontResource, glyphs: &[(u32, f32)], render_matrix: &Matrix, font_size: f64) -> PdfResult<()> {
+        let font_metrics = font.get_metrics();
         let scale = font_size / 1000.0;
         let h_scale = self.state.text_state.horizontal_scaling / 100.0;
-        
-        // Final transformation including Rise (Ts)
-        let render_matrix = text_matrices.tm.concat(&Matrix::new(1.0, 0.0, 0.0, 1.0, 0.0, self.state.text_state.rise));
-        
-        // --- Added: Call backend.show_text for extraction ---
-        let mut unicode_buf = String::new();
-        let mut current_pos_u = 0;
-        while current_pos_u < text.len() {
-             let (code, len) = match font_resource.as_ref() {
-                FontResource::Composite(f) => {
-                    f.encoding.next_code(&text[current_pos_u..]).unwrap_or((vec![text[current_pos_u]], 1))
-                }
-                _ => (vec![text[current_pos_u]], 1),
-            };
-            unicode_buf.push_str(&font_resource.to_unicode(&code));
-            current_pos_u += len;
-        }
-        self.backend.show_text(&unicode_buf, font_resource.base_font().as_str(), font_size as f32, render_matrix.0);
-        // ----------------------------------------------------
-
-        let mut path = path;
-        path.apply_affine(render_matrix.0);
-        self.backend.fill_path(&path, &self.state.fill_color, WindingRule::NonZero);
-
-        // Update BBox
         let user_matrix = render_matrix.concat(&self.state.ctm);
-        for (_, w) in &glyphs {
-            // Glyph box in text space
+        
+        for (_, w) in glyphs {
             let g_box = ferruginous_core::graphics::Rect::new(0.0, font_metrics.descent * scale, (*w as f64) * scale, font_metrics.ascent * scale);
-            // Transform to user space using current Tm (including rise) and CTM
-            // This is a simplification: we just transform the corners
             let p1 = user_matrix.0 * kurbo::Point::new(g_box.x1, g_box.y1);
             let p2 = user_matrix.0 * kurbo::Point::new(g_box.x2, g_box.y2);
             let u_box = ferruginous_core::graphics::Rect::new(p1.x.min(p2.x), p1.y.min(p2.y), p1.x.max(p2.x), p1.y.max(p2.y));
-            
             self.current_text_bbox = Some(self.current_text_bbox.map_or(u_box, |b| b.union(&u_box)));
         }
 
-        // Update Text Matrix (TM)
         let mut total_advance = 0.0;
-        for (gid, w) in &glyphs {
+        for (gid, w) in glyphs {
             total_advance += (*w as f64).mul_add(scale, self.state.text_state.char_spacing) * h_scale;
-            // Word spacing (Tw) applies if space char (GID 32 in simple fonts or specific CIDs)
-            if *gid == 32 {
-                total_advance += self.state.text_state.word_spacing * h_scale;
-            }
+            if *gid == 32 { total_advance += self.state.text_state.word_spacing * h_scale; }
         }
+        
+        let text_matrices = self.text_matrices.as_mut().ok_or_else(|| PdfError::Other("Text operation state lost".into()))?;
         text_matrices.tm = text_matrices.tm.concat(&Matrix::new(1.0, 0.0, 0.0, 1.0, total_advance, 0.0));
-
         Ok(())
     }
 
@@ -579,55 +661,43 @@ impl<'a> Interpreter<'a> {
         }
     }
     fn handle_gs_operator(&mut self, name: &PdfName) -> PdfResult<()> {
-        let resolver = self.resolver;
+        let entry = self.find_resource(&PdfName::from("ExtGState"), name)?;
+        let gs_dict_obj = self.resolver.resolve_if_ref(&entry)?;
+        let gs_dict = gs_dict_obj.as_dict().ok_or_else(|| PdfError::Other("Invalid ExtGState".into()))?;
         
-        // 1. Resolve /ExtGState dict from resource stack
-        let mut gstate_entry = None;
-        for res in self.resource_stack.iter().rev() {
-            if let Some(Object::Dictionary(d)) = res.get(&PdfName::from("ExtGState")) {
-                if let Some(gs_ref) = d.get(name) {
-                    gstate_entry = Some(gs_ref.clone());
-                    break;
-                }
-            }
-        }
-        
-        let gs_ref = gstate_entry.ok_or_else(|| PdfError::Other(format!("ExtGState {:?} not found", name.0)))?;
-        let gs_obj = match gs_ref {
-            Object::Reference(r) => resolver.resolve(&r)?,
-            _ => gs_ref,
-        };
-        let gs_dict = gs_obj.as_dict().ok_or_else(|| PdfError::Other("Invalid ExtGState dictionary".into()))?;
-        
-        // 2. Parse /ca (non-stroking alpha)
         if let Some(ca) = gs_dict.get(&PdfName::from("ca")).and_then(|o| o.as_f64()) {
             self.state.fill_alpha = ca;
             self.backend.set_fill_alpha(ca);
         }
-        
-        // 3. Parse /CA (stroking alpha)
         if let Some(ca_upper) = gs_dict.get(&PdfName::from("CA")).and_then(|o| o.as_f64()) {
             self.state.stroke_alpha = ca_upper;
             self.backend.set_stroke_alpha(ca_upper);
         }
-        
-        // 4. Parse /BM (Blend Mode)
         if let Some(bm_obj) = gs_dict.get(&PdfName::from("BM")) {
-            let bm_name = match bm_obj {
-                Object::Name(n) => n.0.clone(),
-                Object::Array(a) if !a.is_empty() => {
-                    // PDF says BM can be an array of names, pick first available
-                    if let Object::Name(n) = &a[0] { n.0.clone() } else { "Normal".into() }
-                }
-                _ => "Normal".into(),
-            };
-            let bm_str = String::from_utf8_lossy(&bm_name);
-            let mode = <BlendMode as std::str::FromStr>::from_str(&bm_str).unwrap_or(BlendMode::Normal);
+            let mode = self.parse_blend_mode(bm_obj);
             self.state.blend_mode = mode;
             self.backend.set_blend_mode(mode);
         }
-        
         Ok(())
+    }
+
+    fn find_resource(&self, res_type: &PdfName, name: &PdfName) -> PdfResult<Object> {
+        for res in self.resource_stack.iter().rev() {
+            if let Some(Object::Dictionary(d)) = res.get(res_type) {
+                if let Some(entry) = d.get(name) { return Ok(entry.clone()); }
+            }
+        }
+        Err(PdfError::Other(format!("Resource {:?}/{:?} not found", res_type.0, name.0)))
+    }
+
+    fn parse_blend_mode(&self, obj: &Object) -> BlendMode {
+        use std::str::FromStr;
+        let name = match obj {
+            Object::Name(n) => n.0.clone(),
+            Object::Array(a) if !a.is_empty() => if let Object::Name(n) = &a[0] { n.0.clone() } else { "Normal".into() },
+            _ => "Normal".into(),
+        };
+        BlendMode::from_str(&String::from_utf8_lossy(&name)).unwrap_or(BlendMode::Normal)
     }
 }
 
@@ -651,6 +721,10 @@ mod tests {
         fn set_fill_alpha(&mut self, _alpha: f64) {}
         fn set_stroke_alpha(&mut self, _alpha: f64) {}
         fn set_blend_mode(&mut self, _mode: ferruginous_core::graphics::BlendMode) {}
+        fn set_fill_color(&mut self, _color: Color) {}
+        fn set_stroke_color(&mut self, _color: Color) {}
+        fn define_font(&mut self, _name: &str, _data: Vec<u8>) {}
+        fn show_text(&mut self, _text: &str, _font: &str, _size: f32, _transform: kurbo::Affine) {}
     }
 
     #[test]

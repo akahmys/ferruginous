@@ -9,7 +9,7 @@ members = [
     "crates/ferruginous-bridge-legacy",
     "crates/ferruginous-cli",
     "crates/ferruginous-wasm",
-    "crates/ferruginous-upgrader",
+    "crates/fepdf",
 ]
 
 [workspace.dependencies]

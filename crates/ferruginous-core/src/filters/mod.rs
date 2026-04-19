@@ -40,17 +40,15 @@ pub fn decode_stream_from_dict(
         }
     }
 
-    // Process Predictor if present in DecodeParms
-    if let Some(parms) = dict.get(&crate::PdfName::new(b"DecodeParms")) {
-        if let Some(parm_dict) = parms.as_dict() {
-            let predictor = parm_dict.get(&"Predictor".into()).and_then(|o| o.as_i64()).unwrap_or(1) as i32;
-            if predictor > 1 {
-                let colors = parm_dict.get(&"Colors".into()).and_then(|o| o.as_i64()).unwrap_or(1) as usize;
-                let bpc = parm_dict.get(&"BitsPerComponent".into()).and_then(|o| o.as_i64()).unwrap_or(8) as usize;
-                let columns = parm_dict.get(&"Columns".into()).and_then(|o| o.as_i64()).unwrap_or(1) as usize;
-                
-                data = decode_predictor(predictor, colors, bpc, columns, &data)?;
-            }
+    // Predictor handling
+    if let Some(parm_dict) = dict.get(&crate::PdfName::new(b"DecodeParms")).and_then(|p| p.as_dict()) {
+        let predictor = parm_dict.get(&"Predictor".into()).and_then(|o| o.as_i64()).unwrap_or(1) as i32;
+        if predictor > 1 {
+            let colors = parm_dict.get(&"Colors".into()).and_then(|o| o.as_i64()).unwrap_or(1) as usize;
+            let bits_per_component = parm_dict.get(&"BitsPerComponent".into()).and_then(|o| o.as_i64()).unwrap_or(8) as usize;
+            let columns = parm_dict.get(&"Columns".into()).and_then(|o| o.as_i64()).unwrap_or(1) as usize;
+            
+            return crate::filters::predict::decode_predictor(predictor, colors, bits_per_component, columns, &data).map(bytes::Bytes::from);
         }
     }
 

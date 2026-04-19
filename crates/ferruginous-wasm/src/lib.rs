@@ -34,7 +34,7 @@ impl PdfDocument {
     /// Renders a specific page to a Canvas 2D context.
     /// 
     /// Note: This is a placeholder for the WebGPU/WebGL rendering pipeline.
-    pub async fn render_page(&self, _index: usize, _canvas_id: &str) -> Result<(), JsValue> {
+    pub fn render_page(&self, _index: usize, _canvas_id: &str) -> Result<(), JsValue> {
         // Implementation will involve setting up a WebGPU surface via web-sys
         // and calling the vello renderer.
         Ok(())

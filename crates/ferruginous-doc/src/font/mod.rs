@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use std::collections::BTreeMap;
+use encoding_rs::SHIFT_JIS;
 use ferruginous_core::{Object, PdfName, PdfResult, PdfError, Resolver};
 use crate::font::cmap::{CMap, MappingResult};
 
@@ -159,29 +160,26 @@ impl FontResource {
         match self {
             Self::Simple(f) => {
                 // 1. Check ToUnicode CMap
-                if let Some(cmap) = &f.to_unicode {
-                    if let Some(MappingResult::Unicode(bytes)) = cmap.lookup(code) {
+                if let Some(cmap) = &f.to_unicode
+                    && let Some(MappingResult::Unicode(bytes)) = cmap.lookup(code) {
                         return decode_unicode_bytes(&bytes);
                     }
-                }
                 // 2. Fallback to Encoding
                 if code.len() == 1 {
-                    if let Some(encoding) = &f.encoding {
-                         if let Some(s) = encoding.to_unicode(code[0]) {
+                    if let Some(encoding) = &f.encoding
+                         && let Some(s) = encoding.to_unicode(code[0]) {
                              return s.to_string();
                          }
-                    }
                     return String::from_utf8_lossy(code).into_owned();
                 }
                 String::new()
             }
             Self::Composite(f) => {
                 // 1. Check ToUnicode CMap
-                if let Some(cmap) = &f.to_unicode {
-                    if let Some(MappingResult::Unicode(bytes)) = cmap.lookup(code) {
+                if let Some(cmap) = &f.to_unicode
+                    && let Some(MappingResult::Unicode(bytes)) = cmap.lookup(code) {
                         return decode_unicode_bytes(&bytes);
                     }
-                }
                 String::new()
             }
             Self::CID(_) => String::new(),
@@ -193,6 +191,7 @@ impl FontResource {
     pub fn load(dict: &BTreeMap<PdfName, Object>, resolver: &dyn Resolver) -> PdfResult<Self> {
         let subtype = dict.get(&"Subtype".into()).and_then(|o| o.as_name())
             .ok_or_else(|| PdfError::Other("Missing /Subtype in font dictionary".into()))?;
+        eprintln!("DEBUG: Loading Font: subtype={:?}, base_font={:?}", subtype.as_str(), dict.get(&"BaseFont".into()));
 
         if subtype.as_str() == "Type0" {
             Self::load_composite(dict, resolver)
@@ -265,7 +264,7 @@ impl FontResource {
             widths: final_widths,
             descriptor: final_descriptor,
             encoding: final_encoding,
-            to_unicode: None,
+            to_unicode: load_to_unicode(dict, resolver),
         })
     }
 
@@ -303,7 +302,7 @@ impl FontResource {
             base_font,
             encoding,
             descendant_fonts,
-            to_unicode: None,
+            to_unicode: load_to_unicode(dict, resolver),
         }))
     }
 
@@ -350,7 +349,28 @@ impl FontResource {
     }
 }
 
-fn load_descriptor(dict: &BTreeMap<PdfName, Object>, _resolver: &dyn Resolver) -> PdfResult<FontDescriptor> {
+fn load_to_unicode(dict: &BTreeMap<PdfName, Object>, resolver: &dyn Resolver) -> Option<Arc<CMap>> {
+    if let Some(obj) = dict.get(&"ToUnicode".into())
+        && let Ok(resolved) = resolver.resolve_if_ref(obj) {
+            // CRITICAL FIX: Decode the stream data (FlateDecode, etc.) before parsing CMap
+            if let Ok(data) = resolved.decode_stream()
+                && let Ok(cmap) = CMap::parse(&data) {
+                    return Some(Arc::new(cmap));
+                }
+        }
+    None
+}
+
+fn load_descriptor(dict: &BTreeMap<PdfName, Object>, resolver: &dyn Resolver) -> PdfResult<FontDescriptor> {
+    let mut font_file = None;
+    for key in &["FontFile", "FontFile2", "FontFile3"] {
+        if let Some(f_ref) = dict.get(&(*key).into())
+            && let Ok(Object::Stream(_, data)) = resolver.resolve_if_ref(f_ref) {
+                font_file = Some(data.to_vec());
+                break;
+            }
+    }
+
     Ok(FontDescriptor {
         font_name: dict.get(&"FontName".into()).and_then(|o| o.as_name()).cloned().unwrap_or(PdfName::from("ErrorFont")),
         flags: dict.get(&"Flags".into()).and_then(|o| o.as_i64()).unwrap_or(0) as i32,
@@ -361,20 +381,32 @@ fn load_descriptor(dict: &BTreeMap<PdfName, Object>, _resolver: &dyn Resolver) -
         cap_height: 0.0,
         stem_v: 0.0,
         missing_width: dict.get(&"MissingWidth".into()).and_then(|o| o.as_f64()).unwrap_or(0.0),
-        font_file: None,
+        font_file,
     })
 }
 
-fn decode_unicode_bytes(bytes: &[u8]) -> String {
+/// Decodes a byte stream into a Unicode string.
+/// Tries UTF-16BE first, then falls back to Shift-JIS (CP932) via encoding_rs for robust Japanese support.
+pub fn decode_unicode_bytes(bytes: &[u8]) -> String {
+    // 1. Try UTF-16BE (PDF standard for ToUnicode)
     if bytes.len() >= 2 {
-        // Try UTF-16BE (Standard for ToUnicode)
-        let utf16: Vec<u16> = bytes.chunks_exact(2)
-            .map(|c| ((c[0] as u16) << 8) | (c[1] as u16))
-            .collect();
+        let mut utf16 = Vec::with_capacity(bytes.len() / 2);
+        let mut i = 0;
+        while i + 1 < bytes.len() {
+            utf16.push(((bytes[i] as u16) << 8) | (bytes[i+1] as u16));
+            i += 2;
+        }
         if let Ok(s) = String::from_utf16(&utf16) {
             return s;
         }
     }
-    // Fallback to UTF-8 or ASCII
+
+    // 2. Fallback to Shift-JIS (CP932) using encoding_rs for robust Japanese support
+    let (res, _enc, errors) = SHIFT_JIS.decode(bytes);
+    if !errors {
+        return res.into_owned();
+    }
+
+    // 3. Last resort: UTF-8 lossy
     String::from_utf8_lossy(bytes).into_owned()
 }

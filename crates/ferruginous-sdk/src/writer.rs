@@ -10,6 +10,7 @@ pub struct PdfWriter<W: Write> {
 }
 
 /// A dummy writer used for size estimation passes.
+#[derive(Default)]
 pub struct NullWriter {
     /// Total count of bytes processed.
     pub count: usize,
@@ -54,6 +55,7 @@ pub struct LinearizationParams {
 }
 
 /// A simple bit-packer for Hint Stream generation.
+#[derive(Default)]
 pub struct BitWriter {
     data: Vec<u8>,
     current_byte: u8,
@@ -120,7 +122,7 @@ impl<W: Write> PdfWriter<W> {
 
     /// Writes the PDF header with the specified version and binary marker.
     pub fn write_header(&mut self, version: &str) -> Result<()> {
-        self.write_all(format!("%PDF-{}\r\n", version).as_bytes())?;
+        self.write_all(format!("%PDF-{version}\r\n").as_bytes())?;
         // High-bit characters to indicate binary file
         self.write_all(b"%\xE2\xE3\xCF\xD3\r\n")?;
         Ok(())
@@ -129,7 +131,7 @@ impl<W: Write> PdfWriter<W> {
     /// Writes the Linearization Dictionary (Object 1).
     pub fn write_linearization_dict(&mut self, id: u32, params: &LinearizationParams) -> Result<()> {
         self.xref.insert(id, self.current_offset);
-        self.write_all(format!("{} 0 obj\r\n<<\r\n/Linearized 1.0\r\n", id).as_bytes())?;
+        self.write_all(format!("{id} 0 obj\r\n<<\r\n/Linearized 1.0\r\n").as_bytes())?;
         self.write_all(format!("/L {}\r\n", params.file_len).as_bytes())?;
         self.write_all(format!("/H [{} {}]\r\n", params.hint_stream_offset, params.hint_stream_len).as_bytes())?;
         self.write_all(format!("/O {}\r\n", params.first_page_obj).as_bytes())?;
@@ -143,7 +145,7 @@ impl<W: Write> PdfWriter<W> {
     /// Writes an indirect object to the PDF stream and records its offset in the XRef table.
     pub fn write_indirect_object(&mut self, id: u32, generation: u16, obj: &Object) -> Result<()> {
         self.xref.insert(id, self.current_offset);
-        self.write_all(format!("{} {} obj\r\n", id, generation).as_bytes())?;
+        self.write_all(format!("{id} {generation} obj\r\n").as_bytes())?;
         self.write_object(obj)?;
         self.write_all(b"\r\nendobj\r\n")?;
         Ok(())
@@ -154,7 +156,7 @@ impl<W: Write> PdfWriter<W> {
         match obj {
             Object::Boolean(b) => self.write_all(if *b { b"true" } else { b"false" }),
             Object::Integer(i) => self.write_all(i.to_string().as_bytes()),
-            Object::Real(f) => self.write_all(format!("{:.4}", f).as_bytes()),
+            Object::Real(f) => self.write_all(format!("{f:.4}").as_bytes()),
             Object::String(s) => self.write_string_literal(s),
             Object::Name(n) => self.write_name(n),
             Object::Array(a) => {
@@ -167,7 +169,9 @@ impl<W: Write> PdfWriter<W> {
             }
             Object::Dictionary(d) => self.write_dict(d),
             Object::Stream(d, data) => {
-                self.write_dict(d)?;
+                let mut d_with_length = d.as_ref().clone();
+                d_with_length.insert(PdfName::new(b"Length"), Object::Integer(data.len() as i64));
+                self.write_dict(&d_with_length)?;
                 self.write_all(b"\r\nstream\r\n")?;
                 self.write_all(data)?;
                 self.write_all(b"\r\nendstream")
@@ -193,7 +197,7 @@ impl<W: Write> PdfWriter<W> {
         // Simple encoding: escape # and non-printable
         for &b in n.as_ref() {
             if b == b'#' || b <= 32 || b >= 127 {
-                self.write_all(format!("#{:02X}", b).as_bytes())?;
+                self.write_all(format!("#{b:02X}").as_bytes())?;
             } else {
                 self.write_all(&[b])?;
             }
@@ -226,19 +230,19 @@ impl<W: Write> PdfWriter<W> {
         let start_xref = self.current_offset;
         let count = self.xref.keys().last().unwrap_or(&0) + 1;
         
-        self.write_all(format!("xref\r\n0 {}\r\n", count).as_bytes())?;
+        self.write_all(format!("xref\r\n0 {count}\r\n").as_bytes())?;
         self.write_all(b"0000000000 65535 f\r\n")?;
         
         for i in 1..count {
             if let Some(&offset) = self.xref.get(&i) {
-                self.write_all(format!("{:010} 00000 n\r\n", offset).as_bytes())?;
+                self.write_all(format!("{offset:010} 00000 n\r\n").as_bytes())?;
             } else {
                 self.write_all(b"0000000000 00000 f\r\n")?;
             }
         }
 
         self.write_all(b"trailer\r\n<<\r\n")?;
-        self.write_all(format!("/Size {}\r\n", count).as_bytes())?;
+        self.write_all(format!("/Size {count}\r\n").as_bytes())?;
         self.write_all(format!("/Root {} {} R\r\n", root.id, root.generation).as_bytes())?;
         if let Some(r) = info {
             self.write_all(format!("/Info {} {} R\r\n", r.id, r.generation).as_bytes())?;

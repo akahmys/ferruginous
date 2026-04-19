@@ -1,7 +1,8 @@
 use kurbo::{BezPath, Point};
 use skrifa::outline::{OutlinePen, DrawSettings};
 use skrifa::instance::{Size, LocationRef};
-use skrifa::{FontRef, MetadataProvider, GlyphId};
+use skrifa::{MetadataProvider, GlyphId};
+use skrifa::raw::FileRef;
 
 pub struct KurboPen {
     path: BezPath,
@@ -71,11 +72,32 @@ impl SkrifaBridge {
         Self {}
     }
 
-    pub fn extract_path(&self, font_data: &[u8], glyph_id: u32) -> Option<BezPath> {
-        let font_ref = FontRef::new(font_data).ok()?;
-        let outlines = font_ref.outline_glyphs();
-        let gid = GlyphId::from(glyph_id as u16);
-        let glyph = outlines.get(gid)?;
+    pub fn extract_path(&self, data: &[u8], gid: u32) -> Option<BezPath> {
+        let file = FileRef::new(data).ok()?;
+        let font = match file {
+            FileRef::Font(f) => Some(f),
+            FileRef::Collection(c) => {
+                // Try to find a font in the collection that has this glyph
+                for i in 0..c.len() {
+                    if let Ok(f) = c.get(i) {
+                        let mut pen = KurboPen::new();
+                        let settings = DrawSettings::unhinted(Size::new(1000.0), LocationRef::default());
+                        let outlines = f.outline_glyphs();
+                        if let Some(g) = outlines.get(GlyphId::new(gid))
+                            && g.draw(settings, &mut pen).is_ok() {
+                                let path = pen.finish();
+                                if !path.is_empty() {
+                                    return Some(path);
+                                }
+                            }
+                    }
+                }
+                c.get(0).ok()
+            }
+        }?;
+        
+        let outlines = font.outline_glyphs();
+        let glyph = outlines.get(GlyphId::new(gid))?;
         
         let mut pen = KurboPen::new();
         // PDF fonts are usually 1000 units per em
@@ -102,7 +124,7 @@ impl SkrifaBridge {
             if let Some(path) = self.extract_path(font_data, *gid) {
                 // Scale and position the glyph
                 let transform = kurbo::Affine::translate((x_offset, 0.0))
-                    * kurbo::Affine::scale_non_uniform(scale as f64 * h_scale as f64, -scale as f64);
+                    * kurbo::Affine::scale_non_uniform(scale as f64 * h_scale as f64, scale as f64);
                 
                 // Apply transform to the glyph path
                 let mut path = path;

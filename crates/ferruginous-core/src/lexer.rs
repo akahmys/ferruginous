@@ -66,6 +66,10 @@ impl Lexer {
                 self.next_token()
             }
             b'(' => self.lex_literal_string(),
+            b')' => {
+                self.pos += 1;
+                Ok(Some(Token::RightParenthesis))
+            }
             b'[' => {
                 self.pos += 1;
                 Ok(Some(Token::LeftSquareBracket))
@@ -73,6 +77,14 @@ impl Lexer {
             b']' => {
                 self.pos += 1;
                 Ok(Some(Token::RightSquareBracket))
+            }
+            b'{' => {
+                self.pos += 1;
+                Ok(Some(Token::LeftCurlyBracket))
+            }
+            b'}' => {
+                self.pos += 1;
+                Ok(Some(Token::RightCurlyBracket))
             }
             b'<' => {
                 if self.peek() == Some(b'<') {
@@ -88,7 +100,7 @@ impl Lexer {
                     Ok(Some(Token::DictionaryClose))
                 } else {
                     self.pos += 1;
-                    Ok(Some(Token::Solidus))
+                    Ok(Some(Token::RightAngleBracket))
                 }
             }
             b'/' => self.lex_name(),
@@ -143,7 +155,10 @@ impl Lexer {
                 }
                 b'\\' => {
                     has_escapes = true;
-                    self.pos += 2;
+                    self.pos += 1;
+                    if self.pos < self.input.len() {
+                        self.pos += 1;
+                    }
                 }
                 _ => {
                     self.pos += 1;
@@ -151,10 +166,17 @@ impl Lexer {
             }
         }
         
-        Err(PdfError::Lexical { pos: start, message: "Unterminated literal string".into() })
+        // EOF reached without matching ')' - return partial as per robustness principle
+        let content_end = self.pos;
+        if !has_escapes {
+            Ok(Some(Token::LiteralString(self.input.slice(content_start..content_end))))
+        } else {
+            self.pos = content_start;
+            self.lex_literal_string_complex(start)
+        }
     }
 
-    fn lex_literal_string_complex(&mut self, start: usize) -> PdfResult<Option<Token>> {
+    fn lex_literal_string_complex(&mut self, _start: usize) -> PdfResult<Option<Token>> {
         let mut depth = 1;
         let mut result = Vec::new();
         
@@ -177,40 +199,12 @@ impl Lexer {
                 }
                 b'\\' => {
                     self.pos += 1;
-                    if self.pos >= self.input.len() { break; }
-                    let next = self.input[self.pos];
-                    match next {
-                        b'n' => result.push(b'\n'),
-                        b'r' => result.push(b'\r'),
-                        b't' => result.push(b'\t'),
-                        b'b' => result.push(b'\x08'),
-                        b'f' => result.push(b'\x0c'),
-                        b'(' => result.push(b'('),
-                        b')' => result.push(b')'),
-                        b'\\' => result.push(b'\\'),
-                        b'\r' | b'\n' => {
-                            if next == b'\r' && self.peek() == Some(b'\n') {
-                                self.pos += 1;
-                            }
-                        }
-                        _ if next.is_ascii_digit() => {
-                            let mut octal = next - b'0';
-                            let mut count = 1;
-                            while count < 3 && self.pos + 1 < self.input.len() {
-                                let n = self.input[self.pos + 1];
-                                if (b'0'..=b'7').contains(&n) {
-                                    octal = octal.wrapping_mul(8).wrapping_add(n - b'0');
-                                    self.pos += 1;
-                                    count += 1;
-                                } else {
-                                    break;
-                                }
-                            }
-                            result.push(octal);
-                        }
-                        _ => result.push(next),
+                    if let Some(decoded) = self.decode_escape_sequence()? {
+                        result.push(decoded);
                     }
-                    self.pos += 1;
+                    if self.pos < self.input.len() {
+                        self.pos += 1;
+                    }
                 }
                 _ => {
                     result.push(c);
@@ -218,7 +212,44 @@ impl Lexer {
                 }
             }
         }
-        Err(PdfError::Lexical { pos: start, message: "Unterminated literal string".into() })
+        Ok(Some(Token::LiteralString(Bytes::from(result))))
+    }
+
+    fn decode_escape_sequence(&mut self) -> PdfResult<Option<u8>> {
+        if self.pos >= self.input.len() { return Ok(None); }
+        let next = self.input[self.pos];
+        match next {
+            b'n' => Ok(Some(b'\n')),
+            b'r' => Ok(Some(b'\r')),
+            b't' => Ok(Some(b'\t')),
+            b'b' => Ok(Some(b'\x08')),
+            b'f' => Ok(Some(b'\x0c')),
+            b'(' => Ok(Some(b'(')),
+            b')' => Ok(Some(b')')),
+            b'\\' => Ok(Some(b'\\')),
+            b'\r' | b'\n' => {
+                if next == b'\r' && self.peek() == Some(b'\n') { self.pos += 1; }
+                Ok(None)
+            }
+            _ if next.is_ascii_digit() => Ok(Some(self.parse_octal_sequence(next))),
+            _ => Ok(Some(next)),
+        }
+    }
+
+    fn parse_octal_sequence(&mut self, initial: u8) -> u8 {
+        let mut octal = initial - b'0';
+        let mut count = 1;
+        while count < 3 && self.pos + 1 < self.input.len() {
+            let n = self.input[self.pos + 1];
+            if (b'0'..=b'7').contains(&n) {
+                octal = octal.wrapping_mul(8).wrapping_add(n - b'0');
+                self.pos += 1;
+                count += 1;
+            } else {
+                break;
+            }
+        }
+        octal
     }
 
     fn lex_hex_string(&mut self) -> PdfResult<Option<Token>> {
@@ -245,7 +276,10 @@ impl Lexer {
                 b'0'..=b'9' => c - b'0',
                 b'a'..=b'f' => c - b'a' + 10,
                 b'A'..=b'F' => c - b'A' + 10,
-                _ => return Err(PdfError::Lexical { pos: self.pos, message: "Invalid hex character".into() }),
+                _ => {
+                    self.pos += 1;
+                    continue;
+                }
             };
 
             if let Some(high) = current_byte {
@@ -257,7 +291,11 @@ impl Lexer {
             self.pos += 1;
         }
 
-        Err(PdfError::Lexical { pos: self.pos, message: "Unterminated hex string".into() })
+        // EOF reached without matching '>' - return what we have as per robustness principle
+        if let Some(high) = current_byte {
+            result.push(high << 4);
+        }
+        Ok(Some(Token::HexString(Bytes::from(result))))
     }
 
     fn lex_name(&mut self) -> PdfResult<Option<Token>> {
@@ -316,23 +354,50 @@ impl Lexer {
     fn lex_number(&mut self) -> PdfResult<Option<Token>> {
         let start = self.pos;
         let mut is_real = false;
+        let mut seen_dot = false;
+
+        // Handle leading sign
+        if self.pos < self.input.len() && (self.input[self.pos] == b'-' || self.input[self.pos] == b'+') {
+            self.pos += 1;
+        }
+
         while self.pos < self.input.len() {
             let c = self.input[self.pos];
             if c == b'.' {
+                if seen_dot {
+                    break;
+                }
+                seen_dot = true;
                 is_real = true;
                 self.pos += 1;
-            } else if c.is_ascii_digit() || c == b'-' {
+            } else if c.is_ascii_digit() {
                 self.pos += 1;
             } else {
                 break;
             }
         }
-        let s = std::str::from_utf8(&self.input[start..self.pos]).map_err(|_| PdfError::Lexical { pos: start, message: "Invalid UTF-8 in number".into() })?;
+
+        let s = std::str::from_utf8(&self.input[start..self.pos]).map_err(|_| PdfError::Lexical {
+            pos: start,
+            message: "Invalid UTF-8 in number".into(),
+        })?;
+
+        // Robustness: handle degenerate cases like ".", "-", "+", "-."
+        if s == "." || s == "-" || s == "+" || s == "-." || s == "+." {
+            return Ok(Some(Token::Real(0.0)));
+        }
+
         if is_real {
-            let val = s.parse::<f64>().map_err(|_| PdfError::Lexical { pos: start, message: "Invalid real number".into() })?;
+            let val = s.parse::<f64>().map_err(|_| PdfError::Lexical {
+                pos: start,
+                message: "Invalid real number".into(),
+            })?;
             Ok(Some(Token::Real(val)))
         } else {
-            let val = s.parse::<i64>().map_err(|_| PdfError::Lexical { pos: start, message: "Invalid integer".into() })?;
+            let val = s.parse::<i64>().map_err(|_| PdfError::Lexical {
+                pos: start,
+                message: "Invalid integer".into(),
+            })?;
             Ok(Some(Token::Integer(val)))
         }
     }

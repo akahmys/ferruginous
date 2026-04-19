@@ -15,6 +15,7 @@ kurbo = { workspace = true }
 thiserror.workspace = true
 serde.workspace = true
 bytes.workspace = true
+image = "0.25"
 
 [dev-dependencies]
 tokio.workspace = true

@@ -5,7 +5,7 @@ use ferruginous_sdk::PdfDocument;
 
 #[tokio::test]
 async fn test_render_sample_pdf() {
-    let pdf_path = Path::new("../../samples/pdf20/pdf-association/Simple PDF 2.0 file.pdf");
+    let pdf_path = Path::new("../../samples/standard/Simple PDF 2.0 file.pdf");
     assert!(pdf_path.exists(), "Sample PDF not found at {pdf_path:?}");
 
     let data = std::fs::read(pdf_path).expect("Failed to read sample PDF");

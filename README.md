@@ -1,46 +1,60 @@
-# Ferruginous Rebirth
+# Ferruginous: The Professional PDF SDK
 
-**Ferruginous** is a high-precision, ISO 32000-2 compliant PDF 2.0 toolkit built with Rust. This "Rebirth" project is a total reconstruction focused on "Absolute Compliance" and "Reliable Rust-15" (RR-15) engineering.
+**Ferruginous** is a high-performance, ISO 32000-2 (PDF 2.0) compliant engine and SDK for advanced PDF manipulation. This project includes **fepdf**, the official universal CLI toolkit powered by the Ferruginous SDK.
 
-### 🌟 Latest Achievement (2026-04-19)
-- **v1.0 Production Readiness (Phase 11)**: Completed the ecosystem transition. Implemented a high-performance CLI tool (`info`, `render`, `audit`, `extract`), introduced the PDF Physical Serializer (`writer.rs`), and established the WASM bridge for web integration.
-- **Standards & Compliance (Phase 10)**: Finalized conformance auditing for PDF/A-4, PDF/X-6, and PDF/UA-2. Enhanced the MCP layer with automated structural auditing.
-- **Security & Digital Signatures (Phase 9)**: Hardened **Security & Digital Signatures (PAdES)** with AES-256 encryption and full LTV (DSS) support.
+## fepdf CLI Tool
 
-## 🏗️ Architecture
+**fepdf** is a subcommand-based multi-tool that exposes the power of the Ferruginous engine for compliance, optimization, and document forensics.
 
-The toolkit is organized into six specialized layers:
+- **Diagnostic Dashboard (`info`)**: Deep metadata analysis and structural visualization.
+- **Compliance Audit (`info --audit`)**: Automated verification for PDF/A-4, PDF/X-6, and PDF/UA-2.
+- **Standard-First Upgrade (`upgrade`)**: Seamless conversion to modern PDF 2.0 standards.
+- **Object Cloning Engine (`merge` / `split`)**: Recursive ID re-indexing for safe document merging and page extraction.
+- **Scavenger Mode (`repair`)**: Reconstructs corrupted XRef tables and salvages malformed documents.
+- **Optimization (`optimize`)**: Object garbage collection, metadata stripping, and encryption.
+- **High-Fidelity Rendering (`render`)**: Vello-powered GPU rendering of PDF content to high-resolution images.
+- **CJK Font Hardening**: Production-ready support for Japanese (mojibake-free) rendering via robust ToUnicode translation and fallback decoders.
+- **Page Operations (`rotate`)**: Batch orientation adjustments.
 
-1.  **`ferruginous-core`**: Foundational layer. zero-copy Lexer, Recursive Descent Parser, and unified Object model.
-2.  **`ferruginous-doc`**: Structural layer. XRef streams, incremental updates, and thread-safe caching.
-3.  **`ferruginous-render`**: Visual layer. Powered by **Vello** (WGPU) for high-fidelity vector graphics.
-4.  **`ferruginous-bridge-legacy`**: Validation layer. Modular adapter for `lopdf` with repair auditing.
-5.  **`ferruginous-sdk`**: Orchestration layer. Type-safe High-level API for application developers.
-6.  **`ferruginous-mcp`**: Intelligence layer. Model Context Protocol for AI-driven auditing.
+## Installation
 
-## 🛡️ Reliable Rust-15 (RR-15)
-
-Every line of code adheres to the RR-15 constraints:
-- **Context Guard**: Mandatory injection of resolvers and resources (Clause 16).
-- **No-Panic**: `unwrap()` and `expect()` are prohibited in non-test code.
-- **SafetyIsolation**: Zero `unsafe` blocks in the core processing layers.
-- **Stack Safety**: Recursion depth is strictly limited (16-level limit for XObjects).
-
-## 🚀 Getting Started
-
-### Prerequisites
-- Rust 1.94+
-- Cargo
-
-### Building
+### From Source
 ```bash
-cargo build --workspace
+make build-local
+```
+Binaries will be available in `target/release/fepdf`.
+
+### Multi-platform Builds
+To generate binaries for Mac (Silicon/Intel), Windows, and Linux:
+```bash
+make dist
 ```
 
-### Testing
+## Usage
+
 ```bash
-cargo test --workspace
+# Analyze document compliance
+fepdf info --audit input.pdf
+
+# Merge multiple files into a PDF 2.0 document
+fepdf merge doc1.pdf doc2.pdf -o combined.pdf
+
+# Repair a corrupted file
+fepdf repair broken.pdf -o fixed.pdf
+
+# Strip metadata and remove unreachable objects
+fepdf optimize input.pdf --strip --vacuum -o clean.pdf
 ```
 
-## 📜 License
-Dual-licensed under MIT and Apache 2.0.
+## Architecture
+
+fepdf is built upon a modular multi-crate architecture:
+- `ferruginous-core`: Low-level PDF primitives and zero-copy parser.
+- `ferruginous-doc`: High-level document object model and XRef management.
+- `ferruginous-sdk`: Orchestration layer for complex manipulation (Cloning, Merging).
+- `fepdf`: The unified CLI entry point.
+
+## License
+
+- Licensed under the **MIT License**.
+- ISO 32000-2:2020 Compliant.

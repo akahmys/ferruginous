@@ -12,9 +12,10 @@ mod path_tests;
 #[cfg(test)]
 mod text_tests;
 
-use vello::{Scene, peniko::Brush};
+use vello::Scene;
 use kurbo::{Affine, BezPath, Stroke, Cap, Join};
 use ferruginous_core::graphics::{Color, WindingRule, StrokeStyle, LineCap, LineJoin, PixelFormat};
+use skrifa::MetadataProvider;
 
 pub trait RenderBackend: Send {
     fn push_state(&mut self);
@@ -33,17 +34,32 @@ pub trait RenderBackend: Send {
     fn set_stroke_alpha(&mut self, alpha: f64);
     fn set_blend_mode(&mut self, mode: ferruginous_core::graphics::BlendMode);
 
+    // Color Support
+    fn set_fill_color(&mut self, color: Color);
+    fn set_stroke_color(&mut self, color: Color);
+
+    fn define_font(&mut self, name: &str, data: Vec<u8>);
     fn show_text(&mut self, text: &str, font_name: &str, size: f32, transform: Affine);
+}
+
+/// Internal graphics state for VelloBackend.
+#[derive(Clone)]
+struct VelloState {
+    transform: Affine,
+    fill_color: Color,
+    stroke_color: Color,
+    fill_alpha: f64,
+    stroke_alpha: f64,
+    blend_mode: ferruginous_core::graphics::BlendMode,
+    clip_count: usize,
 }
 
 /// Vello-based implementation of [RenderBackend].
 pub struct VelloBackend {
     scene: Scene,
-    transform_stack: Vec<Affine>,
-    current_transform: Affine,
-    fill_alpha: f64,
-    stroke_alpha: f64,
-    blend_mode: ferruginous_core::graphics::BlendMode,
+    state: VelloState,
+    state_stack: Vec<VelloState>,
+    font_cache: std::collections::BTreeMap<String, (Vec<u8>, Option<u32>)>, // Name -> (Data, CollectionIndex)
 }
 
 impl Default for VelloBackend {
@@ -56,11 +72,17 @@ impl VelloBackend {
     pub fn new() -> Self {
         Self {
             scene: Scene::new(),
-            transform_stack: Vec::new(),
-            current_transform: Affine::IDENTITY,
-            fill_alpha: 1.0,
-            stroke_alpha: 1.0,
-            blend_mode: ferruginous_core::graphics::BlendMode::Normal,
+            state: VelloState {
+                transform: Affine::IDENTITY,
+                fill_color: Color::Gray(0.0),
+                stroke_color: Color::Gray(0.0),
+                fill_alpha: 1.0,
+                stroke_alpha: 1.0,
+                blend_mode: ferruginous_core::graphics::BlendMode::Normal,
+                clip_count: 0,
+            },
+            state_stack: Vec::new(),
+            font_cache: std::collections::BTreeMap::new(),
         }
     }
 
@@ -71,75 +93,100 @@ impl VelloBackend {
 
 impl RenderBackend for VelloBackend {
     fn push_state(&mut self) {
-        self.transform_stack.push(self.current_transform);
+        self.state_stack.push(self.state.clone());
+        self.state.clip_count = 0; // Reset clip count for the new level
     }
-
+    
     fn pop_state(&mut self) {
-        self.current_transform = self.transform_stack.pop().unwrap_or(Affine::IDENTITY);
-    }
+        // Pop all clips pushed at this level
+        for _ in 0..self.state.clip_count {
+            self.scene.pop_layer();
+        }
 
+        if let Some(previous_state) = self.state_stack.pop() {
+            self.state = previous_state;
+        }
+    }
+    
     fn transform(&mut self, affine: Affine) {
-        self.current_transform *= affine;
+        self.state.transform *= affine;
     }
-
+    
     fn fill_path(&mut self, path: &BezPath, color: &Color, rule: WindingRule) {
-        let alpha = self.fill_alpha as f32;
-        let brush = to_vello_brush(color, alpha);
+        // Resource Limit: Prevention of OOM from overly complex paths
+        if path.segments().count() > 100_000 {
+            eprintln!("WARNING: Path complexity limit exceeded, skipping fill.");
+            return;
+        }
+
+        let brush = to_vello_brush(color, self.state.fill_alpha as f32);
         let fill = match rule {
             WindingRule::NonZero => vello::peniko::Fill::NonZero,
             WindingRule::EvenOdd => vello::peniko::Fill::EvenOdd,
         };
-        
-        let mix = to_vello_mix(self.blend_mode);
-        if mix != vello::peniko::Mix::Normal {
-            let blend = vello::peniko::BlendMode::new(mix, vello::peniko::Compose::SrcOver);
-            // Vello push_layer takes (clip_style, blend, alpha, transform, clip)
-            self.scene.push_layer(vello::peniko::Fill::NonZero, blend, 1.0, self.current_transform, path);
-            self.scene.fill(fill, Affine::IDENTITY, &brush, None, path);
-            self.scene.pop_layer();
-        } else {
-            self.scene.fill(fill, self.current_transform, &brush, None, path);
-        }
+        self.scene.fill(fill, self.state.transform, &brush, None, path);
     }
-
+    
     fn stroke_path(&mut self, path: &BezPath, color: &Color, style: &StrokeStyle) {
-        let alpha = self.stroke_alpha as f32;
-        let brush = to_vello_brush(color, alpha);
-        let stroke = to_kurbo_stroke(style);
+        // Resource Limit: Prevention of OOM from overly complex paths
+        if path.segments().count() > 100_000 {
+            eprintln!("WARNING: Path complexity limit exceeded, skipping stroke.");
+            return;
+        }
+
+        let brush = to_vello_brush(color, self.state.stroke_alpha as f32);
+        let cap = match style.cap {
+            LineCap::Butt => Cap::Butt,
+            LineCap::Round => Cap::Round,
+            LineCap::Square => Cap::Square,
+        };
+        let join = match style.join {
+            LineJoin::Miter => Join::Miter,
+            LineJoin::Round => Join::Round,
+            LineJoin::Bevel => Join::Bevel,
+        };
         
-        let mix = to_vello_mix(self.blend_mode);
-        if mix != vello::peniko::Mix::Normal {
-            let blend = vello::peniko::BlendMode::new(mix, vello::peniko::Compose::SrcOver);
-            self.scene.push_layer(vello::peniko::Fill::NonZero, blend, 1.0, self.current_transform, path);
-            if let Some((array, phase)) = &style.dash_pattern {
-                let dashed: BezPath = kurbo::dash(path.iter(), *phase, array).collect();
-                self.scene.stroke(&stroke, Affine::IDENTITY, &brush, None, &dashed);
-            } else {
-                self.scene.stroke(&stroke, Affine::IDENTITY, &brush, None, path);
-            }
-            self.scene.pop_layer();
+        let (dash_offset, is_dashed) = if let Some((_, phase)) = &style.dash_pattern {
+            (*phase, true)
         } else {
-            if let Some((array, phase)) = &style.dash_pattern {
-                let dashed: BezPath = kurbo::dash(path.iter(), *phase, array).collect();
-                self.scene.stroke(&stroke, self.current_transform, &brush, None, &dashed);
-            } else {
-                self.scene.stroke(&stroke, self.current_transform, &brush, None, path);
-            }
+            (0.0, false)
+        };
+
+        // Use a more robust way to create Stroke to avoid field mismatch
+        let mut stroke = kurbo::Stroke::new(style.width);
+        stroke.start_cap = cap;
+        stroke.end_cap = cap;
+        stroke.join = join;
+        stroke.miter_limit = style.miter_limit;
+        stroke.dash_offset = dash_offset;
+        
+        if is_dashed {
+             if let Some((pattern, phase)) = &style.dash_pattern {
+                 let dashed: BezPath = kurbo::dash(path.iter(), *phase, pattern).collect();
+                 self.scene.stroke(&stroke, self.state.transform, &brush, None, &dashed);
+             }
+        } else {
+             self.scene.stroke(&stroke, self.state.transform, &brush, None, path);
         }
     }
-
+    
     fn push_clip(&mut self, path: &BezPath, rule: WindingRule) {
         let fill = match rule {
             WindingRule::NonZero => vello::peniko::Fill::NonZero,
             WindingRule::EvenOdd => vello::peniko::Fill::EvenOdd,
         };
-        self.scene.push_clip_layer(fill, self.current_transform, path);
+        // Use push_layer for clipping with proper fill
+        self.scene.push_layer(fill, vello::peniko::Mix::Normal, 1.0, self.state.transform, path);
+        self.state.clip_count += 1;
     }
-
+    
     fn pop_clip(&mut self) {
-        self.scene.pop_layer();
+        if self.state.clip_count > 0 {
+            self.scene.pop_layer();
+            self.state.clip_count -= 1;
+        }
     }
-
+    
     fn draw_image(&mut self, data: &[u8], width: u32, height: u32, format: PixelFormat) {
         use vello::peniko::{Blob, ImageFormat, ImageData, ImageAlphaType};
         
@@ -159,37 +206,106 @@ impl RenderBackend for VelloBackend {
             height,
         };
         
-        // Image transparency
-        let mix = to_vello_mix(self.blend_mode);
-        if mix != vello::peniko::Mix::Normal || self.fill_alpha < 1.0 {
-            let blend = vello::peniko::BlendMode::new(mix, vello::peniko::Compose::SrcOver);
-            let rect = kurbo::Rect::new(0.0, 0.0, width as f64, height as f64);
-            self.scene.push_layer(vello::peniko::Fill::NonZero, blend, self.fill_alpha as f32, self.current_transform, &rect);
-            self.scene.draw_image(&image, Affine::IDENTITY);
-            self.scene.pop_layer();
-        } else {
-            self.scene.draw_image(&image, self.current_transform);
-        }
+        self.scene.draw_image(&image, self.state.transform);
     }
 
     fn set_fill_alpha(&mut self, alpha: f64) {
-        self.fill_alpha = alpha;
+        self.state.fill_alpha = alpha;
     }
 
     fn set_stroke_alpha(&mut self, alpha: f64) {
-        self.stroke_alpha = alpha;
+        self.state.stroke_alpha = alpha;
     }
 
     fn set_blend_mode(&mut self, mode: ferruginous_core::graphics::BlendMode) {
-        self.blend_mode = mode;
+        self.state.blend_mode = mode;
     }
 
-    fn show_text(&mut self, _text: &str, _font_name: &str, _size: f32, _transform: Affine) {
-        // Vello currently renders text via paths in the interpreter, 
-        // but we could use vello's glyph caching here if we wanted.
+    fn set_fill_color(&mut self, color: Color) {
+        self.state.fill_color = color;
+    }
+    
+    fn set_stroke_color(&mut self, color: Color) {
+        self.state.stroke_color = color;
+    }
+
+    fn define_font(&mut self, name: &str, data: Vec<u8>) {
+        // Pre-scan for Japanese support if it's a TTC
+        let index = if let Ok(file_ref) = skrifa::raw::FileRef::new(&data) {
+            match file_ref {
+                skrifa::raw::FileRef::Font(_) => None,
+                skrifa::raw::FileRef::Collection(c) => {
+                    // Find a font with Japanese support or just default to 0
+                    let mut best_index = 0;
+                    for i in 0..c.len() {
+                        if let Ok(_font) = c.get(i) {
+                            // Quick check for Hiragino/Japanese-ish
+                            // In a real impl, we'd check Name table
+                            best_index = i;
+                            break;
+                        }
+                    }
+                    Some(best_index)
+                }
+            }
+        } else {
+            None
+        };
+        self.font_cache.insert(name.to_string(), (data, index));
+    }
+
+    fn show_text(&mut self, text: &str, font_name: &str, size: f32, transform: Affine) {
+        // 1. Try Cache
+        let (font_data, ttc_index) = if let Some(cached) = self.font_cache.get(font_name) {
+            (cached.0.clone(), cached.1)
+        } else {
+            // Fallback for diagnostic/legacy
+            let fallback_path = "/System/Library/Fonts/Hiragino Sans GB.ttc";
+            match std::fs::read(fallback_path) {
+                Ok(data) => (data, Some(0)),
+                Err(_) => return,
+            }
+        };
+
+        if let Ok(file_ref) = skrifa::raw::FileRef::new(&font_data) {
+            let font = match file_ref {
+                skrifa::raw::FileRef::Font(f) => Some(f),
+                skrifa::raw::FileRef::Collection(c) => c.get(ttc_index.unwrap_or(0)).ok(),
+            };
+
+            if let Some(font) = font {
+                let mut x_offset = 0.0;
+                let scale = size as f64 / 1000.0;
+                let bridge = crate::text::SkrifaBridge::new();
+                let brush = to_vello_brush(&self.state.fill_color, self.state.fill_alpha as f32);
+                
+                for c in text.chars() {
+                    let gid = font.charmap().map(c).unwrap_or(skrifa::GlyphId::new(0));
+                    let glyph_transform = self.state.transform 
+                        * transform 
+                        * kurbo::Affine::translate((x_offset, 0.0))
+                        * kurbo::Affine::scale_non_uniform(scale, scale);
+                    
+                    if let Some(mut path) = bridge.extract_path(&font_data, gid.to_u32()) {
+                        path.apply_affine(glyph_transform);
+                        self.scene.fill(vello::peniko::Fill::NonZero, Affine::IDENTITY, &brush, None, &path);
+                        
+                        let metrics = font.glyph_metrics(skrifa::instance::Size::new(1000.0), skrifa::instance::LocationRef::default());
+                        let advance = metrics.advance_width(gid).unwrap_or(0.0) as f64 * scale;
+                        
+                        x_offset += advance;
+                    }
+                }
+            } else {
+                eprintln!("DEBUG: show_text fallback: No font found");
+            }
+        } else {
+            eprintln!("DEBUG: show_text fallback: Failed to parse font");
+        }
     }
 }
 
+#[allow(dead_code)]
 fn to_kurbo_stroke(style: &StrokeStyle) -> kurbo::Stroke {
     let mut stroke = Stroke::new(style.width);
     let cap = match style.cap {
@@ -211,17 +327,18 @@ fn to_kurbo_stroke(style: &StrokeStyle) -> kurbo::Stroke {
 
 fn to_vello_brush(color: &Color, alpha: f32) -> vello::peniko::Brush {
     match color {
-        Color::Gray(g) => Brush::Solid(vello::peniko::Color::new([*g as f32, *g as f32, *g as f32, alpha])),
-        Color::Rgb(r, g, b) => Brush::Solid(vello::peniko::Color::new([*r as f32, *g as f32, *b as f32, alpha])),
+        Color::Gray(g) => vello::peniko::Brush::Solid(vello::peniko::Color::new([*g as f32, *g as f32, *g as f32, alpha])),
+        Color::Rgb(r, g, b) => vello::peniko::Brush::Solid(vello::peniko::Color::new([*r as f32, *g as f32, *b as f32, alpha])),
         Color::Cmyk(c, m, y, k) => {
             let r = (1.0 - c) * (1.0 - k);
             let g = (1.0 - m) * (1.0 - k);
             let b = (1.0 - y) * (1.0 - k);
-            Brush::Solid(vello::peniko::Color::new([r as f32, g as f32, b as f32, alpha]))
+            vello::peniko::Brush::Solid(vello::peniko::Color::new([r as f32, g as f32, b as f32, alpha]))
         }
     }
 }
 
+#[allow(dead_code)]
 fn to_vello_mix(mode: ferruginous_core::graphics::BlendMode) -> vello::peniko::Mix {
     use ferruginous_core::graphics::BlendMode;
     use vello::peniko::Mix;

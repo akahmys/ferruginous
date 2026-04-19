@@ -5,7 +5,7 @@ use std::path::PathBuf;
 #[test]
 fn test_minimal_14_parsing() {
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    path.push("../../samples/legacy/minimal_14.pdf");
+    path.push("../../samples/regression/minimal_14.pdf");
     
     let dbg_path = path.canonicalize().unwrap_or(path.clone());
     println!("Loading test sample from: {:?}", dbg_path);
@@ -32,7 +32,7 @@ fn test_minimal_14_parsing() {
 #[test]
 fn test_document_load() {
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    path.push("../../samples/legacy/minimal_14.pdf");
+    path.push("../../samples/regression/minimal_14.pdf");
     
     let data = fs::read(path).expect("Failed to read test sample");
     let doc = Reader::load_document(&data).expect("Document should be loaded");
@@ -84,7 +84,7 @@ fn test_repair_audit_log() {
 #[test]
 fn test_corruption_recovery() {
     let mut root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    root.push("../../samples/legacy/corrupt_cases/");
+    root.push("../../samples/malformed/");
 
     // 1. No Header
     let data_no_header = fs::read(root.join("no_header.pdf")).unwrap();

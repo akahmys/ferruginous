@@ -40,3 +40,16 @@ This document tracks development friction, failures, and subsequent protocol imp
 - **Observation**: Initial text bounds were overly simplified, leading to clipping in vertical scripts.
 - **Cause**: Ignored font's explicit ascent/descent metrics in favor of just horizontal advance.
 - **Protocol Feedback**: Updated **HDD Section 5** to mandate "Metric-Aware Bounds" for all layout-critical content types (Text, Image).
+
+---
+## [2026-04-19] Phase 14: fepdf CLI Transformation
+
+### 1. Phenomenon: Broken Test Samples after Crate Migration
+- **Observation**: Shifting to a multi-crate workspace (SDK, Core, MCP) broke relative paths to PDF samples in nearly every test suite.
+- **Cause**: Tests used `CARGO_MANIFEST_DIR` as the base, which changed from the project root to individual crate subdirectories.
+- **Protocol Feedback**: Added **HDD Clause 7: Centralized Resource Path Management**. Use a designated helper in a test-utils crate (or high-level SDK) to resolve absolute workspace paths for test assets, rather than hardcoding relative `../` chains.
+
+### 2. Phenomenon: Missing Font Data Fatal Error
+- **Observation**: Documents using Standard 14 fonts without embedding caused the `Interpreter` to fail during rendering with "Missing font stream data".
+- **Cause**: The parser correctly didn't find the font stream (as expected for Standard 14), but the renderer didn't have a metric-only fallback.
+- **Protocol Feedback**: Updated **RR-15 Clause 16 (Context Propagation Guard)** to include "Requirement for Optional Non-Fatal Failures". High-level SDK components MUST distinguish between structural errors (invalid PDF) and rendering-quality gaps (missing fonts), allowing execution to continue for diagnostic and metadata tasks.

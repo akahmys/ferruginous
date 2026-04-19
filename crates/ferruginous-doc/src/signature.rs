@@ -53,15 +53,15 @@ impl Signature {
 
         let name = dict.get(&"Name".into())
             .and_then(|o| o.as_string())
-            .map(|s| decode_pdf_string(s));
+            .map(decode_pdf_string);
 
         let date = dict.get(&"M".into())
             .and_then(|o| o.as_string())
-            .map(|s| decode_pdf_string(s));
+            .map(decode_pdf_string);
 
         let reason = dict.get(&"Reason".into())
             .and_then(|o| o.as_string())
-            .map(|s| decode_pdf_string(s));
+            .map(decode_pdf_string);
 
         // MDP Extraction
         let mut doc_mdp = None;
@@ -91,7 +91,7 @@ impl Signature {
                                     .unwrap_or_else(|| "All".to_string());
                                 let fields = p.get(&"Fields".into())
                                     .and_then(|o| o.as_array())
-                                    .map(|a| a.iter().filter_map(|o| o.as_string().map(|s| decode_pdf_string(s))).collect())
+                                    .map(|a| a.iter().filter_map(|o| o.as_string().map(decode_pdf_string)).collect())
                                     .unwrap_or_default();
                                 field_mdp.push(FieldMdp { action, fields });
                             }

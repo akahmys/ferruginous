@@ -36,3 +36,17 @@ This document defines the official naming conventions for the Ferruginous projec
 | **Functions, Methods** | `snake_case` | `resolve()`, `media_box()` |
 | **Variables, Fields** | `snake_case` | `local_name`, `page_dict` |
 | **Constants** | `SCREAMING_SNAKE` | `MAX_STREAM_SIZE` |
+
+---
+
+## 5. Project Structure & Sub-projects
+
+- **Primary Project**: **Ferruginous** (The core PDF engine, SDK, and multi-crate workspace).
+- **Official CLI**: **fepdf** (A sub-project within Ferruginous providing a universal CLI interface).
+- **Naming Rule**: Sub-projects utilize the SDK as a dependency and should be prefixed with their specific tool name (e.g., `fepdf-cloner` if internal).
+
+## 6. Document Manipulation Convention
+
+- **Mechanism**: All cross-document object transfers (Merge, Split, Extract) MUST utilize the `ObjectCloner` to ensure unique ID re-mapping.
+- **Pattern**: Manual assignment of `Reference` IDs outside of the `Document::next_object_id()` and `ObjectCloner` flow is strictly prohibited to prevent structural corruption.
+- **API Framing**: CLI commands must be thin wrappers (Handlers) around high-level SDK methods exposed in `PdfDocument`.

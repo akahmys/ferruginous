@@ -1,6 +1,7 @@
 use kurbo::{BezPath, Point};
 
 /// Helper to build Kurbo paths from PDF path operations.
+#[derive(Debug, Clone)]
 pub struct PathBuilder {
     path: BezPath,
     current_point: Option<Point>,

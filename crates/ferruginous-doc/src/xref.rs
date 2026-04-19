@@ -20,6 +20,23 @@ pub enum XRefEntry {
     },
 }
 
+impl XRefEntry {
+    pub fn offset(&self) -> Option<u64> {
+        match self {
+            Self::InUse { offset, .. } => Some(*offset),
+            _ => None,
+        }
+    }
+
+    pub fn generation(&self) -> u16 {
+        match self {
+            Self::InUse { generation, .. } => *generation,
+            Self::Free { generation, .. } => *generation,
+            Self::Compressed { .. } => 0,
+        }
+    }
+}
+
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct XRefIndex {
     pub entries: BTreeMap<u32, XRefEntry>,

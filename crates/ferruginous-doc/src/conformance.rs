@@ -90,6 +90,22 @@ impl OutputIntent {
     }
 }
 
+/// Level of severity for an audit issue.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Severity {
+    Error,
+    Warning,
+    Info,
+}
+
+/// A specific issue found during a compliance audit.
+#[derive(Debug, Clone)]
+pub struct AuditIssue {
+    pub standard: String,
+    pub severity: Severity,
+    pub message: String,
+}
+
 /// High-level compliance information for a document.
 #[derive(Debug, Clone)]
 pub struct ComplianceInfo {
@@ -97,20 +113,23 @@ pub struct ComplianceInfo {
     pub output_intents: Vec<OutputIntent>,
     pub has_struct_tree: bool,
     pub is_marked: bool,
+    pub issues: Vec<AuditIssue>,
 }
 
 impl ComplianceInfo {
-    pub fn extract(doc: &dyn Resolver, catalog_ref: &Reference) -> PdfResult<Self> {
+    pub fn extract(doc: &dyn Resolver, catalog_ref: &Reference, header_version: &str) -> PdfResult<Self> {
         let catalog_obj = doc.resolve(catalog_ref)?;
         let catalog = catalog_obj.as_dict()
             .ok_or_else(|| PdfError::Other("Invalid catalog".into()))?;
             
         // 1. Metadata
         let mut metadata = ConformanceMetadata::default();
+        let mut has_metadata_stream = false;
         if let Some(meta_ref) = catalog.get(&"Metadata".into()).and_then(|o| o.as_reference())
-            && let Object::Stream(_, data) = doc.resolve(&meta_ref)? {
-            metadata = ConformanceMetadata::from_xmp(&data).unwrap_or_default();
-        }
+            && let Ok(Object::Stream(_, data)) = doc.resolve(&meta_ref) {
+                metadata = ConformanceMetadata::from_xmp(&data).unwrap_or_default();
+                has_metadata_stream = true;
+            }
         
         // 2. OutputIntents
         let mut output_intents = Vec::new();
@@ -136,12 +155,59 @@ impl ComplianceInfo {
             .and_then(|d| d.get(&"Marked".into()))
             .and_then(|o| o.as_bool())
             .unwrap_or(false);
+
+        // 5. Audit Issues
+        let mut issues = Vec::new();
+
+        // ISO 32000-2 (PDF 2.0) Audit
+        if header_version == "2.0" {
+            if !has_metadata_stream {
+                issues.push(AuditIssue {
+                    standard: "ISO 32000-2".into(),
+                    severity: Severity::Error,
+                    message: "Missing /Metadata stream (mandatory for PDF 2.0)".into(),
+                });
+            }
+            if catalog.get(&"Version".into()).and_then(|o| o.as_name()).map(|n| n.as_ref()) != Some(b"2.0") {
+                issues.push(AuditIssue {
+                    standard: "ISO 32000-2".into(),
+                    severity: Severity::Warning,
+                    message: "Catalog /Version entry should be /2.0 for PDF 2.0 documents".into(),
+                });
+            }
+        }
+        
+        // PDF/UA-2 Pre-check
+        if !has_struct_tree {
+            issues.push(AuditIssue {
+                standard: "PDF/UA-2".into(),
+                severity: Severity::Error,
+                message: "Missing Structure Tree (required for Accessibility)".into(),
+            });
+        }
+        if !is_marked {
+            issues.push(AuditIssue {
+                standard: "PDF/UA-2".into(),
+                severity: Severity::Error,
+                message: "Document is not flagged as /Marked".into(),
+            });
+        }
+
+        // PDF/A-4 Pre-check
+        if output_intents.is_empty() {
+            issues.push(AuditIssue {
+                standard: "PDF/A-4".into(),
+                severity: Severity::Warning,
+                message: "Missing OutputIntents (ICC profile recommended for archiving)".into(),
+            });
+        }
             
         Ok(Self {
             metadata,
             output_intents,
             has_struct_tree,
             is_marked,
+            issues,
         })
     }
 }

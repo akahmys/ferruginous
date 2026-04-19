@@ -94,7 +94,7 @@ The "Rebirth" project aims to achieve the world's most robust and ISO-compliant 
   - [x] Update Documentation (ROADMAP, README, DESIGN_SPEC)
   - [x] GitHub Synchronization (Commit/Push)
 
-## Phase 12: Advanced Web Optimization [COMPLETED]
+## Phase 12: Advanced Web Optimization [Complete]
 
 - [x] **M32-LIN: Linearization Dictionary & Object Reordering**
 - [x] **M33-LIN: Multi-pass Serialization Engine**
@@ -102,5 +102,38 @@ The "Rebirth" project aims to achieve the world's most robust and ISO-compliant 
 - [x] **M35-LIN: Upgrader Integration (`--linearize` flag)**
 - [x] **Phase Closure (Ritual)**
 
+## [COMPLETED] Phase 13: Ferruginous Modern Standard Suite (Recovery & Hardening)
+- [x] Integrate Info/Audit CLI targets into `fepdf`.
+- [x] Implement UTF-16BE decoding for broad metadata support.
+- [x] Implement structural tree visualizer (`--structure`).
+- [x] Implement object garbage collection (`--vacuum`) and metadata stripping.
+- [x] **Restored Document engine integrity (Resolved all 23+ compilation errors).**
+- [x] Final end-to-end verification of the auditing engine.
+
+## [COMPLETED] Phase 14: Ferruginous fepdf CLI Transformation
+- [x] **M40: CLI Transformation**: Developed `fepdf` as the official subcommand-based CLI sub-project.
+- [x] **M41: Feature Enrichment**:
+  - [x] Implemented Object Cloning engine with recursive ID remapping in SDK.
+  - [x] Integrated `merge`, `split`, and `rotate` functional handlers.
+- [x] **M44: Scavenger Mode**: Implemented robust object marker scanning in the core engine.
+- [x] **M42: Multi-platform Distribution**: Created `Makefile` for distribution of fepdf binaries across Mac/Win/Linux.
+
+- [x] **Phase 14 Closure (Ritual)**
+  - [x] Codebase Validation & Refactoring (Resolved trait regressions and sample path issues)
+  - [x] Rule Refinement & Retrospective ([docs/retrospectives/phase_14.md])
+  - [x] Update Documentation (ROADMAP, README)
+
+
+## [COMPLETED] Phase 15: CJK Font Hardening
+- [x] **M45: Robust ToUnicode Decoding**: Implemented mandatory stream decoding (De-compression) for mapping dictionaries.
+- [x] **M46: Character Mapping Hardening**: Developed bidirectional padding normalization for subsetted CMap entries.
+- [x] **M47: Legacy Encoding Support**: Integrated `encoding_rs` for robust Shift-JIS/CP932 fallback.
+- [x] **Verified zero-mojibake rendering** of complex Japanese legal documents (e.g., Constitution of Japan).
+
+- [x] **Phase 15 Closure (Ritual)**
+  - [x] Codebase Validation & Refactoring (100% Clippy & Test success)
+  - [x] Rule Refinement & Retrospective ([docs/retrospectives/cjk_mojibake_resolution.md])
+  - [x] Update Documentation (ROADMAP, README)
+
 ---
-*Roadmap updated: 2026-04-19 (Phase 12 Planning Initiated)*
+*Roadmap updated: 2026-04-19 (Phase 15 Closure Completed)*

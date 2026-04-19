@@ -8,7 +8,7 @@ use vello::wgpu::{
 };
 use image::{RgbaImage, ImageFormat};
 
-pub async fn render_to_png(scene: &Scene, width: u32, height: u32, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn render_to_image(scene: &Scene, width: u32, height: u32, path: &Path, format: ImageFormat) -> Result<(), Box<dyn std::error::Error>> {
     let mut context = RenderContext::new();
     let device_id = context
         .device(None)
@@ -104,10 +104,15 @@ pub async fn render_to_png(scene: &Scene, width: u32, height: u32, path: &Path) 
         result_unpadded.extend_from_slice(&data[start..start + (width * 4) as usize]);
     }
 
-    let image = RgbaImage::from_raw(width, height, result_unpadded)
-        .ok_or("Failed to create RgbaImage")?;
-    
-    image.save_with_format(path, ImageFormat::Png)?;
+    let img = RgbaImage::from_raw(width, height, result_unpadded).ok_or("Failed to create image from buffer")?;
+
+    if format == ImageFormat::Jpeg {
+        // JPEG doesn't support alpha, so convert to RGB
+        let rgb_img = image::DynamicImage::ImageRgba8(img).into_rgb8();
+        rgb_img.save_with_format(path, format).map_err(|e| format!("Failed to save image: {}", e))?;
+    } else {
+        img.save_with_format(path, format).map_err(|e| format!("Failed to save image: {}", e))?;
+    }
 
     Ok(())
 }

@@ -264,7 +264,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_audit_simple_pdf() {
-        let sample_path = "../../samples/pdf20/pdf-association/Simple PDF 2.0 file.pdf";
+        let sample_path = "../../samples/standard/Simple PDF 2.0 file.pdf";
         let args = AuditArgs {
             path: sample_path.into(),
         };

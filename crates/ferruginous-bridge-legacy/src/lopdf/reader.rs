@@ -29,25 +29,33 @@ impl Reader {
         let mut i = 0;
         while i < data.len().saturating_sub(obj_tag.len()) {
             if &data[i..i + obj_tag.len()] == obj_tag {
-                // Found something that looks like an object definition end.
-                // We need to look back for the ID and Generation.
-                // For now, this is a simplified version.
-                let mut start = i;
-                while start > 0 && (data[start-1].is_ascii_digit() || data[start-1].is_ascii_whitespace()) {
-                    start -= 1;
-                }
+                // Find Generation (last num before obj)
+                let mut p = i;
+                while p > 0 && data[p-1].is_ascii_whitespace() { p -= 1; }
+                let gen_end = p;
+                while p > 0 && data[p-1].is_ascii_digit() { p -= 1; }
+                let gen_start = p;
                 
-                let snippet = &data[start..i];
-                let parts: Vec<&[u8]> = snippet.split(|&b| b.is_ascii_whitespace())
-                    .filter(|p| !p.is_empty())
-                    .collect();
-                
-                if parts.len() >= 2 {
-                    if let (Ok(id), Ok(gen)) = (
-                        std::str::from_utf8(parts[0]).unwrap_or("").parse::<u32>(),
-                        std::str::from_utf8(parts[1]).unwrap_or("").parse::<u16>()
-                    ) {
-                        xref.insert(id, XrefEntry::Normal { offset: start as u64, generation: gen });
+                if gen_start < gen_end {
+                    // Find ID (last num before generation)
+                    let mut p_id = gen_start;
+                    while p_id > 0 && data[p_id-1].is_ascii_whitespace() { p_id -= 1; }
+                    let id_end = p_id;
+                    while p_id > 0 && data[p_id-1].is_ascii_digit() { p_id -= 1; }
+                    let id_start = p_id;
+                    
+                    if id_start < id_end {
+                        // Check if it's preceded by something that isn't a digit or dot (verifying it's a separate token)
+                        let is_valid_start = id_start == 0 || (!data[id_start-1].is_ascii_digit() && data[id_start-1] != b'.');
+                        
+                        if is_valid_start {
+                            if let (Ok(id), Ok(gen)) = (
+                                std::str::from_utf8(&data[id_start..id_end]).unwrap_or("").parse::<u32>(),
+                                std::str::from_utf8(&data[gen_start..gen_end]).unwrap_or("").parse::<u16>()
+                            ) {
+                                xref.insert(id, XrefEntry::Normal { offset: id_start as u64, generation: gen });
+                            }
+                        }
                     }
                 }
             }

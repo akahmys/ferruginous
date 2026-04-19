@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use ferruginous_core::{PdfResult, PdfError};
+use ferruginous_core::PdfResult;
 
 /// Represents a mapping result from a CMap.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,12 +66,40 @@ impl CMap {
     }
 
     pub fn lookup(&self, code: &[u8]) -> Option<MappingResult> {
+        // 1. Try exact match
         if let Some(&cid) = self.code_to_cid.get(code) {
             return Some(MappingResult::Cid(cid));
         }
         if let Some(unicode) = self.code_to_unicode.get(code) {
             return Some(MappingResult::Unicode(unicode.clone()));
         }
+
+        // 2. Try normalized match (strip leading zeros)
+        let mut stripped = code;
+        while stripped.len() > 1 && stripped[0] == 0 {
+            stripped = &stripped[1..];
+            if let Some(&cid) = self.code_to_cid.get(stripped) {
+                return Some(MappingResult::Cid(cid));
+            }
+            if let Some(unicode) = self.code_to_unicode.get(stripped) {
+                return Some(MappingResult::Unicode(unicode.clone()));
+            }
+        }
+
+        // 3. Try padded match (add leading zeros)
+        for target_len in [2, 4] {
+            if code.len() < target_len {
+                let mut padded = vec![0u8; target_len - code.len()];
+                padded.extend_from_slice(code);
+                if let Some(&cid) = self.code_to_cid.get(&padded) {
+                    return Some(MappingResult::Cid(cid));
+                }
+                if let Some(unicode) = self.code_to_unicode.get(&padded) {
+                    return Some(MappingResult::Unicode(unicode.clone()));
+                }
+            }
+        }
+
         None
     }
 
@@ -288,10 +316,18 @@ impl<'a> CMapLexer<'a> {
             self.pos += 1;
         }
         if self.pos < self.input.len() { self.pos += 1; } // '>'
-        let hex_str = std::str::from_utf8(&hex).map_err(|_| PdfError::Other("Invalid hex".into()))?;
-        let bytes = (0..hex_str.len()).step_by(2)
-            .map(|i| u8::from_str_radix(&hex_str[i..i+2], 16).unwrap_or(0))
-            .collect();
+        
+        let mut bytes = Vec::new();
+        let mut i = 0;
+        while i < hex.len() {
+            let b1 = hex[i];
+            let b2 = if i + 1 < hex.len() { hex[i+1] } else { b'0' };
+            
+            let h1 = char::from(b1).to_digit(16).unwrap_or(0) as u8;
+            let h2 = char::from(b2).to_digit(16).unwrap_or(0) as u8;
+            bytes.push((h1 << 4) | h2);
+            i += 2;
+        }
         Ok(Some(CMapToken::HexString(bytes)))
     }
 

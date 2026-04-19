@@ -132,6 +132,34 @@ impl Object {
         }
     }
 
+    pub fn as_string(&self) -> Option<&[u8]> {
+        match self {
+            Self::String(s) => Some(s.as_ref()),
+            _ => None,
+        }
+    }
+
+    /// Decodes a PDF string, handling UTF-16BE BOM (FE FF) if present.
+    pub fn to_string_lossy(&self) -> String {
+        match self {
+            Self::String(s) => {
+                let data = s.as_ref();
+                if data.starts_with(&[0xFE, 0xFF]) {
+                    // Try decoding as UTF-16BE
+                    let utf16_data: Vec<u16> = data[2..]
+                        .chunks_exact(2)
+                        .map(|chunk| u16::from_be_bytes([chunk[0], chunk[1]]))
+                        .collect();
+                    String::from_utf16_lossy(&utf16_data)
+                } else {
+                    String::from_utf8_lossy(data).into_owned()
+                }
+            }
+            Self::Name(n) => String::from_utf8_lossy(n.as_ref()).into_owned(),
+            _ => format!("{:?}", self),
+        }
+    }
+
     pub fn as_dict(&self) -> Option<&BTreeMap<PdfName, Object>> {
         match self {
             Self::Dictionary(d) | Self::Stream(d, _) => Some(d.as_ref()),
@@ -142,6 +170,13 @@ impl Object {
     pub fn as_dict_arc(&self) -> Option<Arc<BTreeMap<PdfName, Object>>> {
         match self {
             Self::Dictionary(d) | Self::Stream(d, _) => Some(d.clone()),
+            _ => None,
+        }
+    }
+
+    pub fn as_dict_mut(&mut self) -> Option<&mut BTreeMap<PdfName, Object>> {
+        match self {
+            Self::Dictionary(d) | Self::Stream(d, _) => Some(Arc::make_mut(d)),
             _ => None,
         }
     }
@@ -187,10 +222,6 @@ impl Object {
         if let Self::Reference(r) = self { Some(*r) } else { None }
     }
 
-    pub fn as_string(&self) -> Option<&Bytes> {
-        if let Self::String(s) = self { Some(s) } else { None }
-    }
-
     /// Decodes stream data using filters specified in the stream dictionary.
     pub fn decode_stream(&self) -> PdfResult<Bytes> {
         match self {
@@ -201,8 +232,8 @@ impl Object {
         }
     }
 
-    /// Recursively collects all indirect object IDs referenced by this object.
-    pub fn gather_references(&self, refs: &mut std::collections::HashSet<u32>) {
+    /// Recursively collects all unique indirect object IDs referenced by this object.
+    pub fn gather_references(&self, refs: &mut std::collections::BTreeSet<u32>) {
         match self {
             Self::Reference(r) => {
                 refs.insert(r.id);

@@ -27,15 +27,12 @@ fn decode_png_predictor(
     columns: usize,
     data: &[u8],
 ) -> PdfResult<Vec<u8>> {
-    // PNG predictors use one byte before each row to specify the algorithm for that row.
-    // (ISO 32000-2 Clause 7.4.4.4, Table 12)
+    let row_size = (columns * colors * bits_per_component).div_ceil(8);
+    let bytes_per_pixel = (colors * bits_per_component).div_ceil(8);
+    let encoded_row_size = row_size + 1;
     
-    let bytes_per_pixel = (colors * bits_per_component + 7) / 8;
-    let row_size = (columns * colors * bits_per_component + 7) / 8;
-    let encoded_row_size = row_size + 1; // 1 byte for predictor type
-    
-    if data.len() % encoded_row_size != 0 {
-        return Err(PdfError::Other(format!("Invalid data length for PNG predictor: expected multiple of {}, got {}", encoded_row_size, data.len())));
+    if !data.len().is_multiple_of(encoded_row_size) {
+        return Err(PdfError::Other("Invalid data length for PNG predictor".into()));
     }
     
     let num_rows = data.len() / encoded_row_size;
@@ -48,48 +45,45 @@ fn decode_png_predictor(
         let row_data = &data[start + 1..start + encoded_row_size];
         
         let mut current_row = vec![0; row_size];
-        
-        match predictor_type {
-            0 => { // None
-                current_row.copy_from_slice(row_data);
-            }
-            1 => { // Sub
-                for i in 0..row_size {
-                    let left = if i >= bytes_per_pixel { current_row[i - bytes_per_pixel] } else { 0 };
-                    current_row[i] = row_data[i].wrapping_add(left);
-                }
-            }
-            2 => { // Up
-                for i in 0..row_size {
-                    let up = prev_row[i];
-                    current_row[i] = row_data[i].wrapping_add(up);
-                }
-            }
-            3 => { // Average
-                for i in 0..row_size {
-                    let left = if i >= bytes_per_pixel { current_row[i - bytes_per_pixel] } else { 0 };
-                    let up = prev_row[i];
-                    let avg = ((left as u16 + up as u16) / 2) as u8;
-                    current_row[i] = row_data[i].wrapping_add(avg);
-                }
-            }
-            4 => { // Paeth
-                for i in 0..row_size {
-                    let left = if i >= bytes_per_pixel { current_row[i - bytes_per_pixel] } else { 0 };
-                    let up = prev_row[i];
-                    let upper_left = if i >= bytes_per_pixel { prev_row[i - bytes_per_pixel] } else { 0 };
-                    let p = paeth_predictor(left, up, upper_left);
-                    current_row[i] = row_data[i].wrapping_add(p);
-                }
-            }
-            _ => return Err(PdfError::Other(format!("Unknown PNG predictor type: {}", predictor_type))),
-        }
+        apply_predictor_to_row(predictor_type, row_data, &prev_row, &mut current_row, bytes_per_pixel)?;
         
         decoded.extend_from_slice(&current_row);
         prev_row = current_row;
     }
-    
     Ok(decoded)
+}
+
+fn apply_predictor_to_row(
+    p_type: u8,
+    row_data: &[u8],
+    prev_row: &[u8],
+    current_row: &mut [u8],
+    bpp: usize,
+) -> PdfResult<()> {
+    let row_size = current_row.len();
+    match p_type {
+        0 => current_row.copy_from_slice(row_data),
+        1 => for i in 0..row_size {
+            let left = if i >= bpp { current_row[i - bpp] } else { 0 };
+            current_row[i] = row_data[i].wrapping_add(left);
+        },
+        2 => for i in 0..row_size {
+            current_row[i] = row_data[i].wrapping_add(prev_row[i]);
+        },
+        3 => for i in 0..row_size {
+            let left = if i >= bpp { current_row[i - bpp] } else { 0 };
+            let avg = ((left as u16 + prev_row[i] as u16) / 2) as u8;
+            current_row[i] = row_data[i].wrapping_add(avg);
+        },
+        4 => for i in 0..row_size {
+            let left = if i >= bpp { current_row[i - bpp] } else { 0 };
+            let upper_left = if i >= bpp { prev_row[i - bpp] } else { 0 };
+            let p = paeth_predictor(left, prev_row[i], upper_left);
+            current_row[i] = row_data[i].wrapping_add(p);
+        },
+        _ => return Err(PdfError::Other(format!("Unknown PNG predictor: {}", p_type))),
+    }
+    Ok(())
 }
 
 fn paeth_predictor(a: u8, b: u8, c: u8) -> u8 {

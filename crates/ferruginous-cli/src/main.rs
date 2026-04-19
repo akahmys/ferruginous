@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 use ferruginous_sdk::PdfDocument;
 use anyhow::{Context, Result};
-use colored::*;
+use colored::Colorize;
 
 #[derive(Parser)]
 #[command(name = "ferruginous")]
@@ -87,7 +87,7 @@ async fn main() -> Result<()> {
         Commands::Render { file, page, output } => {
             let out_path = output.unwrap_or_else(|| {
                 let mut p = file.clone();
-                p.set_extension(format!("page{}.png", page));
+                p.set_extension(format!("page{page}.png"));
                 p
             });
 
@@ -105,7 +105,7 @@ async fn main() -> Result<()> {
             let doc = PdfDocument::open(data.into()).context("Failed to open PDF document")?;
             let compliance = doc.get_compliance()?;
             
-            println!("{:#?}", compliance);
+            println!("{compliance:#?}");
         }
         Commands::Extract { target } => {
             match target {
@@ -116,13 +116,13 @@ async fn main() -> Result<()> {
                     
                     if let Some(p_idx) = page {
                         let text = doc.extract_text(p_idx).context("Failed to extract text from page")?;
-                        println!("{}", text);
+                        println!("{text}");
                     } else {
                         let count = doc.page_count()?;
                         for i in 0..count {
-                            println!("{}", format!("--- Page {} ---", i).dimmed());
-                            let text = doc.extract_text(i).context(format!("Failed to extract text from page {}", i))?;
-                            println!("{}", text);
+                            println!("{}", format!("--- Page {i} ---").dimmed());
+                            let text = doc.extract_text(i).context(format!("Failed to extract text from page {i}"))?;
+                            println!("{text}");
                         }
                     }
                 }
