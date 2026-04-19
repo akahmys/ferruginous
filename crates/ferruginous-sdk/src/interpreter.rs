@@ -591,7 +591,7 @@ impl<'a> Interpreter<'a> {
                 _ => ferruginous_core::graphics::PixelFormat::Rgb8,
             },
             Object::Array(a) if !a.is_empty() => {
-                let cs_name = a[0].as_name().map(|n| n.as_str()).unwrap_or("");
+                let cs_name = a[0].as_name().map_or("", |n| n.as_str());
                 if cs_name == "Indexed" || cs_name == "I" {
                     // Indexed images typically use 1 byte per pixel (index)
                     ferruginous_core::graphics::PixelFormat::Gray8

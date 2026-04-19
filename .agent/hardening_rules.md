@@ -37,3 +37,9 @@ These rules capture the architectural hardening requirements identified during t
     - **No Decryption for Containers**: Object Streams (`/ObjStm`) and Cross-Reference Streams (`/XRef`) must NEVER be decrypted, even in an encrypted document.
     - **AESV3 Partial Blocks**: Revision 6+ decryption must handle non-16-byte blocks using the ECB-mask XOR method rather than padding.
     - **Revision 6 Key Salt**: The FEK derivation for Revision 6 must use the Key Salt at `U[40..48]`, NOT the validation salt.
+## 7. Structural Logic & Validation
+- **Rule**: Validation logic MUST be deterministic and strictly decoupled from the repair engine.
+- **Criteria**:
+    - **Predicate Purity**: Arlington predicates MUST be parsed and evaluated against the document state without side effects.
+    - **Heuristic Labeling**: Tagged PDF repair should favor "conservative labeling" (e.g., defaulting to `P` tags) to avoid mischaracterizing structural hierarchy.
+    - **Encoding Fidelity**: Always prioritize `/Differences` and `/CMap` over heuristic character mapping during structural inference.

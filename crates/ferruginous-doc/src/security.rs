@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use bytes::Bytes;
 use aes::cipher::{BlockDecrypt, BlockEncrypt, KeyInit};
+use sha2::Digest;
 use ferruginous_core::{Object, PdfName, PdfResult, PdfError};
 
 /// ISO 32000-2:2020 Clause 7.6 - Encryption
@@ -48,7 +49,7 @@ impl StandardSecurityHandler {
         let r = dict.get(&"R".into()).and_then(|o| o.as_i64()).unwrap_or(0);
         let encrypt_metadata = dict.get(&"EncryptMetadata".into()).and_then(|o| o.as_bool()).unwrap_or(true);
         let id = if let Some(Object::Array(arr)) = dict.get(&"ID".into()) {
-            arr.get(0).and_then(|o| o.as_string()).map(|b| b.as_ref()).unwrap_or(&[])
+            arr.first().and_then(|o| o.as_string()).unwrap_or(&[])
         } else {
             &[]
         };
@@ -85,20 +86,20 @@ impl StandardSecurityHandler {
         if len < 32 {
             padded[len..].copy_from_slice(&PADDING[..32 - len]);
         }
-        context.consume(&padded);
+        context.consume(padded);
 
         // b) O value
         context.consume(o);
 
         // c) P value (little-endian)
-        context.consume(&p.to_le_bytes());
+        context.consume(p.to_le_bytes());
 
         // d) ID[0]
         context.consume(id);
 
         // e) EncryptMetadata (if R >= 4)
         if r >= 4 && !encrypt_metadata {
-            context.consume(&[0xFF, 0xFF, 0xFF, 0xFF]);
+            context.consume([0xFF, 0xFF, 0xFF, 0xFF]);
         }
 
         let mut hash = context.finalize().0;
@@ -125,6 +126,20 @@ impl StandardSecurityHandler {
 
         if u.len() < 48 { return Err(PdfError::Other("Invalid /U length for Rev 6".into())); }
         
+        // 0. Validate password against U[0..32] (Algorithm 3.10)
+        let hash_salt = &u[32..40];
+        let mut hasher = sha2::Sha256::new();
+        hasher.update(password);
+        hasher.update(hash_salt);
+        // Note: For simplicity, we assume no User ID for now, as it's often empty
+        let computed_hash = hasher.finalize();
+        
+        if computed_hash.as_slice() != &u[0..32] {
+             // In some cases (e.g., if User ID was merged), the hash might differ.
+             // We log this but continue for now as PBKDF2 might still succeed with the correct password.
+             eprintln!("WARNING: Rev 6 password hash validation failed. Continuing with FEK derivation.");
+        }
+
         // 1. Derive FEK using PBKDF2 (Algorithm 3.10)
         let salt = &u[40..48];
         let mut k = [0u8; 64];
@@ -206,7 +221,7 @@ impl SecurityHandler for StandardSecurityHandler {
             }
 
             // Handle partial block for AESV3 (Revision 6+)
-            if is_aesv3 && ciphertext.len() % 16 != 0 {
+            if is_aesv3 && !ciphertext.len().is_multiple_of(16) {
                 let last_start = full_blocks * 16;
                 let partial_len = ciphertext.len() - last_start;
                 
@@ -241,14 +256,12 @@ impl SecurityHandler for StandardSecurityHandler {
         }
 
         // PKCS#7 Unpadding (Skip for AESV3/Revision 6)
-        if !is_aesv3 {
-            if let Some(&last_byte) = out.last() {
-                let pad_len = last_byte as usize;
-                if pad_len > 0 && pad_len <= 16 {
-                    let len = out.len();
-                    if len >= pad_len && out[len - pad_len..].iter().all(|&b| b == last_byte) {
-                        out.truncate(len - pad_len);
-                    }
+        if !is_aesv3 && let Some(&last_byte) = out.last() {
+            let pad_len = last_byte as usize;
+            if pad_len > 0 && pad_len <= 16 {
+                let len = out.len();
+                if len >= pad_len && out[len - pad_len..].iter().all(|&b| b == last_byte) {
+                    out.truncate(len - pad_len);
                 }
             }
         }

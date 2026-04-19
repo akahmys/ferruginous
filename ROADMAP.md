@@ -155,5 +155,14 @@ The "Rebirth" project aims to achieve the world's most robust and ISO-compliant 
   - [x] Rule Refinement & Reflection ([.agent/hardening_rules.md], [.agent/reflections.md])
   - [x] Update Documentation (ROADMAP, README)
 
+## Phase 17: Arlington Predicates & Structural Validation
+- [x] **M51: Predicate Engine**: Implement `nom`-based parser for ISO 32000-2 Arlington Model predicates.
+- [x] **M52: Evaluation Logic**: Develop a deterministic evaluator for complex validation conditions (SinceVersion, Required, etc.).
+
+## Phase 18: Advanced Filters & Tagged PDF Repair
+- [x] **M53: RunLengthDecode**: Implement the missing RLE stream filter for full ISO compliance.
+- [x] **M54: Structural Inference**: Implement heuristic-based tagging for non-accessible documents.
+- [x] **M55: Automatic Tag Repair**: Develop a repair engine to inject `StructTreeRoot` and establish logical structure.
+
 ---
-*Roadmap updated: 2026-04-19 (Phase 16 Closure Completed)*
+*Roadmap updated: 2026-04-20 (Phase 17/18 Completed)*

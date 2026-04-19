@@ -40,5 +40,6 @@ hmac = "0.12"
 rand = "0.8"
 roxmltree.workspace = true
 md5 = "0.8.0"
+nom = "7"
 
 [dev-dependencies]

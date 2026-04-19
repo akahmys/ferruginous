@@ -220,9 +220,34 @@ impl FontResource {
 
         // Encoding
         let encoding = if let Some(e_obj) = dict.get(&"Encoding".into()) {
-             match e_obj {
+             let e_resolved = resolver.resolve_if_ref(e_obj)?;
+             match e_resolved {
                  Object::Name(n) => encoding::Encoding::from_name(n.as_str()),
-                 _ => None, // TODO: Custom encoding with Differences
+                 Object::Dictionary(e_dict) => {
+                     let base = e_dict.get(&"BaseEncoding".into())
+                         .and_then(|o| o.as_name())
+                         .and_then(|n| encoding::Encoding::from_name(n.as_str()));
+                     
+                     let mut differences = BTreeMap::new();
+                     if let Some(diff_arr) = e_dict.get(&"Differences".into()).and_then(|o| o.as_array()) {
+                         let mut current_code = 0u8;
+                         for item in diff_arr.iter() {
+                             match item {
+                                 Object::Integer(c) => current_code = *c as u8,
+                                 Object::Name(n) => {
+                                     differences.insert(current_code, n.as_str().to_string());
+                                     current_code = current_code.wrapping_add(1);
+                                 }
+                                 _ => {}
+                             }
+                         }
+                     }
+                     Some(encoding::Encoding::Custom { 
+                         base: base.map(Box::new), 
+                         differences 
+                     })
+                 }
+                 _ => None,
              }
         } else {
              None

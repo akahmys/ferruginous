@@ -3,6 +3,7 @@ use crate::error::{PdfResult, PdfError};
 pub mod flate;
 pub mod dct;
 pub mod predict;
+pub mod run_length;
 
 pub use flate::decode_flate;
 pub use dct::decode_dct;
@@ -14,6 +15,7 @@ pub fn decode_stream(filter: &str, data: &[u8]) -> PdfResult<Vec<u8>> {
     match filter {
         "FlateDecode" | "Fl" => decode_flate(data),
         "DCTDecode" | "DCT" => decode_dct(data),
+        "RunLengthDecode" | "RL" => run_length::decode_run_length(data),
         "CCITTFaxDecode" | "CCF" => Err(PdfError::Other("CCITTFaxDecode not yet implemented".into())),
         _ => Err(PdfError::Other(format!("Unsupported filter: {}", filter))),
     }

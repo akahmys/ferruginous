@@ -134,10 +134,12 @@ impl SkrifaBridge {
             
             // Update x_offset (ISO 32000 Section 9.4.4)
             // tx = ((w0 - Tj/1000) * Th + Tc + Tw) * Tf
-            // Wait, that's complex. Simple version for now:
             x_offset += *width as f64 * scale as f64 * h_scale as f64;
             x_offset += options.char_spacing as f64 * h_scale as f64;
-            // TODO: handle word spacing (Tc) if glyph is a space
+
+            if *gid == 32 {
+                x_offset += options.word_spacing as f64 * h_scale as f64;
+            }
         }
         
         combined_path

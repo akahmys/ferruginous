@@ -70,3 +70,20 @@ This document tracks development friction, failures, and subsequent protocol imp
 - **Observation**: Some PDF producers use Raw Deflate (RFC 1951) instead of Zlib (RFC 1950) despite the `FlateDecode` filter name.
 - **Cause**: Rigid adherence to Zlib headers in initial filter implementation.
 - **Protocol Feedback**: Added **HDD Clause 9: Forgiving Decompression Fallback**. Decompression filters SHOULD attempt Raw Deflate fallback if the primary RFC-compliant header is missing or corrupted.
+---
+## [2026-04-20] Phase 17/18: Modernization & Hardening
+
+### 1. Phenomenon: Arlington Predicate Engine Implementation Overhead
+- **Observation**: Hand-coding parsers for complex Arlington predicates (fn:SinceVersion, fn:Required) led to logic duplication and fragile string manipulation.
+- **Cause**: Initial attempt used `split_once` and regex, which couldn't handle nested functions like `fn:IsRequired(fn:SinceVersion(2.0, key), key)`.
+- **Protocol Feedback**: Added **HDD Clause 10: Formal Grammar for Structural Validation**. Any validation engine based on the Arlington Model (or similar DSLs) MUST use a combinator-based parser (e.g., `nom`) to ensure recursive correctness and deterministic failure modes.
+
+### 2. Phenomenon: Tagged PDF Inference Complexity
+- **Observation**: Automatic repair sometimes produced nonsensical structural trees when the content stream used complex coordinate transformations.
+- **Cause**: Inference logic relied on local text operators without accounting for the accumulated CTM (Current Transformation Matrix).
+- **Protocol Feedback**: Updated **HDD Section 5 (Resource Intelligence)** to mandate "Context-Aware Structural Inference". Structural repair engines MUST use the full `Interpreter` state (including CTM and Text Matrices) to determine logical flow from visual layout.
+
+### 3. Phenomenon: Module Collision (src/validation.rs vs src/validation/mod.rs)
+- **Observation**: Creating a new validation directory while `validation.rs` existed led to a fatal compilation error ("file found at both paths").
+- **Cause**: Neglected to check for existing file-based modules before initiating directory-based nesting.
+- **Protocol Feedback**: Added **HDD Clause 11: Module Structural Pre-Audit**. Before converting a file-based module to a directory-based one, explicitly move or merge the existing file content to `mod.rs` and verify the crate root registry (`lib.rs`) to prevent namespace collisions.
