@@ -45,3 +45,4 @@ clippy_*.txt
 /fepdf_test/ja/
 /fepdf_test/en/
 /fepdf_test/results/
+**/*.pdf
