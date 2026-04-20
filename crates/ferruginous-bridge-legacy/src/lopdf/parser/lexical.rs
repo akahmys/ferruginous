@@ -32,10 +32,7 @@ pub fn skip(input: &[u8]) -> IResult<&[u8], ()> {
 
 /// PDF Boolean (Clause 7.3.2).
 pub fn boolean(input: &[u8]) -> IResult<&[u8], bool> {
-    alt((
-        map(tag("true"), |_| true),
-        map(tag("false"), |_| false),
-    ))(input)
+    alt((map(tag("true"), |_| true), map(tag("false"), |_| false)))(input)
 }
 
 /// PDF Null (Clause 7.3.9).

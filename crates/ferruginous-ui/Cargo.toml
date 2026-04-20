@@ -1,0 +1,31 @@
+[package]
+name = "ferruginous-ui"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "ferruginous"
+path = "src/main.rs"
+
+[dependencies]
+ferruginous-core = { path = "../ferruginous-core" }
+ferruginous-doc = { path = "../ferruginous-doc" }
+ferruginous-render = { path = "../ferruginous-render" }
+ferruginous-sdk = { path = "../ferruginous-sdk" }
+vello.workspace = true
+kurbo.workspace = true
+
+egui = "0.33.1"
+eframe = { version = "0.33.1", features = ["wgpu"] }
+egui-wgpu = "0.33.1"
+rfd = "0.15"
+tokio = { workspace = true }
+pollster = "0.4"
+bytes = { workspace = true }
+log = "0.4"
+env_logger = "0.11"
+wgpu = "=28.0.0" 

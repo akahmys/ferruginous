@@ -16,7 +16,6 @@ pub enum Encoding {
     },
 }
 
-
 use std::sync::OnceLock;
 
 impl Encoding {
@@ -90,10 +89,14 @@ impl Encoding {
             "greater" => Some(">".into()),
             "question" => Some("?".into()),
             "at" => Some("@".into()),
-            "A" | "B" | "C" | "D" | "E" | "F" | "G" | "H" | "I" | "J" | "K" | "L" | "M" |
-            "N" | "O" | "P" | "Q" | "R" | "S" | "T" | "U" | "V" | "W" | "X" | "Y" | "Z" => Some(name.into()),
-            "a" | "b" | "c" | "d" | "e" | "f" | "g" | "h" | "i" | "j" | "k" | "l" | "m" |
-            "n" | "o" | "p" | "q" | "r" | "s" | "t" | "u" | "v" | "w" | "x" | "y" | "z" => Some(name.into()),
+            "A" | "B" | "C" | "D" | "E" | "F" | "G" | "H" | "I" | "J" | "K" | "L" | "M" | "N"
+            | "O" | "P" | "Q" | "R" | "S" | "T" | "U" | "V" | "W" | "X" | "Y" | "Z" => {
+                Some(name.into())
+            }
+            "a" | "b" | "c" | "d" | "e" | "f" | "g" | "h" | "i" | "j" | "k" | "l" | "m" | "n"
+            | "o" | "p" | "q" | "r" | "s" | "t" | "u" | "v" | "w" | "x" | "y" | "z" => {
+                Some(name.into())
+            }
             "bracketleft" => Some("[".into()),
             "backslash" => Some("\\".into()),
             "bracketright" => Some("]".into()),
@@ -115,7 +118,9 @@ fn get_win_ansi_map() -> &'static BTreeMap<u8, char> {
     static MAP: OnceLock<BTreeMap<u8, char>> = OnceLock::new();
     MAP.get_or_init(|| {
         let mut m = BTreeMap::new();
-        for i in 32..127 { m.insert(i, i as char); }
+        for i in 32..127 {
+            m.insert(i, i as char);
+        }
         // WinAnsi specifics (simplified)
         m.insert(128, '€');
         m
@@ -126,7 +131,9 @@ fn get_mac_roman_map() -> &'static BTreeMap<u8, char> {
     static MAP: OnceLock<BTreeMap<u8, char>> = OnceLock::new();
     MAP.get_or_init(|| {
         let mut m = BTreeMap::new();
-        for i in 32..127 { m.insert(i, i as char); }
+        for i in 32..127 {
+            m.insert(i, i as char);
+        }
         m
     })
 }
@@ -135,7 +142,9 @@ fn get_standard_map() -> &'static BTreeMap<u8, char> {
     static MAP: OnceLock<BTreeMap<u8, char>> = OnceLock::new();
     MAP.get_or_init(|| {
         let mut m = BTreeMap::new();
-        for i in 32..127 { m.insert(i, i as char); }
+        for i in 32..127 {
+            m.insert(i, i as char);
+        }
         m
     })
 }

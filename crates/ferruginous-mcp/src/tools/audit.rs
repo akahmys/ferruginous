@@ -1,10 +1,10 @@
+use crate::{McpError, McpResult};
 use bytes::Bytes;
-use ferruginous_core::{Object, Reference, PdfError, PdfName, PdfResult, Resolver};
+use ferruginous_core::{Object, PdfError, PdfName, PdfResult, Reference, Resolver};
 use ferruginous_doc::{Document, PageTree};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::fs;
-use crate::{McpError, McpResult};
 
 /// Arguments for the structural audit tool.
 #[derive(Serialize, Deserialize, Debug, JsonSchema)]
@@ -42,7 +42,9 @@ fn audit_document_internal(args: AuditArgs) -> McpResult<String> {
     let mut findings = Vec::new();
 
     // 1. Load File
-    let data = Bytes::from(fs::read(&args.path).map_err(|e| McpError::Other(format!("Failed to read file: {e}")))?);
+    let data = Bytes::from(
+        fs::read(&args.path).map_err(|e| McpError::Other(format!("Failed to read file: {e}")))?,
+    );
 
     // 2. Open Document (Structural Check)
     let doc: Document = match Document::open(data) {
@@ -71,16 +73,9 @@ fn audit_document_internal(args: AuditArgs) -> McpResult<String> {
     validate_page_tree(&doc, &root_ref, &mut findings);
     validate_compliance(&doc, &mut findings);
 
-    let status = if findings.iter().any(|f| f.severity == "Error") {
-        "FAILED"
-    } else {
-        "PASSED"
-    };
+    let status = if findings.iter().any(|f| f.severity == "Error") { "FAILED" } else { "PASSED" };
 
-    Ok(serde_json::to_string_pretty(&AuditReport {
-        status: status.into(),
-        findings,
-    })?)
+    Ok(serde_json::to_string_pretty(&AuditReport { status: status.into(), findings })?)
 }
 
 fn validate_catalog(doc: &Document, root_ref: &Reference, findings: &mut Vec<Finding>) {
@@ -93,7 +88,8 @@ fn validate_catalog(doc: &Document, root_ref: &Reference, findings: &mut Vec<Fin
                     findings.push(Finding {
                         severity: "Warning".into(),
                         category: "Compliance".into(),
-                        message: "Root object missing /Type /Catalog (Required for ISO 32000)".into(),
+                        message: "Root object missing /Type /Catalog (Required for ISO 32000)"
+                            .into(),
                     });
                 }
                 let pages_key = PdfName::from("Pages");
@@ -125,7 +121,8 @@ fn validate_catalog(doc: &Document, root_ref: &Reference, findings: &mut Vec<Fin
 fn validate_page_tree(doc: &Document, root_ref: &Reference, findings: &mut Vec<Finding>) {
     let res: PdfResult<()> = (|| {
         let catalog = Resolver::resolve(doc, root_ref)?;
-        let dict = catalog.as_dict()
+        let dict = catalog
+            .as_dict()
             .ok_or_else(|| PdfError::Other("Catalog is not a dictionary".into()))?;
 
         let pages_key = PdfName::from("Pages");
@@ -198,7 +195,7 @@ fn validate_compliance(doc: &Document, findings: &mut Vec<Finding>) {
                     category: "Compliance".into(),
                     message: format!("Document claims PDF/A conformance (Part {part})."),
                 });
-                
+
                 if part == 4 && info.output_intents.is_empty() {
                     findings.push(Finding {
                         severity: "Warning".into(),
@@ -224,15 +221,17 @@ fn validate_compliance(doc: &Document, findings: &mut Vec<Finding>) {
                     category: "Compliance".into(),
                     message: format!("Document claims PDF/UA conformance (Part {part})."),
                 });
-                
+
                 if !info.has_struct_tree {
                     findings.push(Finding {
                         severity: "Error".into(),
                         category: "Compliance".into(),
-                        message: "PDF/UA compliant files MUST have a /StructTreeRoot in the Catalog.".into(),
+                        message:
+                            "PDF/UA compliant files MUST have a /StructTreeRoot in the Catalog."
+                                .into(),
                     });
                 }
-                
+
                 if !info.is_marked {
                     findings.push(Finding {
                         severity: "Error".into(),
@@ -244,7 +243,9 @@ fn validate_compliance(doc: &Document, findings: &mut Vec<Finding>) {
                 findings.push(Finding {
                     severity: "Info".into(),
                     category: "Compliance".into(),
-                    message: "Document contains logical structure (/StructTreeRoot) but no PDF/UA claim.".into(),
+                    message:
+                        "Document contains logical structure (/StructTreeRoot) but no PDF/UA claim."
+                            .into(),
                 });
             }
         }
@@ -265,9 +266,7 @@ mod tests {
     #[tokio::test]
     async fn test_audit_simple_pdf() {
         let sample_path = "../../samples/standard/Simple PDF 2.0 file.pdf";
-        let args = AuditArgs {
-            path: sample_path.into(),
-        };
+        let args = AuditArgs { path: sample_path.into() };
         let result = audit_document_impl(args).await.unwrap();
         println!("Audit Result:\n{result}");
         assert!(result.contains("\"status\": \"PASSED\""));

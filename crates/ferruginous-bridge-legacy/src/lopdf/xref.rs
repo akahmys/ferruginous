@@ -17,9 +17,7 @@ pub struct Xref {
 
 impl Xref {
     pub fn new() -> Self {
-        Xref {
-            entries: BTreeMap::new(),
-        }
+        Xref { entries: BTreeMap::new() }
     }
 
     pub fn insert(&mut self, id: u32, entry: XrefEntry) {

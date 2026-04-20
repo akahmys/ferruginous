@@ -1,11 +1,11 @@
 #[cfg(feature = "legacy-bridge")]
-use ferruginous_core::{Object, PdfResult, Reference, Resolver, PdfName};
-#[cfg(feature = "legacy-bridge")]
 use ferruginous_bridge_legacy::lopdf;
 #[cfg(feature = "legacy-bridge")]
-use std::sync::Arc;
+use ferruginous_core::{Object, PdfName, PdfResult, Reference, Resolver};
 #[cfg(feature = "legacy-bridge")]
 use std::collections::BTreeMap;
+#[cfg(feature = "legacy-bridge")]
+use std::sync::Arc;
 
 #[cfg(feature = "legacy-bridge")]
 pub struct LopdfResolver {
@@ -24,9 +24,11 @@ impl LopdfResolver {
 #[cfg(feature = "legacy-bridge")]
 impl Resolver for LopdfResolver {
     fn resolve(&self, reference: &Reference) -> PdfResult<Object> {
-        let obj = self.doc.get_object(reference.id)
+        let obj = self
+            .doc
+            .get_object(reference.id)
             .ok_or(ferruginous_core::error::PdfError::ObjectNotFound(*reference))?;
-        
+
         Ok(convert_object(obj))
     }
 }

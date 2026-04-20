@@ -1,5 +1,5 @@
+use super::{object::Dictionary, Object, Xref};
 use std::collections::BTreeMap;
-use super::{Object, Xref, object::Dictionary};
 
 #[derive(Debug, Clone, Default)]
 pub struct Document {
@@ -49,7 +49,8 @@ impl Document {
 
     /// Recursively normalize strings in the document (Shift-JIS to UTF-8).
     pub fn apply_normalization(&mut self) {
-        self.repair_log.push("Starting character normalization (Shift-JIS -> UTF-8)...".to_string());
+        self.repair_log
+            .push("Starting character normalization (Shift-JIS -> UTF-8)...".to_string());
         // Normalize trailer
         Self::normalize_dict(&mut self.trailer);
 

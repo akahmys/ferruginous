@@ -2,9 +2,9 @@
 //!
 //! Provides a JavaScript-friendly interface for document loading and rendering.
 
-use wasm_bindgen::prelude::*;
-use ferruginous_sdk::PdfDocument as SdkDocument;
 use bytes::Bytes;
+use ferruginous_sdk::PdfDocument as SdkDocument;
+use wasm_bindgen::prelude::*;
 
 /// A JavaScript-friendly wrapper for a PDF document.
 #[wasm_bindgen]
@@ -19,20 +19,18 @@ impl PdfDocument {
     pub fn new(data: &[u8]) -> Result<PdfDocument, JsValue> {
         console_error_panic_hook::set_once();
         let bytes = Bytes::copy_from_slice(data);
-        let inner = SdkDocument::open(bytes)
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let inner = SdkDocument::open(bytes).map_err(|e| JsValue::from_str(&e.to_string()))?;
         Ok(PdfDocument { inner })
     }
 
     /// Returns the total number of pages in the document.
     #[wasm_bindgen(getter)]
     pub fn page_count(&self) -> Result<usize, JsValue> {
-        self.inner.page_count()
-            .map_err(|e| JsValue::from_str(&e.to_string()))
+        self.inner.page_count().map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
     /// Renders a specific page to a Canvas 2D context.
-    /// 
+    ///
     /// Note: This is a placeholder for the WebGPU/WebGL rendering pipeline.
     pub fn render_page(&self, _index: usize, _canvas_id: &str) -> Result<(), JsValue> {
         // Implementation will involve setting up a WebGPU surface via web-sys

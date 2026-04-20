@@ -19,7 +19,11 @@ pub fn get_standard_metrics(name: &str) -> Option<&'static StandardFontMetrics> 
 const HELVETICA_WIDTHS: [u16; 256] = {
     let mut w = [0u16; 256];
     // ASCII range
-    let mut i = 32; while i < 127 { w[i] = 600; i += 1; } // Generic width for Sans
+    let mut i = 32;
+    while i < 127 {
+        w[i] = 600;
+        i += 1;
+    } // Generic width for Sans
     // Specific characters (examples)
     w[b'i' as usize] = 278;
     w[b'l' as usize] = 278;
@@ -32,7 +36,11 @@ const HELVETICA_WIDTHS: [u16; 256] = {
 
 const TIMES_WIDTHS: [u16; 256] = {
     let mut w = [0u16; 256];
-    let mut i = 32; while i < 127 { w[i] = 500; i += 1; } // Generic width for Serif
+    let mut i = 32;
+    while i < 127 {
+        w[i] = 500;
+        i += 1;
+    } // Generic width for Serif
     w[b'i' as usize] = 273;
     w[b'm' as usize] = 783;
     w

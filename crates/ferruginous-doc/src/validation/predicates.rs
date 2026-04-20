@@ -1,13 +1,13 @@
+use ferruginous_core::{Object, PdfName};
 use nom::{
+    IResult,
     branch::alt,
     bytes::complete::{tag, take_while1},
     character::complete::{char, multispace0},
     combinator::map,
     multi::separated_list0,
     sequence::{delimited, preceded, tuple},
-    IResult,
 };
-use ferruginous_core::{Object, PdfName};
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -28,15 +28,9 @@ pub struct PredicateEvaluator<'a> {
 impl<'a> PredicateEvaluator<'a> {
     pub fn evaluate(&self, predicate: &Predicate) -> bool {
         match predicate {
-            Predicate::SinceVersion(ver, _key) => {
-                self.version >= ver.as_str()
-            }
-            Predicate::Required(key) => {
-                self.context.contains_key(&PdfName::from(key.as_str()))
-            }
-            Predicate::Deprecated(ver, _key) => {
-                self.version >= ver.as_str()
-            }
+            Predicate::SinceVersion(ver, _key) => self.version >= ver.as_str(),
+            Predicate::Required(key) => self.context.contains_key(&PdfName::from(key.as_str())),
+            Predicate::Deprecated(ver, _key) => self.version >= ver.as_str(),
             Predicate::IsRequired(cond, key) => {
                 if self.evaluate(cond) {
                     self.context.contains_key(&PdfName::from(key.as_str()))
@@ -56,7 +50,9 @@ fn parse_fn_name(input: &str) -> IResult<&str, &str> {
 }
 
 fn parse_arg(input: &str) -> IResult<&str, &str> {
-    delimited(multispace0, take_while1(|c: char| c.is_alphanumeric() || c == '.'), multispace0)(input)
+    delimited(multispace0, take_while1(|c: char| c.is_alphanumeric() || c == '.'), multispace0)(
+        input,
+    )
 }
 
 fn parse_args(input: &str) -> IResult<&str, Vec<&str>> {
@@ -65,13 +61,15 @@ fn parse_args(input: &str) -> IResult<&str, Vec<&str>> {
 
 pub fn parse_predicate(input: &str) -> IResult<&str, Predicate> {
     alt((
-        map(tuple((parse_fn_name, parse_args)), |(name, args)| {
-            match name {
-                "SinceVersion" if args.len() >= 2 => Predicate::SinceVersion(args[0].to_string(), args[1].to_string()),
-                "Required" if !args.is_empty() => Predicate::Required(args[0].to_string()),
-                "Deprecated" if args.len() >= 2 => Predicate::Deprecated(args[0].to_string(), args[1].to_string()),
-                _ => Predicate::Value(name.to_string()),
+        map(tuple((parse_fn_name, parse_args)), |(name, args)| match name {
+            "SinceVersion" if args.len() >= 2 => {
+                Predicate::SinceVersion(args[0].to_string(), args[1].to_string())
             }
+            "Required" if !args.is_empty() => Predicate::Required(args[0].to_string()),
+            "Deprecated" if args.len() >= 2 => {
+                Predicate::Deprecated(args[0].to_string(), args[1].to_string())
+            }
+            _ => Predicate::Value(name.to_string()),
         }),
         map(take_while1(|c: char| c.is_alphanumeric()), |s: &str| Predicate::Key(s.to_string())),
     ))(input)
@@ -94,7 +92,7 @@ mod tests {
         let context = BTreeMap::new();
         let eval = PredicateEvaluator { version: "2.0", context: &context };
         assert!(eval.evaluate(&p));
-        
+
         let eval_old = PredicateEvaluator { version: "1.7", context: &context };
         assert!(!eval_old.evaluate(&p));
     }

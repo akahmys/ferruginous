@@ -2,10 +2,10 @@
 //!
 //! (ISO 32000-2:2020 Compliance & Optimization Engine)
 
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use ferruginous_sdk::{PdfDocument, PdfStandard};
 use std::path::PathBuf;
-use anyhow::{Result, Context};
 
 #[derive(Parser, Debug)]
 #[command(name = "fepdf")]
@@ -144,7 +144,9 @@ async fn main() -> Result<()> {
         Commands::Repair { input, output } => {
             handle_repair(input, output)?;
         }
-        Commands::Rotate { input, output, pages, angle } => handle_rotate(input, output, pages, angle)?,
+        Commands::Rotate { input, output, pages, angle } => {
+            handle_rotate(input, output, pages, angle)?
+        }
         Commands::Render { input, output, page } => handle_render(input, output, page).await?,
         Commands::Text { input, pages } => handle_text(input, pages)?,
     }
@@ -176,7 +178,8 @@ fn handle_split(input: PathBuf, output: PathBuf, pages: Option<String>) -> Resul
     let range_str = pages.unwrap_or_else(|| "all".to_string());
     let target_indices = parse_page_range(&range_str, page_count)?;
 
-    let mut extracted = doc.extract_pages(target_indices).map_err(|e| anyhow::anyhow!("{:?}", e))?;
+    let mut extracted =
+        doc.extract_pages(target_indices).map_err(|e| anyhow::anyhow!("{:?}", e))?;
     extracted.save_as_version(&output, "2.0").map_err(|e| anyhow::anyhow!("{:?}", e))?;
     println!("SUCCESS: Extracted output saved to {:?}", output);
     Ok(())
@@ -191,8 +194,12 @@ fn handle_info(input: PathBuf, audit: bool, structure: bool) -> Result<()> {
     println!("\n--- [ DOCUMENT SUMMARY ] ---");
     println!("Version:    {}", summary.version);
     println!("Pages:      {}", summary.page_count);
-    if let Some(t) = &summary.metadata.title { println!("Title:      {}", t); }
-    if let Some(a) = &summary.metadata.author { println!("Author:     {}", a); }
+    if let Some(t) = &summary.metadata.title {
+        println!("Title:      {}", t);
+    }
+    if let Some(a) = &summary.metadata.author {
+        println!("Author:     {}", a);
+    }
 
     if audit {
         println!("\n--- [ COMPLIANCE AUDIT ] ---");
@@ -212,7 +219,13 @@ fn handle_info(input: PathBuf, audit: bool, structure: bool) -> Result<()> {
     Ok(())
 }
 
-fn handle_upgrade(input: PathBuf, output: PathBuf, standard: Option<String>, icc_profile: Option<PathBuf>, linearize: bool) -> Result<()> {
+fn handle_upgrade(
+    input: PathBuf,
+    output: PathBuf,
+    standard: Option<String>,
+    icc_profile: Option<PathBuf>,
+    linearize: bool,
+) -> Result<()> {
     println!("fepdf upgrade: {:?} -> {:?}", input, output);
     let data = std::fs::read(&input).with_context(|| "Failed to read input")?;
     let mut doc = PdfDocument::open(data.into()).map_err(|e| anyhow::anyhow!("{:?}", e))?;
@@ -224,7 +237,7 @@ fn handle_upgrade(input: PathBuf, output: PathBuf, standard: Option<String>, icc
             "ua2" => PdfStandard::UA2,
             _ => anyhow::bail!("Unsupported standard: {}", std_str),
         };
-        
+
         if (std == PdfStandard::A4 || std == PdfStandard::X6) && icc_profile.is_none() {
             println!("ADVICE: No --icc-profile specified. Defaulting to standard sRGB.");
         }
@@ -240,7 +253,13 @@ fn handle_upgrade(input: PathBuf, output: PathBuf, standard: Option<String>, icc
     Ok(())
 }
 
-fn handle_optimize(input: PathBuf, output: PathBuf, vacuum: bool, strip: bool, password: Option<String>) -> Result<()> {
+fn handle_optimize(
+    input: PathBuf,
+    output: PathBuf,
+    vacuum: bool,
+    strip: bool,
+    password: Option<String>,
+) -> Result<()> {
     println!("fepdf optimize: {:?} -> {:?}", input, output);
     let data = std::fs::read(&input).with_context(|| "Failed to read input")?;
     let mut doc = PdfDocument::open(data.into()).map_err(|e| anyhow::anyhow!("{:?}", e))?;
@@ -257,7 +276,8 @@ fn handle_optimize(input: PathBuf, output: PathBuf, vacuum: bool, strip: bool, p
 fn handle_repair(input: PathBuf, output: PathBuf) -> Result<()> {
     println!("fepdf repair: Attempting to salvage corrupted document {:?}", input);
     let data = std::fs::read(&input).with_context(|| "Failed to read input")?;
-    let mut doc = PdfDocument::open_and_repair(data.into()).map_err(|e| anyhow::anyhow!("{:?}", e))?;
+    let mut doc =
+        PdfDocument::open_and_repair(data.into()).map_err(|e| anyhow::anyhow!("{:?}", e))?;
 
     doc.save_as_version(&output, "2.0").map_err(|e| anyhow::anyhow!("{:?}", e))?;
     println!("SUCCESS: Repaired output saved to {:?}", output);
@@ -292,7 +312,7 @@ async fn handle_render(input: PathBuf, output: PathBuf, page_num: usize) -> Resu
     }
 
     doc.render_page_to_file(page_num - 1, &output).await.map_err(|e| anyhow::anyhow!("{:?}", e))?;
-    
+
     println!("SUCCESS: Rendered page saved to {:?}", output);
     Ok(())
 }

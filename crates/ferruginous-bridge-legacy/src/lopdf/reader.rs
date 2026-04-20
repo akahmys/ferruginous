@@ -1,5 +1,5 @@
-use crate::lopdf::Document;
 use crate::lopdf::xref::{Xref, XrefEntry};
+use crate::lopdf::Document;
 
 pub struct Reader;
 
@@ -25,35 +25,51 @@ impl Reader {
     pub fn reconstruct_xref(data: &[u8]) -> Xref {
         let mut xref = Xref::new();
         let obj_tag = b" obj";
-        
+
         let mut i = 0;
         while i < data.len().saturating_sub(obj_tag.len()) {
             if &data[i..i + obj_tag.len()] == obj_tag {
                 // Find Generation (last num before obj)
                 let mut p = i;
-                while p > 0 && data[p-1].is_ascii_whitespace() { p -= 1; }
+                while p > 0 && data[p - 1].is_ascii_whitespace() {
+                    p -= 1;
+                }
                 let gen_end = p;
-                while p > 0 && data[p-1].is_ascii_digit() { p -= 1; }
+                while p > 0 && data[p - 1].is_ascii_digit() {
+                    p -= 1;
+                }
                 let gen_start = p;
-                
+
                 if gen_start < gen_end {
                     // Find ID (last num before generation)
                     let mut p_id = gen_start;
-                    while p_id > 0 && data[p_id-1].is_ascii_whitespace() { p_id -= 1; }
+                    while p_id > 0 && data[p_id - 1].is_ascii_whitespace() {
+                        p_id -= 1;
+                    }
                     let id_end = p_id;
-                    while p_id > 0 && data[p_id-1].is_ascii_digit() { p_id -= 1; }
+                    while p_id > 0 && data[p_id - 1].is_ascii_digit() {
+                        p_id -= 1;
+                    }
                     let id_start = p_id;
-                    
+
                     if id_start < id_end {
                         // Check if it's preceded by something that isn't a digit or dot (verifying it's a separate token)
-                        let is_valid_start = id_start == 0 || (!data[id_start-1].is_ascii_digit() && data[id_start-1] != b'.');
-                        
+                        let is_valid_start = id_start == 0
+                            || (!data[id_start - 1].is_ascii_digit() && data[id_start - 1] != b'.');
+
                         if is_valid_start {
                             if let (Ok(id), Ok(gen)) = (
-                                std::str::from_utf8(&data[id_start..id_end]).unwrap_or("").parse::<u32>(),
-                                std::str::from_utf8(&data[gen_start..gen_end]).unwrap_or("").parse::<u16>()
+                                std::str::from_utf8(&data[id_start..id_end])
+                                    .unwrap_or("")
+                                    .parse::<u32>(),
+                                std::str::from_utf8(&data[gen_start..gen_end])
+                                    .unwrap_or("")
+                                    .parse::<u16>(),
                             ) {
-                                xref.insert(id, XrefEntry::Normal { offset: id_start as u64, generation: gen });
+                                xref.insert(
+                                    id,
+                                    XrefEntry::Normal { offset: id_start as u64, generation: gen },
+                                );
                             }
                         }
                     }
@@ -66,32 +82,46 @@ impl Reader {
 
     pub fn load_document(data: &[u8]) -> Result<Document, crate::BridgeError> {
         let mut doc = Document::new();
-        
-        let header_offset = Self::find_header(data).ok_or_else(|| crate::BridgeError::Parse("No PDF header found".into()))?;
+
+        let header_offset = Self::find_header(data)
+            .ok_or_else(|| crate::BridgeError::Parse("No PDF header found".into()))?;
         if header_offset > 0 {
-            doc.repair_log.push(format!("Found PDF header at offset {}. Repairing start position.", header_offset));
+            doc.repair_log.push(format!(
+                "Found PDF header at offset {}. Repairing start position.",
+                header_offset
+            ));
         }
-        let header_str = std::str::from_utf8(&data[header_offset..header_offset+8]).unwrap_or("%PDF-1.7");
+        let header_str =
+            std::str::from_utf8(&data[header_offset..header_offset + 8]).unwrap_or("%PDF-1.7");
         doc.version = header_str[5..].to_string();
 
         // Check for Linearization (Fast Web View)
         let search_limit = std::cmp::min(data.len(), header_offset + 1024);
         let lin_tag = b"/Linearized";
-        if data[header_offset..search_limit].windows(lin_tag.len()).position(|w| w == lin_tag).is_some() {
-            doc.repair_log.push("Linearized PDF detected. Handling optimized structure via global scan.".to_string());
+        if data[header_offset..search_limit]
+            .windows(lin_tag.len())
+            .position(|w| w == lin_tag)
+            .is_some()
+        {
+            doc.repair_log.push(
+                "Linearized PDF detected. Handling optimized structure via global scan."
+                    .to_string(),
+            );
         }
 
         // For now, let's just reconstruct the xref to be safe (the "dirty" way)
-        doc.repair_log.push("Reconstructing xref table via full file scan (Dirty repair mode).".to_string());
+        doc.repair_log
+            .push("Reconstructing xref table via full file scan (Dirty repair mode).".to_string());
         doc.xref = Self::reconstruct_xref(data);
-        doc.repair_log.push(format!("Found {} objects during physical scan.", doc.xref.entries.len()));
+        doc.repair_log
+            .push(format!("Found {} objects during physical scan.", doc.xref.entries.len()));
 
         // Find trailer
         let eof_pos = Self::find_eof(data).unwrap_or(data.len());
         let trailer_tag = b"trailer";
         let mut trailer_pos = None;
         for i in (0..eof_pos.saturating_sub(trailer_tag.len())).rev() {
-            if &data[i..i+trailer_tag.len()] == trailer_tag {
+            if &data[i..i + trailer_tag.len()] == trailer_tag {
                 trailer_pos = Some(i + trailer_tag.len());
                 break;
             }
@@ -100,7 +130,10 @@ impl Reader {
         if let Some(pos) = trailer_pos {
             match super::parser::Parser::parse_dictionary(&data[pos..]) {
                 Ok((_rest, dict)) => {
-                    doc.repair_log.push(format!("Successfully recovered trailer dictionary with {} keys.", dict.len()));
+                    doc.repair_log.push(format!(
+                        "Successfully recovered trailer dictionary with {} keys.",
+                        dict.len()
+                    ));
                     doc.trailer = dict;
                 }
                 Err(e) => {
@@ -108,7 +141,10 @@ impl Reader {
                 }
             }
         } else {
-            doc.repair_log.push("CRITICAL: 'trailer' keyword not found. Document catalog might be missing.".to_string());
+            doc.repair_log.push(
+                "CRITICAL: 'trailer' keyword not found. Document catalog might be missing."
+                    .to_string(),
+            );
         }
 
         // Initialize decryptor if /Encrypt exists
@@ -121,17 +157,35 @@ impl Reader {
             };
 
             if let Some(ref_id) = ref_id_copy {
-                doc.repair_log.push(format!("Legacy encryption detected (Object {}). Initializing RC4 decryptor.", ref_id.id));
+                doc.repair_log.push(format!(
+                    "Legacy encryption detected (Object {}). Initializing RC4 decryptor.",
+                    ref_id.id
+                ));
                 if let Some(encrypt_dict_obj) = doc.get_object(ref_id.id) {
                     if let Some(dict) = encrypt_dict_obj.as_dict() {
-                        let o = dict.get(b"O".as_slice()).and_then(|obj| obj.as_str()).unwrap_or(&[]);
-                        let p = dict.get(b"P".as_slice()).and_then(|obj| obj.as_i64()).unwrap_or(0) as i32;
-                        let id_arr: &[super::Object] = doc.trailer.get(b"ID".as_slice()).and_then(|obj| obj.as_array()).unwrap_or(&[]);
-                        let id = if !id_arr.is_empty() { id_arr[0].as_str().unwrap_or(&[]) } else { &[] };
-                        
-                        let password = b""; 
-                        let key = crate::lopdf::encryption::algorithms::derive_key_v2(password, o, p, id, true);
-                        decryptor = Some(crate::lopdf::encryption::Decryptor::new(crate::lopdf::encryption::Algorithm::Rc4, &key));
+                        let o =
+                            dict.get(b"O".as_slice()).and_then(|obj| obj.as_str()).unwrap_or(&[]);
+                        let p = dict.get(b"P".as_slice()).and_then(|obj| obj.as_i64()).unwrap_or(0)
+                            as i32;
+                        let id_arr: &[super::Object] = doc
+                            .trailer
+                            .get(b"ID".as_slice())
+                            .and_then(|obj| obj.as_array())
+                            .unwrap_or(&[]);
+                        let id = if !id_arr.is_empty() {
+                            id_arr[0].as_str().unwrap_or(&[])
+                        } else {
+                            &[]
+                        };
+
+                        let password = b"";
+                        let key = crate::lopdf::encryption::algorithms::derive_key_v2(
+                            password, o, p, id, true,
+                        );
+                        decryptor = Some(crate::lopdf::encryption::Decryptor::new(
+                            crate::lopdf::encryption::Algorithm::Rc4,
+                            &key,
+                        ));
                     }
                 }
             }
@@ -141,7 +195,9 @@ impl Reader {
         for (id, entry) in &doc.xref.entries {
             if let XrefEntry::Normal { offset, .. } = entry {
                 let start = *offset as usize;
-                if let Ok((rest, (obj_id, gen))) = super::parser::Parser::parse_object_id(&data[start..]) {
+                if let Ok((rest, (obj_id, gen))) =
+                    super::parser::Parser::parse_object_id(&data[start..])
+                {
                     if obj_id == *id {
                         if let Ok((_, mut obj)) = super::parser::Parser::parse_object(rest) {
                             // Apply decryption if necessary
@@ -158,7 +214,12 @@ impl Reader {
         Ok(doc)
     }
 
-    fn decrypt_object(obj: &mut super::Object, d: &crate::lopdf::encryption::Decryptor, id: u32, gen: u16) {
+    fn decrypt_object(
+        obj: &mut super::Object,
+        d: &crate::lopdf::encryption::Decryptor,
+        id: u32,
+        gen: u16,
+    ) {
         match obj {
             super::Object::String(bytes, _format) => {
                 let decrypted = d.decrypt(id, gen, bytes);

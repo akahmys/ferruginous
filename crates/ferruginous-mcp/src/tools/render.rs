@@ -1,10 +1,10 @@
-use std::path::PathBuf;
-use ferruginous_sdk::PdfDocument;
-use bytes::Bytes;
-use std::fs;
-use serde::Deserialize;
-use schemars::JsonSchema;
 use crate::{McpError, McpResult};
+use bytes::Bytes;
+use ferruginous_sdk::PdfDocument;
+use schemars::JsonSchema;
+use serde::Deserialize;
+use std::fs;
+use std::path::PathBuf;
 
 /// Arguments for the rendering tool.
 #[derive(Deserialize, JsonSchema)]
@@ -23,20 +23,22 @@ pub async fn render_page_impl(args: RenderArgs) -> Result<String, String> {
 async fn render_page_internal(args: RenderArgs) -> McpResult<String> {
     let data = fs::read(&args.path).map_err(McpError::from)?;
     let doc = PdfDocument::open(Bytes::from(data)).map_err(|e| McpError::Pdf(e.to_string()))?;
-    
+
     let output_dir = PathBuf::from("artifacts/screenshots");
     if !output_dir.exists() {
         fs::create_dir_all(&output_dir).map_err(McpError::from)?;
     }
-    
-    let filename = format!("render_{}_{}.png", 
+
+    let filename = format!(
+        "render_{}_{}.png",
         PathBuf::from(&args.path).file_stem().unwrap_or_default().to_string_lossy(),
         args.page_number
     );
     let output_path = output_dir.join(filename);
-    
-    doc.render_page_to_file(args.page_number, &output_path).await
+
+    doc.render_page_to_file(args.page_number, &output_path)
+        .await
         .map_err(|e| McpError::Pdf(e.to_string()))?;
-    
+
     Ok(output_path.to_string_lossy().to_string())
 }

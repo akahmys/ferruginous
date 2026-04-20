@@ -10,14 +10,17 @@ members = [
     "crates/ferruginous-cli",
     "crates/ferruginous-wasm",
     "crates/fepdf",
+    "crates/ferruginous-ui",
 ]
 
 [workspace.dependencies]
+anyhow = "1.0"
+skrifa = "0.22"
 thiserror = "2.0.11"
 serde = { version = "1.0", features = ["derive", "rc"] }
 tokio = { version = "1.43", features = ["full"] }
 rmcp = "1.5.0"
-vello = { git = "https://github.com/linebender/vello" }
+vello = "0.8.0"
 kurbo = { version = "0.13", features = ["serde"] }
 rayon = "1.10"
 ttf-parser = "0.21"
@@ -89,3 +92,4 @@ lto = true
 codegen-units = 1
 panic = "abort"
 strip = true
+

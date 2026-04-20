@@ -17,12 +17,12 @@ mod tests {
         let mut tm = TextMatrices::default();
         let tx = 10.0;
         let ty = 20.0;
-        
+
         // Tlm = Td * Tlm
         let move_matrix = Matrix::new(1.0, 0.0, 0.0, 1.0, tx, ty);
         tm.tlm = tm.tlm.concat(&move_matrix);
         tm.tm = tm.tlm;
-        
+
         assert_eq!(tm.tm.0.as_coeffs()[4], 10.0);
         assert_eq!(tm.tm.0.as_coeffs()[5], 20.0);
     }

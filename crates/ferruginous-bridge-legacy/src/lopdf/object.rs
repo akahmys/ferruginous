@@ -1,5 +1,5 @@
 //! Modified lopdf Object model for zero-copy Bytes.
-//! 
+//!
 //! Original Copyright (c) 2016-2022 J-F-Liu
 //! Licensed under MIT License.
 

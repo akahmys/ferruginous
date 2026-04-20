@@ -10,22 +10,13 @@ pub enum PdfError {
     Io(#[from] std::io::Error),
 
     #[error("Lexical error at byte {pos}: {message}")]
-    Lexical {
-        pos: usize,
-        message: String,
-    },
+    Lexical { pos: usize, message: String },
 
     #[error("Syntactic error at byte {pos}: {message}")]
-    Syntactic {
-        pos: usize,
-        message: String,
-    },
+    Syntactic { pos: usize, message: String },
 
     #[error("Invalid object type: expected {expected}, found {found}")]
-    InvalidType {
-        expected: &'static str,
-        found: &'static str,
-    },
+    InvalidType { expected: &'static str, found: &'static str },
 
     #[error("Object not found: {0:?}")]
     ObjectNotFound(crate::types::Reference),

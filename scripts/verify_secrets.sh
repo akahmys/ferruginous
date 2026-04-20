@@ -13,7 +13,7 @@ PATTERNS=(
     "xox[bpgr]-[0-9]{12}-[0-9]{12}-[0-9]{12}-[a-z0-9]{32}"              # Slack Tokens
     "https://hooks.slack.com/services/T[A-Z0-9]{8}/B[A-Z0-9]{8}/[A-Za-z0-9]{24}" # Slack Webhooks
     "SG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}"                          # SendGrid API Key
-    "ey[A-Za-z0-9-_=]+\.ey[A-Za-z0-9-_=]+\.?[A-Za-z0-9-_.+/= ]*"        # JWT
+    "ey[A-Za-z0-9_=+-]+\.ey[A-Za-z0-9_=+-]+\.?[A-Za-z0-9._+/= -]*"        # JWT
 )
 
 # Files to skip
@@ -23,9 +23,9 @@ echo "Checking for secrets in staged and current files..."
 
 for pattern in "${PATTERNS[@]}"; do
     # Search in all files except excluded ones
-    if grep -rE -e "$pattern" . --exclude-dir=".git" --exclude-dir="target" --exclude-dir=".arlington-venv" --exclude="*.pdf" | grep -v "$SKIP_FILES" > /dev/null; then
+    if grep -rE -e "$pattern" . --exclude-dir=".git" --exclude-dir="target" --exclude-dir="external" --exclude-dir=".arlington-venv" --exclude="*.pdf" | grep -v "$SKIP_FILES" > /dev/null; then
         echo "  FAIL: Potential secret found matching pattern: $pattern"
-        grep -rE -e "$pattern" . --exclude-dir=".git" --exclude-dir="target" --exclude-dir=".arlington-venv" --exclude="*.pdf" | grep -v "$SKIP_FILES"
+        grep -rE -e "$pattern" . --exclude-dir=".git" --exclude-dir="target" --exclude-dir="external" --exclude-dir=".arlington-venv" --exclude="*.pdf" | grep -v "$SKIP_FILES"
         ERROR=1
     fi
 done
@@ -38,9 +38,9 @@ EMAIL_PATTERNS=(
 )
 
 for email in "${EMAIL_PATTERNS[@]}"; do
-    if grep -rE "$email" . --exclude-dir=".git" --exclude-dir="target" --exclude="*.pdf" | grep -v "$SKIP_FILES" | grep -v "README.md" > /dev/null; then
+    if grep -rE "$email" . --exclude-dir=".git" --exclude-dir="target" --exclude-dir="external" --exclude-dir=".arlington-venv" --exclude="*.pdf" | grep -v "$SKIP_FILES" | grep -v "README.md" > /dev/null; then
          echo "  WARN: Potential personal email found: $email"
-         grep -rE "$email" . --exclude-dir=".git" --exclude-dir="target" --exclude="*.pdf" | grep -v "$SKIP_FILES" | grep -v "README.md"
+         grep -rE "$email" . --exclude-dir=".git" --exclude-dir="target" --exclude-dir="external" --exclude-dir=".arlington-venv" --exclude="*.pdf" | grep -v "$SKIP_FILES" | grep -v "README.md"
          # Not necessarily an error, but a warning
     fi
 done

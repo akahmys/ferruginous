@@ -1,4 +1,4 @@
-use ferruginous_core::{Object, PdfResult, PdfError, Resolver, PdfName, Reference};
+use ferruginous_core::{Object, PdfError, PdfName, PdfResult, Reference, Resolver};
 use roxmltree::Document as XmlDocument;
 use std::collections::BTreeMap;
 
@@ -16,12 +16,12 @@ impl ConformanceMetadata {
     pub fn from_xmp(data: &[u8]) -> PdfResult<Self> {
         let xml_str = std::str::from_utf8(data)
             .map_err(|_| PdfError::Other("Invalid UTF-8 in XMP metadata".into()))?;
-        
+
         let doc = XmlDocument::parse(xml_str)
             .map_err(|e| PdfError::Other(format!("XMP XML parse error: {}", e)))?;
-        
+
         let mut meta = ConformanceMetadata::default();
-        
+
         // Namespaces
         let pdfaid_ns = "http://www.aiim.org/pdfa/ns/id/";
         let pdfuaid_ns = "http://www.aiim.org/pdfua/ns/id/";
@@ -31,7 +31,9 @@ impl ConformanceMetadata {
             if node.tag_name().namespace() == Some(pdfaid_ns) {
                 match node.tag_name().name() {
                     "part" => meta.pdf_a_part = node.text().and_then(|t| t.trim().parse().ok()),
-                    "conformance" => meta.pdf_a_conformance = node.text().map(|s| s.trim().to_string()),
+                    "conformance" => {
+                        meta.pdf_a_conformance = node.text().map(|s| s.trim().to_string())
+                    }
                     _ => {}
                 }
             } else if node.tag_name().namespace() == Some(pdfuaid_ns) {
@@ -42,7 +44,7 @@ impl ConformanceMetadata {
                 meta.pdf_x_version = node.text().map(|s| s.to_string());
             }
         }
-        
+
         Ok(meta)
     }
 }
@@ -59,27 +61,33 @@ pub struct OutputIntent {
 
 impl OutputIntent {
     pub fn from_dict(dict: &BTreeMap<PdfName, Object>) -> PdfResult<Self> {
-        let subtype = dict.get(&"S".into())
+        let subtype = dict
+            .get(&"S".into())
             .and_then(|o| o.as_name())
             .map(|n| String::from_utf8_lossy(n.as_ref()).into_owned())
             .ok_or_else(|| PdfError::Other("Missing /S in OutputIntent".into()))?;
-            
-        let output_condition_identifier = dict.get(&"OutputConditionIdentifier".into())
+
+        let output_condition_identifier = dict
+            .get(&"OutputConditionIdentifier".into())
             .and_then(|o| o.as_string())
             .map(|s| String::from_utf8_lossy(s).into_owned())
-            .ok_or_else(|| PdfError::Other("Missing /OutputConditionIdentifier in OutputIntent".into()))?;
-            
-        let info = dict.get(&"Info".into())
+            .ok_or_else(|| {
+                PdfError::Other("Missing /OutputConditionIdentifier in OutputIntent".into())
+            })?;
+
+        let info = dict
+            .get(&"Info".into())
             .and_then(|o| o.as_string())
             .map(|s| String::from_utf8_lossy(s).into_owned());
-            
-        let registry_name = dict.get(&"RegistryName".into())
+
+        let registry_name = dict
+            .get(&"RegistryName".into())
             .and_then(|o| o.as_string())
             .map(|s| String::from_utf8_lossy(s).into_owned());
-            
-        let destination_profile_ref = dict.get(&"DestOutputProfile".into())
-            .and_then(|o| o.as_reference());
-            
+
+        let destination_profile_ref =
+            dict.get(&"DestOutputProfile".into()).and_then(|o| o.as_reference());
+
         Ok(Self {
             subtype,
             output_condition_identifier,
@@ -117,40 +125,48 @@ pub struct ComplianceInfo {
 }
 
 impl ComplianceInfo {
-    pub fn extract(doc: &dyn Resolver, catalog_ref: &Reference, header_version: &str) -> PdfResult<Self> {
+    pub fn extract(
+        doc: &dyn Resolver,
+        catalog_ref: &Reference,
+        header_version: &str,
+    ) -> PdfResult<Self> {
         let catalog_obj = doc.resolve(catalog_ref)?;
-        let catalog = catalog_obj.as_dict()
-            .ok_or_else(|| PdfError::Other("Invalid catalog".into()))?;
-            
+        let catalog =
+            catalog_obj.as_dict().ok_or_else(|| PdfError::Other("Invalid catalog".into()))?;
+
         // 1. Metadata
         let mut metadata = ConformanceMetadata::default();
         let mut has_metadata_stream = false;
         if let Some(meta_ref) = catalog.get(&"Metadata".into()).and_then(|o| o.as_reference())
-            && let Ok(Object::Stream(_, data)) = doc.resolve(&meta_ref) {
-                metadata = ConformanceMetadata::from_xmp(&data).unwrap_or_default();
-                has_metadata_stream = true;
-            }
-        
+            && let Ok(Object::Stream(_, data)) = doc.resolve(&meta_ref)
+        {
+            metadata = ConformanceMetadata::from_xmp(&data).unwrap_or_default();
+            has_metadata_stream = true;
+        }
+
         // 2. OutputIntents
         let mut output_intents = Vec::new();
         if let Some(intents) = catalog.get(&"OutputIntents".into()).and_then(|o| o.as_array()) {
             for intent_obj in intents.iter() {
                 if let Some(r) = intent_obj.as_reference()
                     && let Some(dict) = doc.resolve(&r)?.as_dict()
-                    && let Ok(oi) = OutputIntent::from_dict(dict) {
+                    && let Ok(oi) = OutputIntent::from_dict(dict)
+                {
                     output_intents.push(oi);
                 } else if let Some(dict) = intent_obj.as_dict()
-                    && let Ok(oi) = OutputIntent::from_dict(dict) {
+                    && let Ok(oi) = OutputIntent::from_dict(dict)
+                {
                     output_intents.push(oi);
                 }
             }
         }
-        
+
         // 3. Structure Tree
         let has_struct_tree = catalog.contains_key(&"StructTreeRoot".into());
-        
+
         // 4. MarkInfo
-        let is_marked = catalog.get(&"MarkInfo".into())
+        let is_marked = catalog
+            .get(&"MarkInfo".into())
             .and_then(|o| o.as_dict())
             .and_then(|d| d.get(&"Marked".into()))
             .and_then(|o| o.as_bool())
@@ -168,7 +184,9 @@ impl ComplianceInfo {
                     message: "Missing /Metadata stream (mandatory for PDF 2.0)".into(),
                 });
             }
-            if catalog.get(&"Version".into()).and_then(|o| o.as_name()).map(|n| n.as_ref()) != Some(b"2.0") {
+            if catalog.get(&"Version".into()).and_then(|o| o.as_name()).map(|n| n.as_ref())
+                != Some(b"2.0")
+            {
                 issues.push(AuditIssue {
                     standard: "ISO 32000-2".into(),
                     severity: Severity::Warning,
@@ -176,7 +194,7 @@ impl ComplianceInfo {
                 });
             }
         }
-        
+
         // PDF/UA-2 Pre-check
         if !has_struct_tree {
             issues.push(AuditIssue {
@@ -201,14 +219,8 @@ impl ComplianceInfo {
                 message: "Missing OutputIntents (ICC profile recommended for archiving)".into(),
             });
         }
-            
-        Ok(Self {
-            metadata,
-            output_intents,
-            has_struct_tree,
-            is_marked,
-            issues,
-        })
+
+        Ok(Self { metadata, output_intents, has_struct_tree, is_marked, issues })
     }
 }
 
@@ -236,7 +248,7 @@ mod tests {
             </x:xmpmeta>
             <?xpacket end="w"?>
         "#;
-        
+
         let meta = ConformanceMetadata::from_xmp(xmp.as_bytes()).unwrap();
         assert_eq!(meta.pdf_a_part, Some(4));
         assert_eq!(meta.pdf_a_conformance.as_deref(), Some("F"));

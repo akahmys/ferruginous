@@ -15,10 +15,7 @@ impl Default for PathBuilder {
 
 impl PathBuilder {
     pub fn new() -> Self {
-        Self {
-            path: BezPath::new(),
-            current_point: None,
-        }
+        Self { path: BezPath::new(), current_point: None }
     }
 
     pub fn move_to(&mut self, x: f64, y: f64) {
@@ -57,7 +54,7 @@ impl PathBuilder {
     pub fn close_path(&mut self) {
         self.path.close_path();
         // current_point remains at the point where close_path was called?
-        // Actually, PDF spec says it's the start of the subpath. 
+        // Actually, PDF spec says it's the start of the subpath.
         // But for common usage, tracking it after close is tricky.
     }
 

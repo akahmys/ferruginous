@@ -1,5 +1,5 @@
+use ferruginous_core::{Object, PdfError, PdfName, PdfResult, Reference, Resolver};
 use std::sync::Arc;
-use ferruginous_core::{Object, PdfName, Reference, Resolver, PdfResult, PdfError};
 
 pub struct PageTree<'a> {
     root: Reference,
@@ -14,9 +14,10 @@ impl<'a> PageTree<'a> {
     pub fn count(&self) -> PdfResult<usize> {
         let obj = self.resolver.resolve(&self.root)?;
         if let Some(dict) = obj.as_dict()
-            && let Some(Object::Integer(count)) = dict.get(&"Count".into()) {
-                return Ok(*count as usize);
-            }
+            && let Some(Object::Integer(count)) = dict.get(&"Count".into())
+        {
+            return Ok(*count as usize);
+        }
         Err(PdfError::Other("Invalid /Pages node".into()))
     }
 
@@ -26,51 +27,54 @@ impl<'a> PageTree<'a> {
 
         while let Some((node_ref, _)) = stack.last() {
             let node_ref = *node_ref; // Copy to avoid borrow issues
-            
+
             let obj = self.resolver.resolve(&node_ref)?;
-            let dict = obj.as_dict().ok_or_else(|| PdfError::Other(format!("Expected dictionary at {:?}", node_ref)))?;
-            
-            let type_val = dict.get(&"Type".into()).and_then(|o| {
-                 if let Object::Name(n) = o { Some(n.0.as_ref()) } else { None }
-            });
+            let dict = obj
+                .as_dict()
+                .ok_or_else(|| PdfError::Other(format!("Expected dictionary at {:?}", node_ref)))?;
+
+            let type_val = dict
+                .get(&"Type".into())
+                .and_then(|o| if let Object::Name(n) = o { Some(n.0.as_ref()) } else { None });
 
             if type_val == Some(b"Page") {
                 if pages_seen == index {
-                    let parent_refs = stack.iter()
-                        .take(stack.len() - 1)
-                        .map(|(r, _)| *r)
-                        .collect();
-                        
-                    return Ok(Page { 
-                        reference: node_ref, 
-                        dictionary: Arc::new(dict.clone()), 
+                    let parent_refs = stack.iter().take(stack.len() - 1).map(|(r, _)| *r).collect();
+
+                    return Ok(Page {
+                        reference: node_ref,
+                        dictionary: Arc::new(dict.clone()),
                         parents: parent_refs,
-                        resolver: self.resolver 
+                        resolver: self.resolver,
                     });
                 }
                 pages_seen += 1;
                 stack.pop();
             } else {
                 // Pages node (Branch)
-                let kids = if let Some(Object::Array(k)) = dict.get(&"Kids".into()) { 
-                    k 
-                } else { 
-                    return Err(PdfError::Other(format!("Missing Kids in Pages node {:?}", node_ref))) 
+                let kids = if let Some(Object::Array(k)) = dict.get(&"Kids".into()) {
+                    k
+                } else {
+                    return Err(PdfError::Other(format!(
+                        "Missing Kids in Pages node {:?}",
+                        node_ref
+                    )));
                 };
-                
+
                 // Get current child index and increment it
                 let child_idx = {
-                    let top = stack.last_mut().ok_or_else(|| PdfError::Other("Empty stack".into()))?;
+                    let top =
+                        stack.last_mut().ok_or_else(|| PdfError::Other("Empty stack".into()))?;
                     let idx = top.1;
                     top.1 += 1;
                     idx
                 };
 
                 if child_idx < kids.len() {
-                    let next_ref = if let Object::Reference(r) = &kids[child_idx] { 
-                        *r 
-                    } else { 
-                        return Err(PdfError::Other("Invalid Kid Reference".into())) 
+                    let next_ref = if let Object::Reference(r) = &kids[child_idx] {
+                        *r
+                    } else {
+                        return Err(PdfError::Other("Invalid Kid Reference".into()));
                     };
                     stack.push((next_ref, 0));
                 } else {
@@ -78,8 +82,10 @@ impl<'a> PageTree<'a> {
                 }
             }
 
-            if stack.len() > 32 { 
-                return Err(PdfError::Other("Page tree recursion depth exceeded limit (32)".into())); 
+            if stack.len() > 32 {
+                return Err(PdfError::Other(
+                    "Page tree recursion depth exceeded limit (32)".into(),
+                ));
             }
         }
         Err(PdfError::Other("Page not found".into()))
@@ -106,9 +112,10 @@ impl<'a> Page<'a> {
         for parent_ref in self.parents.iter().rev() {
             if let Ok(obj) = self.resolver.resolve(parent_ref)
                 && let Some(dict) = obj.as_dict()
-                    && let Some(val) = dict.get(key) {
-                        return Some(val.clone());
-                    }
+                && let Some(val) = dict.get(key)
+            {
+                return Some(val.clone());
+            }
         }
 
         None

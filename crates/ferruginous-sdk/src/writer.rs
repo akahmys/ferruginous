@@ -1,6 +1,6 @@
-use std::io::{Write, Result};
-use std::collections::BTreeMap;
 use ferruginous_core::{Object, PdfName, Reference};
+use std::collections::BTreeMap;
+use std::io::{Result, Write};
 
 /// A physical PDF writer that serializes objects to a stream.
 pub struct PdfWriter<W: Write> {
@@ -65,11 +65,7 @@ pub struct BitWriter {
 impl BitWriter {
     /// Creates a new BitWriter for bit-packing.
     pub fn new() -> Self {
-        Self {
-            data: Vec::new(),
-            current_byte: 0,
-            bits_left: 8,
-        }
+        Self { data: Vec::new(), current_byte: 0, bits_left: 8 }
     }
 
     /// Writes a value using the specified number of bits.
@@ -81,13 +77,13 @@ impl BitWriter {
             let chunk = std::cmp::min(bits_to_write, self.bits_left);
             let shift = bits_to_write - chunk;
             let mask = if chunk == 32 { 0xFFFFFFFF } else { ((1 << chunk) - 1) << shift };
-            
+
             let bits = ((val & mask) >> shift) as u8;
             self.current_byte |= bits << (self.bits_left - chunk);
-            
+
             self.bits_left -= chunk;
             bits_to_write -= chunk;
-            
+
             if self.bits_left == 0 {
                 self.data.push(self.current_byte);
                 self.current_byte = 0;
@@ -108,11 +104,7 @@ impl BitWriter {
 impl<W: Write> PdfWriter<W> {
     /// Creates a new PdfWriter from a writable stream.
     pub fn new(inner: W) -> Self {
-        Self {
-            inner,
-            current_offset: 0,
-            xref: BTreeMap::new(),
-        }
+        Self { inner, current_offset: 0, xref: BTreeMap::new() }
     }
 
     /// Returns the current byte offset in the output stream.
@@ -129,11 +121,17 @@ impl<W: Write> PdfWriter<W> {
     }
 
     /// Writes the Linearization Dictionary (Object 1).
-    pub fn write_linearization_dict(&mut self, id: u32, params: &LinearizationParams) -> Result<()> {
+    pub fn write_linearization_dict(
+        &mut self,
+        id: u32,
+        params: &LinearizationParams,
+    ) -> Result<()> {
         self.xref.insert(id, self.current_offset);
         self.write_all(format!("{id} 0 obj\r\n<<\r\n/Linearized 1.0\r\n").as_bytes())?;
         self.write_all(format!("/L {}\r\n", params.file_len).as_bytes())?;
-        self.write_all(format!("/H [{} {}]\r\n", params.hint_stream_offset, params.hint_stream_len).as_bytes())?;
+        self.write_all(
+            format!("/H [{} {}]\r\n", params.hint_stream_offset, params.hint_stream_len).as_bytes(),
+        )?;
         self.write_all(format!("/O {}\r\n", params.first_page_obj).as_bytes())?;
         self.write_all(format!("/E {}\r\n", params.end_of_first_page).as_bytes())?;
         self.write_all(format!("/N {}\r\n", params.num_pages).as_bytes())?;
@@ -162,7 +160,9 @@ impl<W: Write> PdfWriter<W> {
             Object::Array(a) => {
                 self.write_all(b"[")?;
                 for (i, item) in a.iter().enumerate() {
-                    if i > 0 { self.write_all(b" ")?; }
+                    if i > 0 {
+                        self.write_all(b" ")?;
+                    }
                     self.write_object(item)?;
                 }
                 self.write_all(b"]")
@@ -177,7 +177,9 @@ impl<W: Write> PdfWriter<W> {
                 self.write_all(b"\r\nendstream")
             }
             Object::Null => self.write_all(b"null"),
-            Object::Reference(r) => self.write_all(format!("{} {} R", r.id, r.generation).as_bytes()),
+            Object::Reference(r) => {
+                self.write_all(format!("{} {} R", r.id, r.generation).as_bytes())
+            }
         }
     }
 
@@ -229,10 +231,10 @@ impl<W: Write> PdfWriter<W> {
     pub fn finish(&mut self, root: Reference, info: Option<Reference>) -> Result<()> {
         let start_xref = self.current_offset;
         let count = self.xref.keys().last().unwrap_or(&0) + 1;
-        
+
         self.write_all(format!("xref\r\n0 {count}\r\n").as_bytes())?;
         self.write_all(b"0000000000 65535 f\r\n")?;
-        
+
         for i in 1..count {
             if let Some(&offset) = self.xref.get(&i) {
                 self.write_all(format!("{offset:010} 00000 n\r\n").as_bytes())?;
@@ -250,7 +252,7 @@ impl<W: Write> PdfWriter<W> {
         self.write_all(b">>\r\nstartxref\r\n")?;
         self.write_all(start_xref.to_string().as_bytes())?;
         self.write_all(b"\r\n%%EOF\r\n")?;
-        
+
         self.inner.flush()
     }
 }

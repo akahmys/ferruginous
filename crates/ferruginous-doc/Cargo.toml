@@ -29,6 +29,7 @@ bytes.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 flate2.workspace = true
+ttf-parser = "0.21"
 skrifa = "0.40.0"
 read-fonts = "0.37.0"
 parking_lot = "0.12"

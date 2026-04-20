@@ -1,6 +1,6 @@
+use ferruginous_core::PdfResult;
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use ferruginous_core::PdfResult;
 
 /// Represents a mapping result from a CMap.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,6 +36,7 @@ impl CodeSpaceRange {
 pub struct CMap {
     pub name: String,
     pub is_vertical: bool,
+    pub is_identity: bool,
     pub codespace_ranges: Vec<CodeSpaceRange>,
     pub code_to_cid: BTreeMap<Vec<u8>, u32>,
     pub code_to_unicode: BTreeMap<Vec<u8>, Vec<u8>>,
@@ -58,20 +59,21 @@ impl CMap {
             }
         }
         // Fallback to 1 byte if no range matches (common for some malformed files)
-        if !data.is_empty() {
-            Some((vec![data[0]], 1))
-        } else {
-            None
-        }
+        if !data.is_empty() { Some((vec![data[0]], 1)) } else { None }
     }
 
     pub fn lookup(&self, code: &[u8]) -> Option<MappingResult> {
+        // 0. Handle Identity Mapping (CID == Code)
+        if self.is_identity {
+            return Some(MappingResult::Cid(bytes_to_u64(code) as u32));
+        }
+
         // 1. Try exact match
         if let Some(&cid) = self.code_to_cid.get(code) {
             return Some(MappingResult::Cid(cid));
         }
         if let Some(unicode) = self.code_to_unicode.get(code) {
-            return Some(MappingResult::Unicode(unicode.clone()));
+            return Some(MappingResult::Unicode(unicode.to_vec()));
         }
 
         // 2. Try normalized match (strip leading zeros)
@@ -82,7 +84,7 @@ impl CMap {
                 return Some(MappingResult::Cid(cid));
             }
             if let Some(unicode) = self.code_to_unicode.get(stripped) {
-                return Some(MappingResult::Unicode(unicode.clone()));
+                return Some(MappingResult::Unicode(unicode.to_vec()));
             }
         }
 
@@ -107,7 +109,7 @@ impl CMap {
     pub fn parse(data: &[u8]) -> PdfResult<Self> {
         let mut cmap = Self::new();
         let mut lexer = CMapLexer::new(data);
-        
+
         while let Some(token) = lexer.next()? {
             match token {
                 CMapToken::Keyword(k) => match k.as_str() {
@@ -117,7 +119,7 @@ impl CMap {
                     "begincidchar" => cmap.parse_cidchar(&mut lexer)?,
                     "begincidrange" => cmap.parse_cidrange(&mut lexer)?,
                     _ => {}
-                }
+                },
                 CMapToken::Name(n) if n == "CMapName" => {
                     if let Some(CMapToken::Name(name)) = lexer.next()? {
                         cmap.name = name;
@@ -131,7 +133,7 @@ impl CMap {
                 _ => {}
             }
         }
-        
+
         Ok(cmap)
     }
 
@@ -256,7 +258,9 @@ impl CMap {
 
 fn bytes_to_u64(bytes: &[u8]) -> u64 {
     let mut val = 0u64;
-    for &b in bytes { val = (val << 8) | (b as u64); }
+    for &b in bytes {
+        val = (val << 8) | (b as u64);
+    }
     val
 }
 
@@ -287,11 +291,15 @@ struct CMapLexer<'a> {
 }
 
 impl<'a> CMapLexer<'a> {
-    fn new(input: &'a [u8]) -> Self { Self { input, pos: 0 } }
+    fn new(input: &'a [u8]) -> Self {
+        Self { input, pos: 0 }
+    }
 
     fn next(&mut self) -> PdfResult<Option<CMapToken>> {
         self.skip_whitespace();
-        if self.pos >= self.input.len() { return Ok(None); }
+        if self.pos >= self.input.len() {
+            return Ok(None);
+        }
         let c = self.input[self.pos];
         match c {
             b'<' => self.lex_hex_string(),
@@ -299,12 +307,19 @@ impl<'a> CMapLexer<'a> {
             b'[' => self.lex_array(),
             b'0'..=b'9' | b'-' => self.lex_number(),
             _ if c.is_ascii_alphabetic() => self.lex_keyword(),
-            _ => { self.pos += 1; self.next() } // Skip unknown
+            _ => {
+                self.pos += 1;
+                self.next()
+            } // Skip unknown
         }
     }
 
     fn skip_whitespace(&mut self) {
-        while self.pos < self.input.len() && matches!(self.input[self.pos], 0|9|10|12|13|32) { self.pos += 1; }
+        while self.pos < self.input.len()
+            && matches!(self.input[self.pos], 0 | 9 | 10 | 12 | 13 | 32)
+        {
+            self.pos += 1;
+        }
     }
 
     fn lex_hex_string(&mut self) -> PdfResult<Option<CMapToken>> {
@@ -312,17 +327,21 @@ impl<'a> CMapLexer<'a> {
         let mut hex = Vec::new();
         while self.pos < self.input.len() && self.input[self.pos] != b'>' {
             let c = self.input[self.pos];
-            if c.is_ascii_hexdigit() { hex.push(c); }
+            if c.is_ascii_hexdigit() {
+                hex.push(c);
+            }
             self.pos += 1;
         }
-        if self.pos < self.input.len() { self.pos += 1; } // '>'
-        
+        if self.pos < self.input.len() {
+            self.pos += 1;
+        } // '>'
+
         let mut bytes = Vec::new();
         let mut i = 0;
         while i < hex.len() {
             let b1 = hex[i];
-            let b2 = if i + 1 < hex.len() { hex[i+1] } else { b'0' };
-            
+            let b2 = if i + 1 < hex.len() { hex[i + 1] } else { b'0' };
+
             let h1 = char::from(b1).to_digit(16).unwrap_or(0) as u8;
             let h2 = char::from(b2).to_digit(16).unwrap_or(0) as u8;
             bytes.push((h1 << 4) | h2);
@@ -334,7 +353,12 @@ impl<'a> CMapLexer<'a> {
     fn lex_name(&mut self) -> PdfResult<Option<CMapToken>> {
         self.pos += 1; // '/'
         let start = self.pos;
-        while self.pos < self.input.len() && !matches!(self.input[self.pos], 0|9|10|12|13|32|b'/'|b'<'|b'>'|b'['|b']') {
+        while self.pos < self.input.len()
+            && !matches!(
+                self.input[self.pos],
+                0 | 9 | 10 | 12 | 13 | 32 | b'/' | b'<' | b'>' | b'[' | b']'
+            )
+        {
             self.pos += 1;
         }
         let name = std::str::from_utf8(&self.input[start..self.pos]).unwrap_or("").to_string();
@@ -352,7 +376,9 @@ impl<'a> CMapLexer<'a> {
 
     fn lex_number(&mut self) -> PdfResult<Option<CMapToken>> {
         let start = self.pos;
-        while self.pos < self.input.len() && (self.input[self.pos].is_ascii_digit() || self.input[self.pos] == b'-') {
+        while self.pos < self.input.len()
+            && (self.input[self.pos].is_ascii_digit() || self.input[self.pos] == b'-')
+        {
             self.pos += 1;
         }
         let s = std::str::from_utf8(&self.input[start..self.pos]).unwrap_or("");
@@ -397,6 +423,7 @@ impl CMapRegistry {
         // Identity-H: Horizontal identity mapping (CID == Code)
         let mut identity_h = CMap::new();
         identity_h.name = "Identity-H".to_string();
+        identity_h.is_identity = true;
         identity_h.codespace_ranges.push(CodeSpaceRange { start: vec![0, 0], end: vec![255, 255] });
         self.maps.insert("Identity-H".to_string(), Arc::new(identity_h));
 
@@ -404,8 +431,29 @@ impl CMapRegistry {
         let mut identity_v = CMap::new();
         identity_v.name = "Identity-V".to_string();
         identity_v.is_vertical = true;
+        identity_v.is_identity = true;
         identity_v.codespace_ranges.push(CodeSpaceRange { start: vec![0, 0], end: vec![255, 255] });
         self.maps.insert("Identity-V".to_string(), Arc::new(identity_v));
+
+        // UniJIS-UTF16-H: Standard Japanese Unicode mapping (Horizontal)
+        let mut unijis_h = CMap::new();
+        unijis_h.name = "UniJIS-UTF16-H".to_string();
+        unijis_h.is_identity = true; // Maps 2-byte code to Unicode (UCS-2)
+        unijis_h.codespace_ranges.push(CodeSpaceRange { start: vec![0, 0], end: vec![255, 255] });
+        self.maps.insert("UniJIS-UTF16-H".to_string(), Arc::new(unijis_h));
+
+        // 90ms-RKSJ-H: Shift-JIS mapping (Horizontal)
+        let mut rksj_h = CMap::new();
+        rksj_h.name = "90ms-RKSJ-H".to_string();
+        rksj_h
+            .codespace_ranges
+            .push(CodeSpaceRange { start: vec![0x81, 0x40], end: vec![0x9f, 0xfc] });
+        rksj_h
+            .codespace_ranges
+            .push(CodeSpaceRange { start: vec![0xe0, 0x40], end: vec![0xfc, 0xfc] });
+        rksj_h.codespace_ranges.push(CodeSpaceRange { start: vec![0x00], end: vec![0x7f] });
+        rksj_h.codespace_ranges.push(CodeSpaceRange { start: vec![0xa1], end: vec![0xdf] });
+        self.maps.insert("90ms-RKSJ-H".to_string(), Arc::new(rksj_h));
     }
 
     pub fn get(&self, name: &str) -> Option<Arc<CMap>> {
@@ -433,9 +481,10 @@ mod tests {
     #[test]
     fn test_codespace_segmentation() {
         let mut cmap = CMap::new();
-        cmap.codespace_ranges.push(CodeSpaceRange { start: vec![0x81, 0x40], end: vec![0x9f, 0xfc] });
+        cmap.codespace_ranges
+            .push(CodeSpaceRange { start: vec![0x81, 0x40], end: vec![0x9f, 0xfc] });
         cmap.codespace_ranges.push(CodeSpaceRange { start: vec![0x00], end: vec![0x7f] });
-        
+
         // Single byte match
         assert_eq!(cmap.next_code(&[0x41, 0x42]), Some((vec![0x41], 1)));
         // Double byte match

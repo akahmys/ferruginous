@@ -4,20 +4,20 @@
 //! manipulation, rendering, and auditing, abstracting away the low-level
 //! complexities of the core type system and document model.
 
+use bytes::Bytes;
+use ferruginous_core::{Color, Object, PdfError, PdfResult, Reference, Resolver};
+use ferruginous_doc::{Document, Page as DocPage, PageTree};
+use ferruginous_render::{RenderBackend, VelloBackend, headless::render_to_image};
+use image::ImageFormat;
 use std::path::Path;
 use std::sync::Arc;
-use bytes::Bytes;
-use ferruginous_core::{PdfResult, Reference, Object, Resolver, PdfError, Color};
-use ferruginous_doc::{Document, PageTree, Page as DocPage};
-use ferruginous_render::{VelloBackend, RenderBackend, headless::render_to_image};
-use image::ImageFormat;
 
+/// The internal cloning module for object migration.
+pub mod cloning;
 /// The internal interpreter module for processing content streams.
 pub mod interpreter;
 /// The internal writer module for generating PDF files.
 pub mod writer;
-/// The internal cloning module for object migration.
-pub mod cloning;
 
 use crate::interpreter::Interpreter;
 
@@ -105,6 +105,37 @@ impl PdfDocument {
         self.password = password;
     }
 
+    /// Returns the effective size of a page (width, height) after rotation.
+    pub fn get_page_size(&self, index: usize) -> PdfResult<(f64, f64)> {
+        let page = self.get_page(index)?;
+        let mediabox_obj = page
+            .doc_page
+            .media_box()
+            .ok_or_else(|| ferruginous_core::PdfError::Other("Missing /MediaBox".into()))?;
+        let mediabox = self
+            .inner
+            .resolve_if_ref(&mediabox_obj)?
+            .as_array()
+            .ok_or_else(|| ferruginous_core::PdfError::Other("Invalid MediaBox".into()))?;
+
+        let x1 = mediabox[0].as_f64().unwrap_or(0.0);
+        let y1 = mediabox[1].as_f64().unwrap_or(0.0);
+        let x2 = mediabox[2].as_f64().unwrap_or(595.0);
+        let y2 = mediabox[3].as_f64().unwrap_or(842.0);
+
+        let mut w = (x2 - x1).abs();
+        let mut h = (y2 - y1).abs();
+
+        let rotate =
+            page.doc_page.dictionary.get(&"Rotate".into()).and_then(|o| o.as_i64()).unwrap_or(0);
+
+        if (rotate / 90) % 2 != 0 {
+            std::mem::swap(&mut w, &mut h);
+        }
+
+        Ok((w, h))
+    }
+
     /// Returns the total number of pages in the document.
     pub fn page_count(&self) -> PdfResult<usize> {
         let root = self.pages_root()?;
@@ -138,8 +169,11 @@ impl PdfDocument {
 
     fn pages_root(&self) -> PdfResult<Reference> {
         let catalog = self.inner.resolve(&self.inner.root())?;
-        let dict = catalog.as_dict().ok_or_else(|| ferruginous_core::PdfError::Other("Catalog is not a dictionary".into()))?;
-        let pages_ref = dict.get(&"Pages".into())
+        let dict = catalog.as_dict().ok_or_else(|| {
+            ferruginous_core::PdfError::Other("Catalog is not a dictionary".into())
+        })?;
+        let pages_ref = dict
+            .get(&"Pages".into())
             .and_then(|o| o.as_reference())
             .ok_or_else(|| ferruginous_core::PdfError::Other("Missing /Pages in Catalog".into()))?;
         Ok(pages_ref)
@@ -155,7 +189,7 @@ impl PdfDocument {
         let version = self.inner.header_version().to_string();
         let page_count = self.page_count().unwrap_or(0);
         let compliance = self.inner.compliance_info()?;
-        
+
         // Extract basic metadata from Info dictionary
         let mut metadata = DocumentMetadata::default();
         if let Some(Object::Reference(info_ref)) = self.inner.trailer().get(&"Info".into()) {
@@ -170,13 +204,8 @@ impl PdfDocument {
                 }
             }
         }
-        
-        Ok(DocumentSummary {
-            version,
-            page_count,
-            metadata,
-            compliance,
-        })
+
+        Ok(DocumentSummary { version, page_count, metadata, compliance })
     }
 
     /// Returns a string representation of the document's hierarchical structure.
@@ -190,7 +219,8 @@ impl PdfDocument {
     pub fn upgrade_to_standard(&mut self, standard: PdfStandard) -> PdfResult<()> {
         let catalog_ref = self.inner.root();
         let mut catalog_obj = self.inner.resolve(&catalog_ref)?;
-        let catalog = catalog_obj.as_dict_mut()
+        let catalog = catalog_obj
+            .as_dict_mut()
             .ok_or_else(|| PdfError::Other("Catalog is not a dictionary".into()))?;
 
         match standard {
@@ -266,10 +296,12 @@ impl PdfDocument {
                 rdf.push_str("</rdf:Description>\n");
             }
             PdfStandard::ISO32000_2 => {
-                 // Minimal XMP for base PDF 2.0
-                 rdf.push_str("<rdf:Description rdf:about=\"\" xmlns:pdf=\"http://ns.adobe.com/pdf/1.3/\">\n");
-                 rdf.push_str("  <pdf:PDFVersion>2.0</pdf:PDFVersion>\n");
-                 rdf.push_str("</rdf:Description>\n");
+                // Minimal XMP for base PDF 2.0
+                rdf.push_str(
+                    "<rdf:Description rdf:about=\"\" xmlns:pdf=\"http://ns.adobe.com/pdf/1.3/\">\n",
+                );
+                rdf.push_str("  <pdf:PDFVersion>2.0</pdf:PDFVersion>\n");
+                rdf.push_str("</rdf:Description>\n");
             }
         }
 
@@ -284,49 +316,97 @@ impl PdfDocument {
         )
     }
 
-    /// Renders a specific page to a PNG file.
-    ///
-    /// This is an asynchronous operation that utilizes the Vello GPU-accelerated
-    /// backend and the headless rendering pipeline.
-    pub async fn render_page_to_file(&self, index: usize, output_path: &Path) -> PdfResult<()> {
+    /// Renders a specific page using the provided backend.
+    pub fn render_page(&self, index: usize, backend: &mut dyn RenderBackend) -> PdfResult<()> {
         let page = self.get_page(index)?;
-        
-        // 1. Resolve MediaBox and page dimensions first (needed for coordinate flip)
-        let mediabox_obj = page.doc_page.media_box()
-            .ok_or_else(|| ferruginous_core::PdfError::Other("Missing /MediaBox".into()))?;
-        
-        // Resolve if it's a reference
-        let mediabox = self.inner.resolve_if_ref(&mediabox_obj)?.as_array()
-            .ok_or_else(|| ferruginous_core::PdfError::Other("Invalid MediaBox".into()))?;
-            
-        let (x1, y1, x2, y2) = (mediabox[0].as_f64().unwrap_or(0.0), mediabox[1].as_f64().unwrap_or(0.0), mediabox[2].as_f64().unwrap_or(595.0), mediabox[3].as_f64().unwrap_or(842.0));
-        let w = (x2 - x1).abs() as u32;
-        let h = (y2 - y1).abs() as u32;
-        eprintln!("DEBUG: Page MediaBox=[{x1}, {y1}, {x2}, {y2}], h={h}");
-        
-        eprintln!("DEBUG: Rendering page: MediaBox=[{x1}, {y1}, {x2}, {y2}], size={w}x{h}");
 
-        // 2. Setup Backend with Coordinate Flip (PDF: Y-up, Vello: Y-down)
-        let mut backend = VelloBackend::new();
-        // T = [1 0 0 -1 -x1 h+y1]
-        let flip = kurbo::Affine::new([1.0, 0.0, 0.0, -1.0, -x1, h as f64 + y1]);
+        // 1. Resolve MediaBox and page dimensions
+        let mediabox_obj = page
+            .doc_page
+            .media_box()
+            .ok_or_else(|| ferruginous_core::PdfError::Other("Missing /MediaBox".into()))?;
+
+        let mediabox = self
+            .inner
+            .resolve_if_ref(&mediabox_obj)?
+            .as_array()
+            .ok_or_else(|| ferruginous_core::PdfError::Other("Invalid MediaBox".into()))?;
+
+        let x1 = mediabox[0].as_f64().unwrap_or(0.0);
+        let y1 = mediabox[1].as_f64().unwrap_or(0.0);
+        let x2 = mediabox[2].as_f64().unwrap_or(595.0);
+        let y2 = mediabox[3].as_f64().unwrap_or(842.0);
+
+        let mut w = (x2 - x1).abs();
+        let mut h = (y2 - y1).abs();
+
+        // 2. Resolve Rotation (ISO 32000-2 Clause 7.7.3.3)
+        let rotate =
+            page.doc_page.dictionary.get(&"Rotate".into()).and_then(|o| o.as_i64()).unwrap_or(0);
+
+        // 3. Setup Coordinate Flip (PDF: Y-up, Backend: Y-down)
+        // We start with origin at MediaBox LL corner, then flip Y, then translate
+        let mut flip = kurbo::Affine::new([1.0, 0.0, 0.0, -1.0, -x1, h + y1]);
+
+        // 4. Apply Page Rotation
+        // Rotation is clockwise around the center of the MediaBox (or around LL corner then adjusted)
+        match rotate % 360 {
+            90 | -270 => {
+                flip *= kurbo::Affine::translate((0.0, h))
+                    * kurbo::Affine::rotate(std::f64::consts::FRAC_PI_2);
+                std::mem::swap(&mut w, &mut h);
+            }
+            180 | -180 => {
+                flip *=
+                    kurbo::Affine::translate((w, h)) * kurbo::Affine::rotate(std::f64::consts::PI);
+            }
+            270 | -90 => {
+                flip *= kurbo::Affine::translate((w, 0.0))
+                    * kurbo::Affine::rotate(-std::f64::consts::FRAC_PI_2);
+                std::mem::swap(&mut w, &mut h);
+            }
+            _ => {}
+        }
+
         backend.transform(flip);
- 
-        // 3. Resolve Resources and setup Interpreter
-        let res_obj = page.doc_page.resources().unwrap_or(Object::Dictionary(Arc::new(std::collections::BTreeMap::new())));
+
+        // 5. Forced White Background (Covering the entire visible page area)
+        let mut bg_path = kurbo::BezPath::new();
+        bg_path.move_to((x1, y1));
+        bg_path.line_to((x1 + (x2 - x1).abs(), y1));
+        bg_path.line_to((x1 + (x2 - x1).abs(), y1 + (y2 - y1).abs()));
+        bg_path.line_to((x1, y1 + (y2 - y1).abs()));
+        bg_path.close_path();
+        backend.fill_path(
+            &bg_path,
+            &ferruginous_core::graphics::Color::Rgb(1.0, 1.0, 1.0),
+            ferruginous_core::graphics::WindingRule::NonZero,
+        );
+
+        // 4. Setup Interpreter
+        let res_obj = page
+            .doc_page
+            .resources()
+            .unwrap_or(Object::Dictionary(Arc::new(std::collections::BTreeMap::new())));
         let res_dict_obj = self.inner.resolve_if_ref(&res_obj)?;
-        let res_dict = res_dict_obj.as_dict_arc().unwrap_or_else(|| Arc::new(std::collections::BTreeMap::new()));
-        let mut interpreter = Interpreter::new(&mut backend, &self.inner, res_dict);
-        
+        let res_dict = res_dict_obj
+            .as_dict_arc()
+            .unwrap_or_else(|| Arc::new(std::collections::BTreeMap::new()));
+        let mut interpreter = Interpreter::new(backend, &self.inner, res_dict);
+
         // 4. Resolve and execute Contents
-        let contents = page.doc_page.dictionary.get(&"Contents".into())
+        let contents = page
+            .doc_page
+            .dictionary
+            .get(&"Contents".into())
             .ok_or_else(|| ferruginous_core::PdfError::Other("Missing /Contents".into()))?;
-            
+
         let content_refs = match contents {
             Object::Reference(r) => vec![*r],
-            Object::Array(a) => a.iter().filter_map(|o| {
-                if let Object::Reference(r) = o { Some(*r) } else { None }
-            }).collect(),
+            Object::Array(a) => a
+                .iter()
+                .filter_map(|o| if let Object::Reference(r) = o { Some(*r) } else { None })
+                .collect(),
             Object::Stream(_, _) => {
                 let decoded = contents.decode_stream()?;
                 interpreter.execute(&decoded)?;
@@ -343,16 +423,58 @@ impl PdfDocument {
             }
         }
 
-        // 5. Render to Output
-        let format = match output_path.extension().and_then(|s| s.to_str()).map(|s| s.to_lowercase()).as_deref() {
+        Ok(())
+    }
+
+    /// Renders a specific page to a PNG file.
+    ///
+    /// This is an asynchronous operation that utilizes the Vello GPU-accelerated
+    /// backend and the headless rendering pipeline.
+    pub async fn render_page_to_file(&self, index: usize, output_path: &Path) -> PdfResult<()> {
+        let page = self.get_page(index)?;
+        let mediabox_obj = page
+            .doc_page
+            .media_box()
+            .ok_or_else(|| ferruginous_core::PdfError::Other("Missing /MediaBox".into()))?;
+        let mediabox = self
+            .inner
+            .resolve_if_ref(&mediabox_obj)?
+            .as_array()
+            .ok_or_else(|| ferruginous_core::PdfError::Other("Invalid MediaBox".into()))?;
+
+        let x1 = mediabox[0].as_f64().unwrap_or(0.0);
+        let y1 = mediabox[1].as_f64().unwrap_or(0.0);
+        let x2 = mediabox[2].as_f64().unwrap_or(595.0);
+        let y2 = mediabox[3].as_f64().unwrap_or(842.0);
+
+        let mut w = (x2 - x1).abs();
+        let mut h = (y2 - y1).abs();
+
+        let rotate =
+            page.doc_page.dictionary.get(&"Rotate".into()).and_then(|o| o.as_i64()).unwrap_or(0);
+
+        if (rotate / 90) % 2 != 0 {
+            std::mem::swap(&mut w, &mut h);
+        }
+
+        let mut backend = VelloBackend::new();
+        self.render_page(index, &mut backend)?;
+
+        let format = match output_path
+            .extension()
+            .and_then(|s| s.to_str())
+            .map(|s| s.to_lowercase())
+            .as_deref()
+        {
             Some("jpg" | "jpeg") => ImageFormat::Jpeg,
             Some("png") => ImageFormat::Png,
             Some("bmp") => ImageFormat::Bmp,
             Some("tiff") => ImageFormat::Tiff,
-            _ => ImageFormat::Png, // Default to PNG
+            _ => ImageFormat::Png,
         };
 
-        render_to_image(backend.scene(), w, h, output_path, format).await
+        render_to_image(backend.scene(), w as u32, h as u32, output_path, format)
+            .await
             .map_err(|e| ferruginous_core::PdfError::Other(e.to_string()))?;
 
         Ok(())
@@ -384,7 +506,9 @@ impl PdfDocument {
         // If Vacuum is enabled, crawl the document to find reachable objects
         let reachable_ids = if self.vacuum {
             let mut roots = vec![self.inner.root()];
-            if let Some(info_ref) = self.inner.trailer().get(&"Info".into()).and_then(|o| o.as_reference()) {
+            if let Some(info_ref) =
+                self.inner.trailer().get(&"Info".into()).and_then(|o| o.as_reference())
+            {
                 if !self.strip {
                     roots.push(info_ref);
                 }
@@ -402,14 +526,16 @@ impl PdfDocument {
 
         // Resolve all indirect objects from the source document
         let mut root_obj = self.inner.resolve(&self.inner.root())?;
-        
+
         // If upgrading to 2.0, ensure /Version /2.0 and mandatory /Metadata are in the Catalog
         if version == "2.0" {
             if let Some(dict_mut) = root_obj.as_dict_mut() {
                 dict_mut.insert("Version".into(), Object::Name("2.0".into()));
-                
+
                 // ISO 32000-2 SHALL contain a Metadata entry
-                if let std::collections::btree_map::Entry::Vacant(e) = dict_mut.entry("Metadata".into()) {
+                if let std::collections::btree_map::Entry::Vacant(e) =
+                    dict_mut.entry("Metadata".into())
+                {
                     let xmp = self.generate_xmp(PdfStandard::ISO32000_2);
                     let mut meta_dict = std::collections::BTreeMap::new();
                     meta_dict.insert("Type".into(), Object::Name("Metadata".into()));
@@ -446,13 +572,11 @@ impl PdfDocument {
             };
 
             let r = Reference::new(id, generation);
-            let obj = if r == self.inner.root() {
-                root_obj.clone()
-            } else {
-                self.inner.resolve(&r)?
-            };
-            
-            writer.write_indirect_object(id, generation, &obj)
+            let obj =
+                if r == self.inner.root() { root_obj.clone() } else { self.inner.resolve(&r)? };
+
+            writer
+                .write_indirect_object(id, generation, &obj)
                 .map_err(|e| ferruginous_core::PdfError::Other(e.to_string()))?;
         }
 
@@ -463,7 +587,8 @@ impl PdfDocument {
             self.inner.trailer().get(&"Info".into()).and_then(|o| o.as_reference())
         };
 
-        writer.finish(self.inner.root(), info_ref)
+        writer
+            .finish(self.inner.root(), info_ref)
             .map_err(|e| ferruginous_core::PdfError::Other(e.to_string()))?;
 
         Ok(())
@@ -479,12 +604,19 @@ impl PdfDocument {
             let mut catalog_obj = self.inner.resolve(&catalog_ref)?;
             if let Some(dict_mut) = catalog_obj.as_dict_mut() {
                 dict_mut.insert("Version".into(), ferruginous_core::Object::Name("2.0".into()));
-                if let std::collections::btree_map::Entry::Vacant(e) = dict_mut.entry("Metadata".into()) {
+                if let std::collections::btree_map::Entry::Vacant(e) =
+                    dict_mut.entry("Metadata".into())
+                {
                     let xmp = self.generate_xmp(PdfStandard::ISO32000_2);
                     let mut meta_dict = std::collections::BTreeMap::new();
-                    meta_dict.insert("Type".into(), ferruginous_core::Object::Name("Metadata".into()));
-                    meta_dict.insert("Subtype".into(), ferruginous_core::Object::Name("XML".into()));
-                    let meta_stream = ferruginous_core::Object::Stream(std::sync::Arc::new(meta_dict), Bytes::from(xmp));
+                    meta_dict
+                        .insert("Type".into(), ferruginous_core::Object::Name("Metadata".into()));
+                    meta_dict
+                        .insert("Subtype".into(), ferruginous_core::Object::Name("XML".into()));
+                    let meta_stream = ferruginous_core::Object::Stream(
+                        std::sync::Arc::new(meta_dict),
+                        Bytes::from(xmp),
+                    );
                     let meta_ref = self.inner.add_object(meta_stream);
                     e.insert(ferruginous_core::Object::Reference(meta_ref));
                 }
@@ -497,14 +629,20 @@ impl PdfDocument {
         self.perform_linearized_write(output_path, version, &sections, &params, &page_stats)
     }
 
-    fn map_linearization_sections(&self) -> PdfResult<(std::collections::BTreeMap<u32, usize>, std::collections::BTreeSet<u32>, Vec<Vec<Reference>>)> {
-        use std::collections::{BTreeSet, BTreeMap};
+    fn map_linearization_sections(
+        &self,
+    ) -> PdfResult<(
+        std::collections::BTreeMap<u32, usize>,
+        std::collections::BTreeSet<u32>,
+        Vec<Vec<Reference>>,
+    )> {
+        use std::collections::{BTreeMap, BTreeSet};
         let num_pages = self.inner.get_page_count()?;
         let catalog_ref = self.inner.root();
-        
+
         let mut page_map = BTreeMap::new();
         let mut shared_objects = BTreeSet::new();
-        
+
         let root_deps = self.inner.explore_dependencies(&catalog_ref)?;
         for id in root_deps {
             page_map.insert(id, 0);
@@ -519,7 +657,9 @@ impl PdfDocument {
             }
             for id in deps {
                 if let Some(&first_page) = page_map.get(&id) {
-                    if first_page != i { shared_objects.insert(id); }
+                    if first_page != i {
+                        shared_objects.insert(id);
+                    }
                 } else {
                     page_map.insert(id, i);
                 }
@@ -532,7 +672,9 @@ impl PdfDocument {
 
         for (&id, entry) in &self.inner.store().entries {
             if let Some(ref reachable) = reachable_ids {
-                if !reachable.contains(&id) { continue; }
+                if !reachable.contains(&id) {
+                    continue;
+                }
             }
             let generation_num = match entry {
                 ferruginous_doc::XRefEntry::InUse { generation, .. } => *generation,
@@ -553,8 +695,12 @@ impl PdfDocument {
 
     fn get_reachable_ids(&self) -> PdfResult<std::collections::BTreeSet<u32>> {
         let mut roots = vec![self.inner.root()];
-        if let Some(info_ref) = self.inner.trailer().get(&"Info".into()).and_then(|o| o.as_reference()) {
-            if !self.strip { roots.push(info_ref); }
+        if let Some(info_ref) =
+            self.inner.trailer().get(&"Info".into()).and_then(|o| o.as_reference())
+        {
+            if !self.strip {
+                roots.push(info_ref);
+            }
         }
         let mut all_reachable = std::collections::BTreeSet::new();
         for root in roots {
@@ -563,87 +709,130 @@ impl PdfDocument {
         Ok(all_reachable)
     }
 
-    fn perform_linearization_dry_run(&self, sections: &[Vec<Reference>], version: &str) -> PdfResult<(crate::writer::LinearizationParams, Vec<PageStats>)> {
-        use crate::writer::{PdfWriter, NullWriter, LinearizationParams};
+    fn perform_linearization_dry_run(
+        &self,
+        sections: &[Vec<Reference>],
+        version: &str,
+    ) -> PdfResult<(crate::writer::LinearizationParams, Vec<PageStats>)> {
+        use crate::writer::{LinearizationParams, NullWriter, PdfWriter};
         let num_pages = self.inner.get_page_count()?;
         let catalog_ref = self.inner.root();
         let p1 = self.inner.get_page(0)?;
         let mut page_stats = Vec::with_capacity(num_pages);
-        
+
         let mut params = LinearizationParams {
             num_pages,
             first_page_obj: p1.reference.id,
             ..Default::default()
         };
-        
+
         let lin_dict_id = self.inner.store().max_id() + 1;
         let mut dry_writer = PdfWriter::new(NullWriter::new());
-        dry_writer.write_header(version).map_err(|e: std::io::Error| PdfError::Other(e.to_string()))?;
-        dry_writer.write_linearization_dict(lin_dict_id, &params).map_err(|e: std::io::Error| PdfError::Other(e.to_string()))?;
-        
+        dry_writer
+            .write_header(version)
+            .map_err(|e: std::io::Error| PdfError::Other(e.to_string()))?;
+        dry_writer
+            .write_linearization_dict(lin_dict_id, &params)
+            .map_err(|e: std::io::Error| PdfError::Other(e.to_string()))?;
+
         params.hint_stream_offset = dry_writer.current_offset();
-        params.hint_stream_len = 2048 + (num_pages * 32); 
-        dry_writer.write_all(&vec![0; params.hint_stream_len]).map_err(|e: std::io::Error| PdfError::Other(e.to_string()))?;
-        
+        params.hint_stream_len = 2048 + (num_pages * 32);
+        dry_writer
+            .write_all(&vec![0; params.hint_stream_len])
+            .map_err(|e: std::io::Error| PdfError::Other(e.to_string()))?;
+
         for (i, section) in sections.iter().enumerate().take(num_pages) {
             let start = dry_writer.current_offset();
             let mut count = 0;
             for r in section {
                 let obj = self.inner.resolve(r)?;
-                dry_writer.write_indirect_object(r.id, r.generation, &obj).map_err(|e: std::io::Error| PdfError::Other(e.to_string()))?;
+                dry_writer
+                    .write_indirect_object(r.id, r.generation, &obj)
+                    .map_err(|e: std::io::Error| PdfError::Other(e.to_string()))?;
                 count += 1;
             }
-            page_stats.push(PageStats { offset: start, length: dry_writer.current_offset() - start, obj_count: count });
-            if i == 0 { params.end_of_first_page = dry_writer.current_offset(); }
+            page_stats.push(PageStats {
+                offset: start,
+                length: dry_writer.current_offset() - start,
+                obj_count: count,
+            });
+            if i == 0 {
+                params.end_of_first_page = dry_writer.current_offset();
+            }
         }
-        
+
         for r in &sections[num_pages] {
             let obj = self.inner.resolve(r)?;
-            dry_writer.write_indirect_object(r.id, r.generation, &obj).map_err(|e: std::io::Error| PdfError::Other(e.to_string()))?;
+            dry_writer
+                .write_indirect_object(r.id, r.generation, &obj)
+                .map_err(|e: std::io::Error| PdfError::Other(e.to_string()))?;
         }
-        
+
         params.main_xref_offset = dry_writer.current_offset();
         let info_ref = self.inner.trailer().get(&"Info".into()).and_then(|o| o.as_reference());
-        dry_writer.finish(catalog_ref, info_ref).map_err(|e: std::io::Error| PdfError::Other(e.to_string()))?;
+        dry_writer
+            .finish(catalog_ref, info_ref)
+            .map_err(|e: std::io::Error| PdfError::Other(e.to_string()))?;
         params.file_len = dry_writer.current_offset();
-        
+
         Ok((params, page_stats))
     }
 
-    fn perform_linearized_write(&self, output_path: &Path, version: &str, sections: &[Vec<Reference>], params: &crate::writer::LinearizationParams, page_stats: &[PageStats]) -> PdfResult<()> {
+    fn perform_linearized_write(
+        &self,
+        output_path: &Path,
+        version: &str,
+        sections: &[Vec<Reference>],
+        params: &crate::writer::LinearizationParams,
+        page_stats: &[PageStats],
+    ) -> PdfResult<()> {
         use crate::writer::PdfWriter;
-        use ferruginous_core::{PdfName, Object};
+        use ferruginous_core::{Object, PdfName};
         let num_pages = self.inner.get_page_count()?;
         let catalog_ref = self.inner.root();
         let lin_dict_id = self.inner.store().max_id() + 1;
         let hint_stream_id = lin_dict_id + 1;
         let hint_data = build_hint_stream(page_stats, params);
 
-        let file = std::fs::File::create(output_path).map_err(|e: std::io::Error| PdfError::Other(e.to_string()))?;
+        let file = std::fs::File::create(output_path)
+            .map_err(|e: std::io::Error| PdfError::Other(e.to_string()))?;
         let mut writer = PdfWriter::new(file);
-        
+
         writer.write_header(version).map_err(|e: std::io::Error| PdfError::Other(e.to_string()))?;
-        writer.write_linearization_dict(lin_dict_id, params).map_err(|e: std::io::Error| PdfError::Other(e.to_string()))?;
-        
+        writer
+            .write_linearization_dict(lin_dict_id, params)
+            .map_err(|e: std::io::Error| PdfError::Other(e.to_string()))?;
+
         let mut hint_dict = std::collections::BTreeMap::new();
         hint_dict.insert(PdfName::new(b"Type"), Object::Name(PdfName::new(b"HintStream")));
-        writer.write_indirect_object(hint_stream_id, 0, &Object::Stream(std::sync::Arc::new(hint_dict), bytes::Bytes::from(hint_data)))
+        writer
+            .write_indirect_object(
+                hint_stream_id,
+                0,
+                &Object::Stream(std::sync::Arc::new(hint_dict), bytes::Bytes::from(hint_data)),
+            )
             .map_err(|e: std::io::Error| PdfError::Other(e.to_string()))?;
-            
+
         for section in sections.iter().take(num_pages) {
             for r in section {
                 let obj = self.inner.resolve(r)?;
-                writer.write_indirect_object(r.id, r.generation, &obj).map_err(|e: std::io::Error| PdfError::Other(e.to_string()))?;
+                writer
+                    .write_indirect_object(r.id, r.generation, &obj)
+                    .map_err(|e: std::io::Error| PdfError::Other(e.to_string()))?;
             }
         }
-        
+
         for r in &sections[num_pages] {
             let obj = self.inner.resolve(r)?;
-            writer.write_indirect_object(r.id, r.generation, &obj).map_err(|e: std::io::Error| PdfError::Other(e.to_string()))?;
+            writer
+                .write_indirect_object(r.id, r.generation, &obj)
+                .map_err(|e: std::io::Error| PdfError::Other(e.to_string()))?;
         }
-        
+
         let info_ref = self.inner.trailer().get(&"Info".into()).and_then(|o| o.as_reference());
-        writer.finish(catalog_ref, info_ref).map_err(|e: std::io::Error| PdfError::Other(e.to_string()))?;
+        writer
+            .finish(catalog_ref, info_ref)
+            .map_err(|e: std::io::Error| PdfError::Other(e.to_string()))?;
         Ok(())
     }
 }
@@ -652,7 +841,7 @@ impl PdfDocument {
 fn build_hint_stream(stats: &[PageStats], _params: &crate::writer::LinearizationParams) -> Vec<u8> {
     use crate::writer::BitWriter;
     let mut bw = BitWriter::new();
-    
+
     // Header for Page Offset Hint Table
     // Item 1: Least number of objects in a page
     let min_objs = stats.iter().map(|s| s.obj_count).min().unwrap_or(0) as u32;
@@ -667,7 +856,7 @@ fn build_hint_stream(stats: &[PageStats], _params: &crate::writer::Linearization
     // Item 5: Bits needed for Page Length delta
     bw.write_bits(16, 16);
     // ... Simplified for MVP ...
-    
+
     // Entry for each page
     for s in stats {
         // Delta objects
@@ -675,7 +864,7 @@ fn build_hint_stream(stats: &[PageStats], _params: &crate::writer::Linearization
         // Delta length
         bw.write_bits((s.length as u32).saturating_sub(min_len), 16);
     }
-    
+
     bw.finish()
 }
 
@@ -699,7 +888,7 @@ impl Page<'_> {
     /// Extracts plain text from this page.
     pub fn extract_text(&self, resolver: &dyn ferruginous_core::Resolver) -> PdfResult<String> {
         let mut backend = TextExtractionBackend::new();
-        
+
         let res_dict = if let Some(res_obj) = self.doc_page.resources() {
             res_obj.as_dict_arc().unwrap_or_else(|| Arc::new(std::collections::BTreeMap::new()))
         } else {
@@ -708,21 +897,25 @@ impl Page<'_> {
 
         let mut interpreter = Interpreter::new(&mut backend, resolver, res_dict);
 
-        let contents = self.doc_page.dictionary.get(&"Contents".into())
+        let contents = self
+            .doc_page
+            .dictionary
+            .get(&"Contents".into())
             .ok_or_else(|| ferruginous_core::PdfError::Other("Missing /Contents".into()))?;
-            
+
         let content_refs = match contents {
             Object::Reference(r) => vec![*r],
-            Object::Array(a) => a.iter().filter_map(|o| {
-                if let Object::Reference(r) = o { Some(*r) } else { None }
-            }).collect(),
+            Object::Array(a) => a
+                .iter()
+                .filter_map(|o| if let Object::Reference(r) = o { Some(*r) } else { None })
+                .collect(),
             Object::Stream(_, _) => vec![], // Handle direct below
             _ => return Err(ferruginous_core::PdfError::Other("Invalid /Contents".into())),
         };
 
         if let Object::Stream(_, _) = contents {
-             let decoded = contents.decode_stream()?;
-             interpreter.execute(&decoded)?;
+            let decoded = contents.decode_stream()?;
+            interpreter.execute(&decoded)?;
         } else {
             for r in content_refs {
                 let stream_obj = resolver.resolve(&r)?;
@@ -739,13 +932,15 @@ impl Page<'_> {
     /// Sets the rotation of the page in degrees (must be a multiple of 90).
     pub fn set_rotation(&mut self, angle: i32) -> PdfResult<()> {
         if angle % 90 != 0 {
-            return Err(ferruginous_core::PdfError::Other("Rotation must be a multiple of 90".into()));
+            return Err(ferruginous_core::PdfError::Other(
+                "Rotation must be a multiple of 90".into(),
+            ));
         }
-        
+
         // Use Arc::make_mut to get a mutable reference to the dictionary
         let dict = Arc::make_mut(&mut self.doc_page.dictionary);
         dict.insert(ferruginous_core::PdfName::from("Rotate"), Object::Integer(angle as i64));
-        
+
         Ok(())
     }
 }
@@ -760,7 +955,7 @@ impl PdfDocument {
         // Create a minimal empty document as the target
         // (Header + Catalog [1 0 R] + Pages root [2 0 R])
         let mut target_inner = Document::open_repair(Bytes::from_static(b"%PDF-2.0\r\n1 0 obj\r\n<< /Type /Catalog /Pages 2 0 R >>\r\nendobj\r\n2 0 obj\r\n<< /Type /Pages /Kids [] /Count 0 >>\r\nendobj\r\ntrailer\r\n<< /Root 1 0 R /Size 3 >>\r\nstartxref\r\n0\r\n%%EOF\r\n"))?;
-        
+
         let mut cloner = crate::cloning::ObjectCloner::new(&mut target_inner);
         let mut all_page_refs = Vec::new();
 
@@ -770,7 +965,8 @@ impl PdfDocument {
                 let page = src.get_page(i)?;
                 let page_ref = page.reference();
                 // Clone the page object and all its dependencies
-                let cloned_ref_obj = cloner.clone_object(&src.inner, &Object::Reference(page_ref))?;
+                let cloned_ref_obj =
+                    cloner.clone_object(&src.inner, &Object::Reference(page_ref))?;
                 if let Object::Reference(new_ref) = cloned_ref_obj {
                     all_page_refs.push(Object::Reference(new_ref));
                 }
@@ -783,7 +979,7 @@ impl PdfDocument {
         pages_dict.insert("Type".into(), Object::Name("Pages".into()));
         pages_dict.insert("Count".into(), Object::Integer(all_page_refs.len() as i64));
         pages_dict.insert("Kids".into(), Object::Array(Arc::new(all_page_refs)));
-        
+
         target_inner.update_object(pages_root_ref.id, Object::Dictionary(Arc::new(pages_dict)))?;
 
         Ok(Self { inner: target_inner, vacuum: false, strip: false, password: None })
@@ -796,7 +992,7 @@ impl PdfDocument {
         }
 
         let mut target_inner = Document::open_repair(Bytes::from_static(b"%PDF-2.0\r\n1 0 obj\r\n<< /Type /Catalog /Pages 2 0 R >>\r\nendobj\r\n2 0 obj\r\n<< /Type /Pages /Kids [] /Count 0 >>\r\nendobj\r\ntrailer\r\n<< /Root 1 0 R /Size 3 >>\r\nstartxref\r\n0\r\n%%EOF\r\n"))?;
-        
+
         let mut cloner = crate::cloning::ObjectCloner::new(&mut target_inner);
         let mut extracted_refs = Vec::new();
 
@@ -806,10 +1002,10 @@ impl PdfDocument {
             if idx >= total {
                 continue;
             }
-            
+
             let page = self.get_page(idx)?;
             let page_ref = page.reference();
-            
+
             let cloned_ref_obj = cloner.clone_object(&self.inner, &Object::Reference(page_ref))?;
             if let Object::Reference(new_ref) = cloned_ref_obj {
                 extracted_refs.push(Object::Reference(new_ref));
@@ -821,7 +1017,7 @@ impl PdfDocument {
         pages_dict.insert("Type".into(), Object::Name("Pages".into()));
         pages_dict.insert("Count".into(), Object::Integer(extracted_refs.len() as i64));
         pages_dict.insert("Kids".into(), Object::Array(Arc::new(extracted_refs)));
-        
+
         target_inner.update_object(pages_root_ref.id, Object::Dictionary(Arc::new(pages_dict)))?;
 
         Ok(Self { inner: target_inner, vacuum: false, strip: false, password: None })
@@ -842,24 +1038,55 @@ impl ferruginous_render::RenderBackend for TextExtractionBackend {
     fn push_state(&mut self) {}
     fn pop_state(&mut self) {}
     fn transform(&mut self, _affine: kurbo::Affine) {}
-    fn fill_path(&mut self, _path: &kurbo::BezPath, _color: &ferruginous_core::graphics::Color, _rule: ferruginous_core::graphics::WindingRule) {}
-    fn stroke_path(&mut self, _path: &kurbo::BezPath, _color: &ferruginous_core::graphics::Color, _style: &ferruginous_core::graphics::StrokeStyle) {}
-    fn push_clip(&mut self, _path: &kurbo::BezPath, _rule: ferruginous_core::graphics::WindingRule) {}
+    fn fill_path(
+        &mut self,
+        _path: &kurbo::BezPath,
+        _color: &ferruginous_core::graphics::Color,
+        _rule: ferruginous_core::graphics::WindingRule,
+    ) {
+    }
+    fn stroke_path(
+        &mut self,
+        _path: &kurbo::BezPath,
+        _color: &ferruginous_core::graphics::Color,
+        _style: &ferruginous_core::graphics::StrokeStyle,
+    ) {
+    }
+    fn push_clip(
+        &mut self,
+        _path: &kurbo::BezPath,
+        _rule: ferruginous_core::graphics::WindingRule,
+    ) {
+    }
     fn pop_clip(&mut self) {}
-    fn draw_image(&mut self, _data: &[u8], _w: u32, _h: u32, _format: ferruginous_core::graphics::PixelFormat) {}
+    fn draw_image(
+        &mut self,
+        _data: &[u8],
+        _w: u32,
+        _h: u32,
+        _format: ferruginous_core::graphics::PixelFormat,
+    ) {
+    }
     fn set_fill_alpha(&mut self, _alpha: f64) {}
     fn set_stroke_alpha(&mut self, _alpha: f64) {}
     fn set_blend_mode(&mut self, _mode: ferruginous_core::graphics::BlendMode) {}
     fn set_fill_color(&mut self, _color: Color) {}
     fn set_stroke_color(&mut self, _color: Color) {}
-    
-    fn define_font(&mut self, _name: &str, _data: Vec<u8>) {}
-    
-    fn show_text(&mut self, text: &str, _font_name: &str, _size: f32, _transform: kurbo::Affine) {
+
+    fn define_font(&mut self, _name: &str, _data: std::sync::Arc<Vec<u8>>, _index: Option<usize>) {}
+    fn set_font(&mut self, _name: &str) {}
+
+    #[allow(clippy::too_many_arguments)]
+    fn show_text(
+        &mut self,
+        _glyphs: &[(u32, f32)],
+        text: &str,
+        _size: f64,
+        _transform: kurbo::Affine,
+        _tc: f64,
+        _tw: f64,
+        _is_vertical: bool,
+    ) {
         self.text.push_str(text);
-        if !text.ends_with(' ') {
-             // Basic heuristic for spaces between Tj ops if needed, 
-             // but usually spaces are explicit in PDF or TJ.
-        }
     }
 }

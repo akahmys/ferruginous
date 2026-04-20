@@ -1,5 +1,5 @@
-use kurbo::Affine;
 use ferruginous_core::Matrix;
+use kurbo::Affine;
 
 /// Internal state of the graphics stack level.
 #[derive(Debug, Clone)]
@@ -22,36 +22,27 @@ impl CtmStack {
     /// Creates a new CTM stack with an initial identity matrix.
     pub fn new(page_height: f64) -> Self {
         Self {
-            stack: vec![CtmState {
-                ctm: Affine::IDENTITY,
-                clips_at_this_level: 0,
-            }],
+            stack: vec![CtmState { ctm: Affine::IDENTITY, clips_at_this_level: 0 }],
             page_height,
         }
     }
 
     /// Pushes the current state onto the stack (corresponds to `q` operator).
     pub fn push(&mut self) {
-        let current = self.stack.last().cloned().unwrap_or(CtmState {
-            ctm: Affine::IDENTITY,
-            clips_at_this_level: 0,
-        });
+        let current = self
+            .stack
+            .last()
+            .cloned()
+            .unwrap_or(CtmState { ctm: Affine::IDENTITY, clips_at_this_level: 0 });
         // Reset clips_at_this_level for the NEW level.
         // PDF spec: Q restores the previous state, which includes the previous clip.
         // Vello: We only need to know how many layers were pushed *since* the last q.
-        self.stack.push(CtmState {
-            ctm: current.ctm,
-            clips_at_this_level: 0,
-        });
+        self.stack.push(CtmState { ctm: current.ctm, clips_at_this_level: 0 });
     }
 
     /// Pops the state and returns the number of clips that need to be popped from Vello.
     pub fn pop(&mut self) -> Option<usize> {
-        if self.stack.len() > 1 {
-            self.stack.pop().map(|s| s.clips_at_this_level)
-        } else {
-            None
-        }
+        if self.stack.len() > 1 { self.stack.pop().map(|s| s.clips_at_this_level) } else { None }
     }
 
     /// Increments the clip depth for the current stack level.
@@ -70,10 +61,7 @@ impl CtmStack {
 
     /// Returns the current CTM in PDF space.
     pub fn current(&self) -> Affine {
-        self.stack
-            .last()
-            .map(|s| s.ctm)
-            .unwrap_or(Affine::IDENTITY)
+        self.stack.last().map(|s| s.ctm).unwrap_or(Affine::IDENTITY)
     }
 
     /// Returns the CTM mapped to the target coordinate system (top-left origin).
@@ -93,7 +81,7 @@ mod tests {
         // Current is identity
         let p_pdf = kurbo::Point::new(10.0, 10.0); // 10 up from bottom
         let p_disp = ctm.current_for_display() * p_pdf;
-        
+
         assert_eq!(p_disp.x, 10.0);
         assert_eq!(p_disp.y, 90.0); // 90 down from top
     }

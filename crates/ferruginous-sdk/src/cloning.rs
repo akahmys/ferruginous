@@ -1,7 +1,7 @@
+use ferruginous_core::{Object, PdfResult, Reference, Resolver};
+use ferruginous_doc::Document;
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use ferruginous_core::{Object, Reference, PdfResult, Resolver};
-use ferruginous_doc::Document;
 
 /// Maps a source object reference to its newly allocated reference in the target document.
 pub type ReferenceMap = BTreeMap<Reference, Reference>;
@@ -15,10 +15,7 @@ pub struct ObjectCloner<'a> {
 impl<'a> ObjectCloner<'a> {
     /// Creates a new cloner that will insert objects into the target document.
     pub fn new(target: &'a mut Document) -> Self {
-        Self {
-            target,
-            map: BTreeMap::new(),
-        }
+        Self { target, map: BTreeMap::new() }
     }
 
     /// Iteratively clones an object and all its children into the target document.
@@ -30,9 +27,9 @@ impl<'a> ObjectCloner<'a> {
         let _result_obj: Option<Object> = None;
 
         // Note: For complex nesting (Dictionary/Array), we still need to handle the content.
-        // However, the rule prohibits function recursion. We will use a work-stack 
+        // However, the rule prohibits function recursion. We will use a work-stack
         // to handle nested reference discovery while reconstructing objects.
-        
+
         // Revised approach for Rule 6:
         // 1. If it's a simple object, return it.
         // 2. If it's a Reference, resolve it and push to a "Pending" stack if not already mapped.
@@ -41,7 +38,9 @@ impl<'a> ObjectCloner<'a> {
         match obj {
             Object::Reference(r) => {
                 self.ensure_cloned_iterative(src_doc, *r)?;
-                let mapped = self.map.get(r).ok_or_else(|| ferruginous_core::PdfError::Other(format!("Reference {} not mapped", r.id)))?;
+                let mapped = self.map.get(r).ok_or_else(|| {
+                    ferruginous_core::PdfError::Other(format!("Reference {} not mapped", r.id))
+                })?;
                 Ok(Object::Reference(*mapped))
             }
             Object::Dictionary(dict) => {
@@ -74,7 +73,9 @@ impl<'a> ObjectCloner<'a> {
         match obj {
             Object::Reference(r) => {
                 self.ensure_cloned_iterative(src_doc, *r)?;
-                let mapped = self.map.get(r).ok_or_else(|| ferruginous_core::PdfError::Other(format!("Reference {} not mapped", r.id)))?;
+                let mapped = self.map.get(r).ok_or_else(|| {
+                    ferruginous_core::PdfError::Other(format!("Reference {} not mapped", r.id))
+                })?;
                 Ok(Object::Reference(*mapped))
             }
             Object::Dictionary(dict) => {
@@ -106,7 +107,7 @@ impl<'a> ObjectCloner<'a> {
     fn ensure_cloned_iterative(&mut self, src_doc: &Document, root: Reference) -> PdfResult<()> {
         let mut work_stack = vec![root];
         let mut pending_updates = Vec::new();
-        
+
         // Pass 1: Discovery and Map Allocation
         while let Some(src_ref) = work_stack.pop() {
             if self.map.contains_key(&src_ref) {
@@ -125,7 +126,7 @@ impl<'a> ObjectCloner<'a> {
             obj.gather_references(&mut nested);
 
             for id in nested {
-                let r = Reference::new(id, 0); 
+                let r = Reference::new(id, 0);
                 if !self.map.contains_key(&r) {
                     work_stack.push(r);
                 }
@@ -145,7 +146,12 @@ impl<'a> ObjectCloner<'a> {
     fn remap_object(&self, _src_doc: &Document, obj: &Object) -> PdfResult<Object> {
         match obj {
             Object::Reference(r) => {
-                let mapped = self.map.get(r).ok_or_else(|| ferruginous_core::PdfError::Other(format!("Reference {} not mapped during cloning", r.id)))?;
+                let mapped = self.map.get(r).ok_or_else(|| {
+                    ferruginous_core::PdfError::Other(format!(
+                        "Reference {} not mapped during cloning",
+                        r.id
+                    ))
+                })?;
                 Ok(Object::Reference(*mapped))
             }
             Object::Dictionary(dict) => {

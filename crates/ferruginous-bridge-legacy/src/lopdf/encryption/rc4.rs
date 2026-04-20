@@ -1,5 +1,5 @@
 //! RC4 encryption algorithm implementation for PDF 1.7.
-//! 
+//!
 //! Original Copyright (c) 2016-2022 J-F-Liu
 //! Licensed under MIT License.
 

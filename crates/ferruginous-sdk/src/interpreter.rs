@@ -1,9 +1,11 @@
-use std::sync::Arc;
-use std::collections::BTreeMap;
-use ferruginous_core::{Object, Parser, PdfResult, PdfError, PdfName, lexer::Token};
-use ferruginous_render::{RenderBackend, path::PathBuilder};
-use ferruginous_core::graphics::{WindingRule, GraphicsState, TextMatrices, TextRenderingMode, Matrix, BlendMode, Color};
+use ferruginous_core::graphics::{
+    BlendMode, Color, GraphicsState, Matrix, TextMatrices, TextRenderingMode, WindingRule,
+};
+use ferruginous_core::{Object, Parser, PdfError, PdfName, PdfResult, lexer::Token};
 use ferruginous_doc::font::{FontResource, cmap::MappingResult};
+use ferruginous_render::{RenderBackend, path::PathBuilder};
+use std::collections::BTreeMap;
+use std::sync::Arc;
 
 /// A content stream interpreter that translates PDF operators into [RenderBackend] calls.
 pub struct Interpreter<'a> {
@@ -36,7 +38,7 @@ impl<'a> Interpreter<'a> {
     pub fn new(
         backend: &'a mut dyn RenderBackend,
         resolver: &'a dyn ferruginous_core::Resolver,
-        initial_resources: Arc<BTreeMap<PdfName, Object>>
+        initial_resources: Arc<BTreeMap<PdfName, Object>>,
     ) -> Self {
         Self {
             backend,
@@ -55,14 +57,18 @@ impl<'a> Interpreter<'a> {
 
     /// Executes a content stream by parsing and processing its operators.
     pub fn execute(&mut self, data: &[u8]) -> PdfResult<()> {
-        if data.is_empty() { return Ok(()); }
-        
-        let mut parser = Parser::new(bytes::Bytes::copy_from_slice(data))
-            .with_resolver(self.resolver);
+        if data.is_empty() {
+            return Ok(());
+        }
+
+        let mut parser =
+            Parser::new(bytes::Bytes::copy_from_slice(data)).with_resolver(self.resolver);
 
         while let Ok(Some(token)) = parser.peek() {
             match token {
-                Token::Keyword(s) if s.as_ref() == b"true" || s.as_ref() == b"false" || s.as_ref() == b"null" => {
+                Token::Keyword(s)
+                    if s.as_ref() == b"true" || s.as_ref() == b"false" || s.as_ref() == b"null" =>
+                {
                     self.stack.push(parser.parse_object()?);
                 }
                 Token::Keyword(op) => {
@@ -84,7 +90,7 @@ impl<'a> Interpreter<'a> {
         match op {
             // Path Construction (m, l, c, re, h)
             "m" | "l" | "c" | "re" | "h" => self.handle_path_operator(op)?,
-            
+
             // Path Painting & Clipping (S, f, F, f*, W, W*, n)
             "S" | "f" | "F" | "f*" | "W" | "W*" | "n" => self.handle_painting_operator(op)?,
 
@@ -95,7 +101,9 @@ impl<'a> Interpreter<'a> {
             "g" | "G" | "rg" | "RG" | "k" | "K" => self.handle_color_operator(op)?,
 
             // Text State (Tc, Tw, Tz, TL, Tf, Tr, Ts)
-            "Tc" | "Tw" | "Tz" | "TL" | "Tf" | "Tr" | "Ts" => self.handle_text_state_operator(op)?,
+            "Tc" | "Tw" | "Tz" | "TL" | "Tf" | "Tr" | "Ts" => {
+                self.handle_text_state_operator(op)?;
+            }
 
             // Text Objects (BT, ET)
             "BT" | "ET" => self.handle_text_scope_operator(op)?,
@@ -105,7 +113,7 @@ impl<'a> Interpreter<'a> {
 
             // Text Showing (Tj, TJ, ', ")
             "Tj" | "TJ" | "'" | "\"" => self.handle_text_showing_operator(op)?,
-            
+
             // XObjects (Do)
             "Do" => self.handle_xobject_operator()?,
 
@@ -120,22 +128,29 @@ impl<'a> Interpreter<'a> {
     fn handle_path_operator(&mut self, op: &str) -> PdfResult<()> {
         match op {
             "m" => {
-                let y = self.pop_f64()?; let x = self.pop_f64()?;
+                let y = self.pop_f64()?;
+                let x = self.pop_f64()?;
                 self.path.move_to(x, y);
             }
             "l" => {
-                let y = self.pop_f64()?; let x = self.pop_f64()?;
+                let y = self.pop_f64()?;
+                let x = self.pop_f64()?;
                 self.path.line_to(x, y);
             }
             "c" => {
-                let y3 = self.pop_f64()?; let x3 = self.pop_f64()?;
-                let y2 = self.pop_f64()?; let x2 = self.pop_f64()?;
-                let y1 = self.pop_f64()?; let x1 = self.pop_f64()?;
+                let y3 = self.pop_f64()?;
+                let x3 = self.pop_f64()?;
+                let y2 = self.pop_f64()?;
+                let x2 = self.pop_f64()?;
+                let y1 = self.pop_f64()?;
+                let x1 = self.pop_f64()?;
                 self.path.curve_to(x1, y1, x2, y2, x3, y3);
             }
             "re" => {
-                let h = self.pop_f64()?; let w = self.pop_f64()?;
-                let y = self.pop_f64()?; let x = self.pop_f64()?;
+                let h = self.pop_f64()?;
+                let w = self.pop_f64()?;
+                let y = self.pop_f64()?;
+                let x = self.pop_f64()?;
                 self.path.rectangle(x, y, w, h);
             }
             "h" => self.path.close_path(),
@@ -184,9 +199,12 @@ impl<'a> Interpreter<'a> {
                 }
             }
             "cm" => {
-                let f = self.pop_f64()?; let e = self.pop_f64()?;
-                let d = self.pop_f64()?; let c = self.pop_f64()?;
-                let b = self.pop_f64()?; let a = self.pop_f64()?;
+                let f = self.pop_f64()?;
+                let e = self.pop_f64()?;
+                let d = self.pop_f64()?;
+                let c = self.pop_f64()?;
+                let b = self.pop_f64()?;
+                let a = self.pop_f64()?;
                 let m = Matrix::new(a, b, c, d, e, f);
                 self.state.ctm = self.state.ctm.concat(&m);
                 self.backend.transform(m.0);
@@ -259,30 +277,43 @@ impl<'a> Interpreter<'a> {
                 self.state.text_state.font_size = self.pop_f64()?;
                 let name = self.pop_name()?;
                 self.state.text_state.font = Some(name.clone());
-                
+
                 // Pre-define font in backend if possible
                 if let Ok(font_res) = self.find_resource(&PdfName::from("Font"), &name) {
                     if let Some(dict) = font_res.as_dict() {
                         if let Ok(font) = FontResource::load(dict, self.resolver) {
-                             let font_data = match &font {
-                                FontResource::Simple(f) => f.descriptor.as_ref().and_then(|d| d.font_file.as_ref()),
-                                FontResource::Composite(f) => f.descendant_fonts.first().and_then(|d| {
-                                    if let FontResource::CID(cid) = d.as_ref() { cid.descriptor.font_file.as_ref() } else { None }
-                                }),
+                            let font_data = match &font {
+                                FontResource::Simple(f) => {
+                                    f.descriptor.as_ref().and_then(|d| d.font_file.as_ref())
+                                }
+                                FontResource::Composite(f) => {
+                                    f.descendant_fonts.first().and_then(|d| {
+                                        if let FontResource::CID(cid) = d.as_ref() {
+                                            cid.descriptor.font_file.as_ref()
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                }
                                 FontResource::CID(f) => f.descriptor.font_file.as_ref(),
                             };
                             if let Some(data) = font_data {
-                                self.backend.define_font(name.as_str(), data.clone());
+                                self.backend.define_font(name.as_str(), data.clone(), None);
                             }
                         }
                     }
                 }
+
+                self.backend.set_font(name.as_str());
             }
             "Tc" => self.state.text_state.char_spacing = self.pop_f64()?,
             "Tw" => self.state.text_state.word_spacing = self.pop_f64()?,
             "Tz" => self.state.text_state.horizontal_scaling = self.pop_f64()?,
             "TL" => self.state.text_state.leading = self.pop_f64()?,
-            "Tr" => self.state.text_state.rendering_mode = TextRenderingMode::from(self.pop_f64()? as i64),
+            "Tr" => {
+                self.state.text_state.rendering_mode =
+                    TextRenderingMode::from(self.pop_f64()? as i64);
+            }
             "Ts" => self.state.text_state.rise = self.pop_f64()?,
             _ => return Err(PdfError::Other(format!("Invalid text state op: {op}"))),
         }
@@ -292,14 +323,15 @@ impl<'a> Interpreter<'a> {
     fn handle_text_scope_operator(&mut self, op: &str) -> PdfResult<()> {
         match op {
             "BT" => {
-                 self.text_matrices = Some(TextMatrices::default());
-                 self.current_text_bbox = None;
+                self.text_matrices = Some(TextMatrices::default());
+                self.current_text_bbox = None;
             }
             "ET" => {
-                 if let Some(current) = self.current_text_bbox {
-                     self.page_text_bbox = Some(self.page_text_bbox.map_or(current, |p| p.union(&current)));
-                 }
-                 self.text_matrices = None;
+                if let Some(current) = self.current_text_bbox {
+                    self.page_text_bbox =
+                        Some(self.page_text_bbox.map_or(current, |p| p.union(&current)));
+                }
+                self.text_matrices = None;
             }
             _ => return Err(PdfError::Other(format!("Invalid text scope op: {op}"))),
         }
@@ -310,33 +342,50 @@ impl<'a> Interpreter<'a> {
     fn handle_text_positioning_operator(&mut self, op: &str) -> PdfResult<()> {
         match op {
             "Td" => {
-                let ty = self.pop_f64()?; let tx = self.pop_f64()?;
-                let text_matrices = self.text_matrices.as_mut().ok_or_else(|| PdfError::Other("Td outside of BT/ET scope".into()))?;
+                let ty = self.pop_f64()?;
+                let tx = self.pop_f64()?;
+                let text_matrices = self
+                    .text_matrices
+                    .as_mut()
+                    .ok_or_else(|| PdfError::Other("Td outside of BT/ET scope".into()))?;
                 let next_line = Matrix::new(1.0, 0.0, 0.0, 1.0, tx, ty);
                 text_matrices.tlm = text_matrices.tlm.concat(&next_line);
                 text_matrices.tm = text_matrices.tlm;
             }
             "TD" => {
-                let ty = self.pop_f64()?; let tx = self.pop_f64()?;
+                let ty = self.pop_f64()?;
+                let tx = self.pop_f64()?;
                 self.state.text_state.leading = -ty;
-                let text_matrices = self.text_matrices.as_mut().ok_or_else(|| PdfError::Other("TD outside of BT/ET scope".into()))?;
+                let text_matrices = self
+                    .text_matrices
+                    .as_mut()
+                    .ok_or_else(|| PdfError::Other("TD outside of BT/ET scope".into()))?;
                 let next_line = Matrix::new(1.0, 0.0, 0.0, 1.0, tx, ty);
                 text_matrices.tlm = text_matrices.tlm.concat(&next_line);
                 text_matrices.tm = text_matrices.tlm;
             }
             "Tm" => {
                 #[allow(clippy::many_single_char_names)]
-                let f = self.pop_f64()?; let e = self.pop_f64()?;
-                let d = self.pop_f64()?; let c = self.pop_f64()?;
-                let b = self.pop_f64()?; let a = self.pop_f64()?;
-                let text_matrices = self.text_matrices.as_mut().ok_or_else(|| PdfError::Other("Tm outside of BT/ET scope".into()))?;
+                let f = self.pop_f64()?;
+                let e = self.pop_f64()?;
+                let d = self.pop_f64()?;
+                let c = self.pop_f64()?;
+                let b = self.pop_f64()?;
+                let a = self.pop_f64()?;
+                let text_matrices = self
+                    .text_matrices
+                    .as_mut()
+                    .ok_or_else(|| PdfError::Other("Tm outside of BT/ET scope".into()))?;
                 let m = Matrix::new(a, b, c, d, e, f);
                 text_matrices.tlm = m;
                 text_matrices.tm = m;
             }
             "T*" => {
                 let leading = self.state.text_state.leading;
-                let text_matrices = self.text_matrices.as_mut().ok_or_else(|| PdfError::Other("T* outside of BT/ET scope".into()))?;
+                let text_matrices = self
+                    .text_matrices
+                    .as_mut()
+                    .ok_or_else(|| PdfError::Other("T* outside of BT/ET scope".into()))?;
                 let next_line = Matrix::new(1.0, 0.0, 0.0, 1.0, 0.0, -leading);
                 text_matrices.tlm = text_matrices.tlm.concat(&next_line);
                 text_matrices.tm = text_matrices.tlm;
@@ -379,110 +428,170 @@ impl<'a> Interpreter<'a> {
     }
 
     fn show_text(&mut self, text: &[u8]) -> PdfResult<()> {
-        let font_name = self.state.text_state.font.clone().ok_or_else(|| PdfError::Other("No font set".into()))?;
+        let font_name = self
+            .state
+            .text_state
+            .font
+            .clone()
+            .ok_or_else(|| PdfError::Other("No font set".into()))?;
         let font_resource = self.resolve_font_resource(&font_name)?;
-        
+
         // DEBUG: HEX DUMP
         let hex: String = text.iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(" ");
         eprintln!("DEBUG: TJ_RAW: font={:?}, bytes=[{}]", font_name.as_str(), hex);
 
         let (glyphs, unicode_buf) = self.map_text_to_glyphs(text, &font_resource)?;
-        
-        let text_matrices = self.text_matrices.as_mut().ok_or_else(|| PdfError::Other("Text operation outside of BT/ET".into()))?;
-        let font_size = self.state.text_state.font_size;
-        let render_matrix = text_matrices.tm.concat(&Matrix::new(1.0, 0.0, 0.0, 1.0, 0.0, self.state.text_state.rise));
-        
-        // Use the base font name for fallback
-        let base_font = font_resource.base_font();
-        
-        // Force fallback for stable Japanese rendering in this phase
-        let _ = self.render_glyphs_if_available(&font_resource, &glyphs, &render_matrix);
 
-        eprintln!("DEBUG: show_text: font={:?}, glyphs={}, unicode={:?}", base_font, glyphs.len(), unicode_buf);
-        self.backend.show_text(&unicode_buf, base_font.as_str(), font_size as f32, render_matrix.0);
+        // CRITICAL FIX: Ensure backend font is defined before show_text
+        if let Some(data) = font_resource.font_file() {
+            self.backend.define_font(font_name.as_str(), data, None);
+        } else {
+            eprintln!("WARNING: No font data for {:?}", font_name.as_str());
+        }
+
+        self.backend.set_font(font_name.as_str());
+
+        let text_matrices = self
+            .text_matrices
+            .as_mut()
+            .ok_or_else(|| PdfError::Other("Text operation outside of BT/ET".into()))?;
+        let font_size = self.state.text_state.font_size;
+        let render_matrix = text_matrices.tm.concat(&Matrix::new(
+            1.0,
+            0.0,
+            0.0,
+            1.0,
+            0.0,
+            self.state.text_state.rise,
+        ));
+
+        let tc = self.state.text_state.char_spacing;
+        let tw = self.state.text_state.word_spacing;
+        let is_vertical = font_resource.wmode() == 1;
+
+        eprintln!(
+            "DEBUG: show_text: name={:?}, glyphs={}, unicode={:?}, vertical={}",
+            font_name.as_str(),
+            glyphs.len(),
+            unicode_buf,
+            is_vertical
+        );
+        self.backend.show_text(
+            &glyphs,
+            &unicode_buf,
+            font_size,
+            render_matrix.0,
+            tc,
+            tw,
+            is_vertical,
+        );
 
         self.update_text_state_after_show(&font_resource, &glyphs, &render_matrix, font_size)
     }
 
-    fn map_text_to_glyphs(&self, text: &[u8], font: &FontResource) -> PdfResult<(Vec<(u32, f32)>, String)> {
+    fn map_text_to_glyphs(
+        &self,
+        text: &[u8],
+        font: &FontResource,
+    ) -> PdfResult<(Vec<(u32, f32)>, String)> {
         let mut glyphs = Vec::new();
         let mut unicode_buf = String::new();
         let mut current_pos = 0;
-        
+
         while current_pos < text.len() {
             let (code, len) = match font {
-                FontResource::Composite(f) => f.encoding.next_code(&text[current_pos..]).unwrap_or((vec![text[current_pos]], 1)),
+                FontResource::Composite(f) => f
+                    .encoding
+                    .next_code(&text[current_pos..])
+                    .unwrap_or((vec![text[current_pos]], 1)),
                 _ => (vec![text[current_pos]], 1),
             };
-            
+
             let width = font.glyph_width(&code);
+            let uni = font.to_unicode(&code);
+            let uch_hint = uni.chars().next();
+
             let gid = match font {
-                FontResource::Composite(f) => match f.encoding.lookup(&code) {
-                    Some(MappingResult::Cid(cid)) => cid,
-                    _ => code[0] as u32,
-                },
-                _ => code[0] as u32,
+                FontResource::Composite(f) => {
+                    let cid = match f.encoding.lookup(&code) {
+                        Some(MappingResult::Cid(cid)) => cid,
+                        _ => {
+                            if code.len() == 2 {
+                                ((code[0] as u32) << 8) | (code[1] as u32)
+                            } else {
+                                code[0] as u32
+                            }
+                        }
+                    };
+                    font.resolve_gid(cid, uch_hint).unwrap_or(cid)
+                }
+                _ => font.resolve_gid(code[0] as u32, uch_hint).unwrap_or(code[0] as u32),
             };
 
             glyphs.push((gid, width as f32));
-            unicode_buf.push_str(&font.to_unicode(&code));
+            if let Some(ch) = uch_hint {
+                unicode_buf.push(ch);
+            } else {
+                unicode_buf.push('\0');
+            }
             current_pos += len;
         }
         Ok((glyphs, unicode_buf))
     }
 
-    fn render_glyphs_if_available(&mut self, font: &FontResource, glyphs: &[(u32, f32)], matrix: &Matrix) -> PdfResult<bool> {
-        let font_data = match font {
-            FontResource::Simple(f) => f.descriptor.as_ref().and_then(|d| d.font_file.as_ref()),
-            FontResource::Composite(f) => f.descendant_fonts.first().and_then(|d| {
-                if let FontResource::CID(cid) = d.as_ref() { cid.descriptor.font_file.as_ref() } else { None }
-            }),
-            FontResource::CID(f) => f.descriptor.font_file.as_ref(),
-        };
-
-        if let Some(data) = font_data {
-            let options = ferruginous_render::text::TextLayoutOptions {
-                font_size: self.state.text_state.font_size as f32,
-                char_spacing: self.state.text_state.char_spacing as f32,
-                word_spacing: self.state.text_state.word_spacing as f32,
-                horizontal_scaling: self.state.text_state.horizontal_scaling as f32,
-            };
-            let bridge = ferruginous_render::text::SkrifaBridge::new();
-            let mut path = bridge.render_glyphs(data, glyphs, &options);
-            if path.is_empty() {
-                return Ok(false);
-            }
-            path.apply_affine(matrix.0);
-            
-            self.backend.fill_path(&path, &self.state.fill_color, WindingRule::NonZero);
-            Ok(true)
-        } else {
-            Ok(false)
-        }
-    }
-
-    fn update_text_state_after_show(&mut self, font: &FontResource, glyphs: &[(u32, f32)], render_matrix: &Matrix, font_size: f64) -> PdfResult<()> {
+    fn update_text_state_after_show(
+        &mut self,
+        font: &FontResource,
+        glyphs: &[(u32, f32)],
+        render_matrix: &Matrix,
+        font_size: f64,
+    ) -> PdfResult<()> {
         let font_metrics = font.get_metrics();
         let scale = font_size / 1000.0;
         let h_scale = self.state.text_state.horizontal_scaling / 100.0;
         let user_matrix = render_matrix.concat(&self.state.ctm);
-        
+
         for (_, w) in glyphs {
-            let g_box = ferruginous_core::graphics::Rect::new(0.0, font_metrics.descent * scale, (*w as f64) * scale, font_metrics.ascent * scale);
+            let g_box = ferruginous_core::graphics::Rect::new(
+                0.0,
+                font_metrics.descent * scale,
+                (*w as f64) * scale,
+                font_metrics.ascent * scale,
+            );
             let p1 = user_matrix.0 * kurbo::Point::new(g_box.x1, g_box.y1);
             let p2 = user_matrix.0 * kurbo::Point::new(g_box.x2, g_box.y2);
-            let u_box = ferruginous_core::graphics::Rect::new(p1.x.min(p2.x), p1.y.min(p2.y), p1.x.max(p2.x), p1.y.max(p2.y));
-            self.current_text_bbox = Some(self.current_text_bbox.map_or(u_box, |b| b.union(&u_box)));
+            let u_box = ferruginous_core::graphics::Rect::new(
+                p1.x.min(p2.x),
+                p1.y.min(p2.y),
+                p1.x.max(p2.x),
+                p1.y.max(p2.y),
+            );
+            self.current_text_bbox =
+                Some(self.current_text_bbox.map_or(u_box, |b| b.union(&u_box)));
         }
 
         let mut total_advance = 0.0;
         for (gid, w) in glyphs {
-            total_advance += (*w as f64).mul_add(scale, self.state.text_state.char_spacing) * h_scale;
-            if *gid == 32 { total_advance += self.state.text_state.word_spacing * h_scale; }
+            total_advance +=
+                (*w as f64).mul_add(scale, self.state.text_state.char_spacing) * h_scale;
+            if *gid == 32 {
+                total_advance += self.state.text_state.word_spacing * h_scale;
+            }
         }
-        
-        let text_matrices = self.text_matrices.as_mut().ok_or_else(|| PdfError::Other("Text operation state lost".into()))?;
-        text_matrices.tm = text_matrices.tm.concat(&Matrix::new(1.0, 0.0, 0.0, 1.0, total_advance, 0.0));
+
+        let text_matrices = self
+            .text_matrices
+            .as_mut()
+            .ok_or_else(|| PdfError::Other("Text operation state lost".into()))?;
+        if font.wmode() == 1 {
+            // Vertical Writing Mode: Advance along the Y-axis (descending)
+            text_matrices.tm =
+                text_matrices.tm.concat(&Matrix::new(1.0, 0.0, 0.0, 1.0, 0.0, -total_advance));
+        } else {
+            // Horizontal Writing Mode: Advance along the X-axis
+            text_matrices.tm =
+                text_matrices.tm.concat(&Matrix::new(1.0, 0.0, 0.0, 1.0, total_advance, 0.0));
+        }
         Ok(())
     }
 
@@ -499,34 +608,63 @@ impl<'a> Interpreter<'a> {
                 }
             }
         }
-        
-        let font_obj_ref = font_entry.ok_or_else(|| PdfError::Other(format!("Font {:?} not found", name.0)))?;
+
+        let font_obj_ref =
+            font_entry.ok_or_else(|| PdfError::Other(format!("Font {:?} not found", name.0)))?;
         let font_dict_obj = self.resolver.resolve_if_ref(&font_obj_ref)?;
-        let font_dict = font_dict_obj.as_dict().ok_or_else(|| PdfError::Other("Invalid font dictionary".into()))?;
-        
+        let font_dict = font_dict_obj
+            .as_dict()
+            .ok_or_else(|| PdfError::Other("Invalid font dictionary".into()))?;
+
         Ok(Arc::new(FontResource::load(font_dict, self.resolver)?))
     }
 
     fn show_text_array(&mut self, arr: &[Object]) -> PdfResult<()> {
+        let font_name = self
+            .state
+            .text_state
+            .font
+            .clone()
+            .ok_or_else(|| PdfError::Other("No font set for TJ".into()))?;
+        let font_resource = self.resolve_font_resource(&font_name)?;
+        let wmode = font_resource.wmode();
+
         for obj in arr {
             match obj {
                 Object::String(s) => self.show_text(s)?,
                 Object::Integer(i) => {
                     let offset = -(*i as f64) / 1000.0 * self.state.text_state.font_size;
-                    let text_matrices = self.text_matrices.as_mut().ok_or_else(|| PdfError::Other("TJ outside of BT/ET".into()))?;
-                    text_matrices.tm = text_matrices.tm.concat(&Matrix::new(1.0, 0.0, 0.0, 1.0, offset, 0.0));
+                    let text_matrices = self
+                        .text_matrices
+                        .as_mut()
+                        .ok_or_else(|| PdfError::Other("TJ outside of BT/ET".into()))?;
+                    if wmode == 1 {
+                        text_matrices.tm =
+                            text_matrices.tm.concat(&Matrix::new(1.0, 0.0, 0.0, 1.0, 0.0, offset));
+                    } else {
+                        text_matrices.tm =
+                            text_matrices.tm.concat(&Matrix::new(1.0, 0.0, 0.0, 1.0, offset, 0.0));
+                    }
                 }
                 Object::Real(f) => {
                     let offset = -(*f) / 1000.0 * self.state.text_state.font_size;
-                    let text_matrices = self.text_matrices.as_mut().ok_or_else(|| PdfError::Other("TJ outside of BT/ET".into()))?;
-                    text_matrices.tm = text_matrices.tm.concat(&Matrix::new(1.0, 0.0, 0.0, 1.0, offset, 0.0));
+                    let text_matrices = self
+                        .text_matrices
+                        .as_mut()
+                        .ok_or_else(|| PdfError::Other("TJ outside of BT/ET".into()))?;
+                    if wmode == 1 {
+                        text_matrices.tm =
+                            text_matrices.tm.concat(&Matrix::new(1.0, 0.0, 0.0, 1.0, 0.0, offset));
+                    } else {
+                        text_matrices.tm =
+                            text_matrices.tm.concat(&Matrix::new(1.0, 0.0, 0.0, 1.0, offset, 0.0));
+                    }
                 }
                 _ => return Err(PdfError::Other("Invalid object in TJ array".into())),
             }
         }
         Ok(())
     }
-
 
     fn pop_string(&mut self) -> PdfResult<bytes::Bytes> {
         match self.stack.pop() {
@@ -551,15 +689,19 @@ impl<'a> Interpreter<'a> {
 
     fn handle_xobject_operator(&mut self) -> PdfResult<()> {
         let name = self.pop_name()?;
-        
+
         // 1. Resolve /XObject entry from resource stack
         let entry = self.find_resource(&"XObject".into(), &name)?;
         let xobj = self.resolver.resolve_if_ref(&entry)?;
 
         // 2. Identify subtype
-        let (dict, data) = xobj.as_stream().ok_or_else(|| PdfError::Other("XObject must be a stream".into()))?;
-        let subtype = dict.get(&PdfName::from("Subtype")).ok_or_else(|| PdfError::Other("Missing /Subtype in XObject".into()))?;
-        let subtype_name = subtype.as_name().ok_or_else(|| PdfError::Other("Invalid /Subtype type".into()))?;
+        let (dict, data) =
+            xobj.as_stream().ok_or_else(|| PdfError::Other("XObject must be a stream".into()))?;
+        let subtype = dict
+            .get(&PdfName::from("Subtype"))
+            .ok_or_else(|| PdfError::Other("Missing /Subtype in XObject".into()))?;
+        let subtype_name =
+            subtype.as_name().ok_or_else(|| PdfError::Other("Invalid /Subtype type".into()))?;
 
         if subtype_name.as_str() == "Image" {
             self.render_image_xobject(dict, data)?;
@@ -570,20 +712,28 @@ impl<'a> Interpreter<'a> {
         Ok(())
     }
 
-    fn render_image_xobject(&mut self, dict: &std::collections::BTreeMap<ferruginous_core::PdfName, Object>, data: &[u8]) -> PdfResult<()> {
+    fn render_image_xobject(
+        &mut self,
+        dict: &std::collections::BTreeMap<ferruginous_core::PdfName, Object>,
+        data: &[u8],
+    ) -> PdfResult<()> {
         let width = dict.get(&PdfName::from("Width")).and_then(|o| o.as_i64()).unwrap_or(0) as u32;
-        let height = dict.get(&PdfName::from("Height")).and_then(|o| o.as_i64()).unwrap_or(0) as u32;
+        let height =
+            dict.get(&PdfName::from("Height")).and_then(|o| o.as_i64()).unwrap_or(0) as u32;
 
-        if width == 0 || height == 0 { return Ok(()); }
-        
+        if width == 0 || height == 0 {
+            return Ok(());
+        }
+
         // Resolve ColorSpace
         let default_cs = Object::Name("DeviceRGB".into());
-        let cs_obj_raw = dict.get(&PdfName::from("ColorSpace"))
+        let cs_obj_raw = dict
+            .get(&PdfName::from("ColorSpace"))
             .or_else(|| dict.get(&PdfName::from("CS")))
             .unwrap_or(&default_cs);
-        
+
         let cs_obj = self.resolver.resolve_if_ref(cs_obj_raw)?;
-            
+
         let format = match &cs_obj {
             Object::Name(n) => match n.as_str() {
                 "DeviceGray" | "G" => ferruginous_core::graphics::PixelFormat::Gray8,
@@ -610,14 +760,18 @@ impl<'a> Interpreter<'a> {
     }
 
     #[allow(clippy::many_single_char_names)]
-    fn render_form_xobject(&mut self, dict: &std::collections::BTreeMap<ferruginous_core::PdfName, Object>, data: &[u8]) -> PdfResult<()> {
+    fn render_form_xobject(
+        &mut self,
+        dict: &std::collections::BTreeMap<ferruginous_core::PdfName, Object>,
+        data: &[u8],
+    ) -> PdfResult<()> {
         if self.recursion_depth >= 16 {
             return Err(PdfError::Other("Maximum XObject recursion depth reached".into()));
         }
 
         self.backend.push_state();
         self.state_stack.push(self.state.clone());
-        
+
         // 1. Apply Matrix
         if let Some(matrix_obj) = dict.get(&PdfName::from("Matrix")) {
             if let Some(arr) = matrix_obj.as_array() {
@@ -670,8 +824,9 @@ impl<'a> Interpreter<'a> {
     fn handle_gs_operator(&mut self, name: &PdfName) -> PdfResult<()> {
         let entry = self.find_resource(&PdfName::from("ExtGState"), name)?;
         let gs_dict_obj = self.resolver.resolve_if_ref(&entry)?;
-        let gs_dict = gs_dict_obj.as_dict().ok_or_else(|| PdfError::Other("Invalid ExtGState".into()))?;
-        
+        let gs_dict =
+            gs_dict_obj.as_dict().ok_or_else(|| PdfError::Other("Invalid ExtGState".into()))?;
+
         if let Some(ca) = gs_dict.get(&PdfName::from("ca")).and_then(|o| o.as_f64()) {
             self.state.fill_alpha = ca;
             self.backend.set_fill_alpha(ca);
@@ -693,7 +848,9 @@ impl<'a> Interpreter<'a> {
             if let Some(category_obj) = res.get(res_type) {
                 let category_dict_obj = self.resolver.resolve_if_ref(category_obj)?;
                 if let Some(d) = category_dict_obj.as_dict() {
-                    if let Some(entry) = d.get(name) { return Ok(entry.clone()); }
+                    if let Some(entry) = d.get(name) {
+                        return Ok(entry.clone());
+                    }
                 }
             }
         }
@@ -704,7 +861,13 @@ impl<'a> Interpreter<'a> {
         use std::str::FromStr;
         let name = match obj {
             Object::Name(n) => n.0.clone(),
-            Object::Array(a) if !a.is_empty() => if let Object::Name(n) = &a[0] { n.0.clone() } else { "Normal".into() },
+            Object::Array(a) if !a.is_empty() => {
+                if let Object::Name(n) = &a[0] {
+                    n.0.clone()
+                } else {
+                    "Normal".into()
+                }
+            }
             _ => "Normal".into(),
         };
         BlendMode::from_str(&String::from_utf8_lossy(&name)).unwrap_or(BlendMode::Normal)
@@ -714,9 +877,9 @@ impl<'a> Interpreter<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ferruginous_core::graphics::{Color, StrokeStyle, WindingRule};
     use ferruginous_render::RenderBackend;
-    use ferruginous_core::graphics::{Color, WindingRule, StrokeStyle};
-    use kurbo::Affine; 
+    use kurbo::Affine;
 
     struct MockBackend;
     impl RenderBackend for MockBackend {
@@ -727,14 +890,38 @@ mod tests {
         fn stroke_path(&mut self, _path: &kurbo::BezPath, _color: &Color, _style: &StrokeStyle) {}
         fn push_clip(&mut self, _path: &kurbo::BezPath, _rule: WindingRule) {}
         fn pop_clip(&mut self) {}
-        fn draw_image(&mut self, _data: &[u8], _w: u32, _h: u32, _format: ferruginous_core::graphics::PixelFormat) {}
+        fn draw_image(
+            &mut self,
+            _data: &[u8],
+            _w: u32,
+            _h: u32,
+            _format: ferruginous_core::graphics::PixelFormat,
+        ) {
+        }
         fn set_fill_alpha(&mut self, _alpha: f64) {}
         fn set_stroke_alpha(&mut self, _alpha: f64) {}
         fn set_blend_mode(&mut self, _mode: ferruginous_core::graphics::BlendMode) {}
         fn set_fill_color(&mut self, _color: Color) {}
         fn set_stroke_color(&mut self, _color: Color) {}
-        fn define_font(&mut self, _name: &str, _data: Vec<u8>) {}
-        fn show_text(&mut self, _text: &str, _font: &str, _size: f32, _transform: kurbo::Affine) {}
+        fn define_font(
+            &mut self,
+            _name: &str,
+            _data: std::sync::Arc<Vec<u8>>,
+            _index: Option<usize>,
+        ) {
+        }
+        fn set_font(&mut self, _name: &str) {}
+        fn show_text(
+            &mut self,
+            _glyphs: &[(u32, f32)],
+            _text: &str,
+            _size: f64,
+            _transform: kurbo::Affine,
+            _tc: f64,
+            _tw: f64,
+            _is_vertical: bool,
+        ) {
+        }
     }
 
     #[test]
@@ -742,17 +929,19 @@ mod tests {
         let mut backend = MockBackend;
         struct TestResolver;
         impl ferruginous_core::Resolver for TestResolver {
-            fn resolve(&self, _r: &ferruginous_core::Reference) -> PdfResult<Object> { Ok(Object::Null) }
+            fn resolve(&self, _r: &ferruginous_core::Reference) -> PdfResult<Object> {
+                Ok(Object::Null)
+            }
         }
         let resolver = TestResolver;
         let mut interpreter = Interpreter::new(&mut backend, &resolver, Arc::new(BTreeMap::new()));
-        
+
         interpreter.recursion_depth = 15;
         let dict = std::collections::BTreeMap::new();
-        let data = b""; 
-        
+        let data = b"";
+
         assert!(interpreter.render_form_xobject(&dict, data).is_ok());
-        
+
         interpreter.recursion_depth = 16;
         assert!(interpreter.render_form_xobject(&dict, data).is_err());
     }
@@ -762,18 +951,20 @@ mod tests {
         let mut backend = MockBackend;
         struct TestResolver;
         impl ferruginous_core::Resolver for TestResolver {
-            fn resolve(&self, _r: &ferruginous_core::Reference) -> PdfResult<Object> { Ok(Object::Null) }
+            fn resolve(&self, _r: &ferruginous_core::Reference) -> PdfResult<Object> {
+                Ok(Object::Null)
+            }
         }
         let resolver = TestResolver;
         let mut interpreter = Interpreter::new(&mut backend, &resolver, Arc::new(BTreeMap::new()));
-        
+
         // Initial font size 1.0 (from Default)
         assert!((interpreter.state.text_state.font_size - 1.0).abs() < f64::EPSILON);
-        
+
         // Changing font size line (Tf 12)
         interpreter.execute(b"/F1 12 Tf").unwrap();
         assert!((interpreter.state.text_state.font_size - 12.0).abs() < f64::EPSILON);
-        
+
         // Push state (12.0), change to 1.0, pop back to 12.0
         interpreter.execute(b"q /F1 1 Tf Q").unwrap();
         assert!((interpreter.state.text_state.font_size - 12.0).abs() < f64::EPSILON);
@@ -784,21 +975,23 @@ mod tests {
         let mut backend = MockBackend;
         struct TestResolver;
         impl ferruginous_core::Resolver for TestResolver {
-            fn resolve(&self, _r: &ferruginous_core::Reference) -> PdfResult<Object> { Ok(Object::Null) }
+            fn resolve(&self, _r: &ferruginous_core::Reference) -> PdfResult<Object> {
+                Ok(Object::Null)
+            }
         }
         let resolver = TestResolver;
         let mut interpreter = Interpreter::new(&mut backend, &resolver, Arc::new(BTreeMap::new()));
-        
+
         // Push parent resources manually for this specific test
         let mut parent_dict = BTreeMap::new();
         parent_dict.insert("TestKey".into(), Object::Integer(42));
         interpreter.resource_stack.push(Arc::new(parent_dict));
-        
+
         let form_dict = std::collections::BTreeMap::new();
         let data = b"";
-        
+
         interpreter.render_form_xobject(&form_dict, data).unwrap();
-        
+
         // Should be back to the level before the call (which was 2: initial + manual push)
         assert_eq!(interpreter.resource_stack.len(), 2);
         assert!(interpreter.resource_stack[1].contains_key(&"TestKey".into()));
@@ -809,7 +1002,9 @@ mod tests {
         let mut backend = MockBackend;
         struct TestResolver;
         impl ferruginous_core::Resolver for TestResolver {
-            fn resolve(&self, _r: &ferruginous_core::Reference) -> PdfResult<Object> { Ok(Object::Null) }
+            fn resolve(&self, _r: &ferruginous_core::Reference) -> PdfResult<Object> {
+                Ok(Object::Null)
+            }
         }
         let resolver = TestResolver;
 
@@ -822,8 +1017,11 @@ mod tests {
         ext_gstate.insert(PdfName::from("GS1"), Object::Dictionary(std::sync::Arc::new(gs_dict)));
 
         let mut resources = std::collections::BTreeMap::new();
-        resources.insert(PdfName::from("ExtGState"), Object::Dictionary(std::sync::Arc::new(ext_gstate)));
-        
+        resources.insert(
+            PdfName::from("ExtGState"),
+            Object::Dictionary(std::sync::Arc::new(ext_gstate)),
+        );
+
         let mut interpreter = Interpreter::new(&mut backend, &resolver, Arc::new(resources));
 
         interpreter.handle_gs_operator(&PdfName::from("GS1")).unwrap();

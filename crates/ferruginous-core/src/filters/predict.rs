@@ -3,7 +3,7 @@
 //! Predictors are used to improve the compression ratio of FlateDecode streams
 //! by transforming the data into a more compressible form.
 
-use crate::error::{PdfResult, PdfError};
+use crate::error::{PdfError, PdfResult};
 
 /// Applies predictors to decode stream data.
 pub fn decode_predictor(
@@ -29,21 +29,22 @@ fn decode_tiff_predictor(
 ) -> PdfResult<Vec<u8>> {
     let row_size = (columns * colors * bits_per_component).div_ceil(8);
     let bpp = (colors * bits_per_component).div_ceil(8);
-    
+
     if !data.len().is_multiple_of(row_size) {
         return Err(PdfError::Other("Invalid data length for TIFF predictor".into()));
     }
-    
+
     let mut decoded = data.to_vec();
     let num_rows = data.len() / row_size;
-    
+
     for row_idx in 0..num_rows {
         let row_start = row_idx * row_size;
         for i in bpp..row_size {
-            decoded[row_start + i] = decoded[row_start + i].wrapping_add(decoded[row_start + i - bpp]);
+            decoded[row_start + i] =
+                decoded[row_start + i].wrapping_add(decoded[row_start + i - bpp]);
         }
     }
-    
+
     Ok(decoded)
 }
 
@@ -57,23 +58,29 @@ fn decode_png_predictor(
     let row_size = (columns * colors * bits_per_component).div_ceil(8);
     let bytes_per_pixel = (colors * bits_per_component).div_ceil(8);
     let encoded_row_size = row_size + 1;
-    
+
     if !data.len().is_multiple_of(encoded_row_size) {
         return Err(PdfError::Other("Invalid data length for PNG predictor".into()));
     }
-    
+
     let num_rows = data.len() / encoded_row_size;
     let mut decoded = Vec::with_capacity(num_rows * row_size);
     let mut prev_row: Vec<u8> = vec![0; row_size];
-    
+
     for row_idx in 0..num_rows {
         let start = row_idx * encoded_row_size;
         let predictor_type = data[start];
         let row_data = &data[start + 1..start + encoded_row_size];
-        
+
         let mut current_row = vec![0; row_size];
-        apply_predictor_to_row(predictor_type, row_data, &prev_row, &mut current_row, bytes_per_pixel)?;
-        
+        apply_predictor_to_row(
+            predictor_type,
+            row_data,
+            &prev_row,
+            &mut current_row,
+            bytes_per_pixel,
+        )?;
+
         decoded.extend_from_slice(&current_row);
         prev_row = current_row;
     }
@@ -90,24 +97,32 @@ fn apply_predictor_to_row(
     let row_size = current_row.len();
     match p_type {
         0 => current_row.copy_from_slice(row_data),
-        1 => for i in 0..row_size {
-            let left = if i >= bpp { current_row[i - bpp] } else { 0 };
-            current_row[i] = row_data[i].wrapping_add(left);
-        },
-        2 => for i in 0..row_size {
-            current_row[i] = row_data[i].wrapping_add(prev_row[i]);
-        },
-        3 => for i in 0..row_size {
-            let left = if i >= bpp { current_row[i - bpp] } else { 0 };
-            let avg = ((left as u16 + prev_row[i] as u16) / 2) as u8;
-            current_row[i] = row_data[i].wrapping_add(avg);
-        },
-        4 => for i in 0..row_size {
-            let left = if i >= bpp { current_row[i - bpp] } else { 0 };
-            let upper_left = if i >= bpp { prev_row[i - bpp] } else { 0 };
-            let p = paeth_predictor(left, prev_row[i], upper_left);
-            current_row[i] = row_data[i].wrapping_add(p);
-        },
+        1 => {
+            for i in 0..row_size {
+                let left = if i >= bpp { current_row[i - bpp] } else { 0 };
+                current_row[i] = row_data[i].wrapping_add(left);
+            }
+        }
+        2 => {
+            for i in 0..row_size {
+                current_row[i] = row_data[i].wrapping_add(prev_row[i]);
+            }
+        }
+        3 => {
+            for i in 0..row_size {
+                let left = if i >= bpp { current_row[i - bpp] } else { 0 };
+                let avg = ((left as u16 + prev_row[i] as u16) / 2) as u8;
+                current_row[i] = row_data[i].wrapping_add(avg);
+            }
+        }
+        4 => {
+            for i in 0..row_size {
+                let left = if i >= bpp { current_row[i - bpp] } else { 0 };
+                let upper_left = if i >= bpp { prev_row[i - bpp] } else { 0 };
+                let p = paeth_predictor(left, prev_row[i], upper_left);
+                current_row[i] = row_data[i].wrapping_add(p);
+            }
+        }
         _ => return Err(PdfError::Other(format!("Unknown PNG predictor: {}", p_type))),
     }
     Ok(())
@@ -121,7 +136,7 @@ fn paeth_predictor(a: u8, b: u8, c: u8) -> u8 {
     let pa = (p - a).abs();
     let pb = (p - b).abs();
     let pc = (p - c).abs();
-    
+
     if pa <= pb && pa <= pc {
         a as u8
     } else if pb <= pc {

@@ -1,7 +1,7 @@
+use crate::error::PdfResult;
+use bytes::Bytes;
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use bytes::Bytes;
-use crate::error::PdfResult;
 
 /// ISO 32000-2:2020 Clause 7.3.5 - Name Objects
 ///
@@ -16,12 +16,14 @@ impl PdfName {
         let mut result = Vec::with_capacity(data.len());
         let mut i = 0;
         while i < data.len() {
-            if data[i] == b'#' && i + 2 < data.len()
-                && let (Some(d1), Some(d2)) = (hex_to_val(data[i+1]), hex_to_val(data[i+2])) {
-                    result.push((d1 << 4) | d2);
-                    i += 3;
-                    continue;
-                }
+            if data[i] == b'#'
+                && i + 2 < data.len()
+                && let (Some(d1), Some(d2)) = (hex_to_val(data[i + 1]), hex_to_val(data[i + 2]))
+            {
+                result.push((d1 << 4) | d2);
+                i += 3;
+                continue;
+            }
             result.push(data[i]);
             i += 1;
         }

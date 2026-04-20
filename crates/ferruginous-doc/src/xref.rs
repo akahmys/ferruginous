@@ -1,23 +1,14 @@
+use ferruginous_core::{Object, PdfError, PdfName, PdfResult};
 use std::collections::BTreeMap;
-use ferruginous_core::{Object, PdfResult, PdfError, PdfName};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum XRefEntry {
     /// In use: contains byte offset and generation number.
-    InUse {
-        offset: u64,
-        generation: u16,
-    },
+    InUse { offset: u64, generation: u16 },
     /// Free: contains next free object number and generation number.
-    Free {
-        next: u32,
-        generation: u16,
-    },
+    Free { next: u32, generation: u16 },
     /// Compressed: contains the object ID of the object stream and the index within it.
-    Compressed {
-        container_id: u32,
-        index: u32,
-    },
+    Compressed { container_id: u32, index: u32 },
 }
 
 impl XRefEntry {
@@ -95,7 +86,7 @@ pub fn parse_xref_table(input: &[u8]) -> PdfResult<(XRefIndex, &[u8])> {
     if !input.starts_with(b"xref") {
         return Err(PdfError::Syntactic { pos: 0, message: "Expected 'xref' keyword".into() });
     }
-    
+
     let mut pos = 4;
     // Skip whitespace
     while pos < input.len() && is_pdf_whitespace(input[pos]) {
@@ -108,7 +99,7 @@ pub fn parse_xref_table(input: &[u8]) -> PdfResult<(XRefIndex, &[u8])> {
 /// Internal helper to parse subsections after the initial 'xref' keyword or if the keyword is missing.
 pub fn parse_xref_table_inner(input: &[u8], mut pos: usize) -> PdfResult<(XRefIndex, &[u8])> {
     let mut index = XRefIndex::new();
-    
+
     // Parse subsections
     loop {
         let chunk = &input[pos..];
@@ -148,7 +139,9 @@ pub fn parse_xref_stream(dict: &BTreeMap<PdfName, Object>, data: &[u8]) -> PdfRe
 
     for (first_id, count) in sections {
         for i in 0..count {
-            if data_pos + entry_size > data.len() { break; }
+            if data_pos + entry_size > data.len() {
+                break;
+            }
             let entry_data = &data[data_pos..data_pos + entry_size];
             let entry = decode_xref_entry(entry_data, &w)?;
             index.insert(first_id + i, entry);
@@ -185,12 +178,16 @@ fn extract_index_sections(dict: &BTreeMap<PdfName, Object>) -> PdfResult<Vec<(u3
             });
         }
         for i in (0..arr.len()).step_by(2) {
-            let first = arr.get(i).and_then(|o| o.as_i64()).ok_or_else(|| {
-                PdfError::Other("Invalid first_id in /Index".into())
-            })? as u32;
-            let count = arr.get(i + 1).and_then(|o| o.as_i64()).ok_or_else(|| {
-                PdfError::Other("Invalid count in /Index".into())
-            })? as u32;
+            let first = arr
+                .get(i)
+                .and_then(|o| o.as_i64())
+                .ok_or_else(|| PdfError::Other("Invalid first_id in /Index".into()))?
+                as u32;
+            let count = arr
+                .get(i + 1)
+                .and_then(|o| o.as_i64())
+                .ok_or_else(|| PdfError::Other("Invalid count in /Index".into()))?
+                as u32;
             sections.push((first, count));
         }
     } else {
@@ -205,8 +202,8 @@ fn extract_index_sections(dict: &BTreeMap<PdfName, Object>) -> PdfResult<Vec<(u3
 
 fn decode_xref_entry(entry_data: &[u8], w: &[usize]) -> PdfResult<XRefEntry> {
     let field1 = read_int(&entry_data[..w[0]], 1);
-    let field2 = read_int(&entry_data[w[0]..w[0]+w[1]], 0);
-    let field3 = read_int(&entry_data[w[0]+w[1]..w[0]+w[1]+w[2]], 0);
+    let field2 = read_int(&entry_data[w[0]..w[0] + w[1]], 0);
+    let field3 = read_int(&entry_data[w[0] + w[1]..w[0] + w[1] + w[2]], 0);
 
     match field1 {
         0 => Ok(XRefEntry::Free { next: field2 as u32, generation: field3 as u16 }),
@@ -233,12 +230,21 @@ fn parse_subsection_header(chunk: &[u8]) -> PdfResult<(u32, u32, usize)> {
     while line_end < chunk.len() && chunk[line_end] != b'\n' && chunk[line_end] != b'\r' {
         line_end += 1;
     }
-    
-    let s = std::str::from_utf8(&chunk[..line_end]).map_err(|_| PdfError::Other("Invalid UTF-8 in XRef header".into()))?;
+
+    let s = std::str::from_utf8(&chunk[..line_end])
+        .map_err(|_| PdfError::Other("Invalid UTF-8 in XRef header".into()))?;
     let mut parts = s.split_whitespace();
-    let first_id = parts.next().ok_or_else(|| PdfError::Syntactic { pos: 0, message: "Missing first ID".into() })?.parse::<u32>().map_err(|_| PdfError::Other("Invalid ID".into()))?;
-    let count = parts.next().ok_or_else(|| PdfError::Syntactic { pos: 0, message: "Missing count".into() })?.parse::<u32>().map_err(|_| PdfError::Other("Invalid count".into()))?;
-    
+    let first_id = parts
+        .next()
+        .ok_or_else(|| PdfError::Syntactic { pos: 0, message: "Missing first ID".into() })?
+        .parse::<u32>()
+        .map_err(|_| PdfError::Other("Invalid ID".into()))?;
+    let count = parts
+        .next()
+        .ok_or_else(|| PdfError::Syntactic { pos: 0, message: "Missing count".into() })?
+        .parse::<u32>()
+        .map_err(|_| PdfError::Other("Invalid count".into()))?;
+
     // Skip trailing whitespace/newlines to find the total header length
     let mut pos = line_end;
     while pos < chunk.len() && chunk[pos] != b'\n' && chunk[pos] != b'\r' {
@@ -247,16 +253,22 @@ fn parse_subsection_header(chunk: &[u8]) -> PdfResult<(u32, u32, usize)> {
     while pos < chunk.len() && (chunk[pos] == b'\n' || chunk[pos] == b'\r') {
         pos += 1;
     }
-    
+
     Ok((first_id, count, pos))
 }
 
 fn parse_xref_entry(chunk: &[u8]) -> PdfResult<(XRefEntry, usize)> {
-    // 0000000000 65535 f 
-    let s = std::str::from_utf8(&chunk[..20]).map_err(|_| PdfError::Other("Invalid UTF-8 in XRef entry".into()))?;
-    let offset = s[..10].trim().parse::<u64>().map_err(|_| PdfError::Other("Invalid offset".into()))?;
-    let generation = s[11..16].trim().parse::<u16>().map_err(|_| PdfError::Other("Invalid generation".into()))?;
-    let type_char = s.chars().nth(17).ok_or_else(|| PdfError::Other("Invalid XRef entry type".into()))?;
+    // 0000000000 65535 f
+    let s = std::str::from_utf8(&chunk[..20])
+        .map_err(|_| PdfError::Other("Invalid UTF-8 in XRef entry".into()))?;
+    let offset =
+        s[..10].trim().parse::<u64>().map_err(|_| PdfError::Other("Invalid offset".into()))?;
+    let generation = s[11..16]
+        .trim()
+        .parse::<u16>()
+        .map_err(|_| PdfError::Other("Invalid generation".into()))?;
+    let type_char =
+        s.chars().nth(17).ok_or_else(|| PdfError::Other("Invalid XRef entry type".into()))?;
 
     let entry = if type_char == 'n' {
         XRefEntry::InUse { offset, generation }
@@ -279,7 +291,7 @@ mod tests {
     fn test_parse_xref() {
         let input = b"xref\n0 1\n0000000000 65535 f \n3 1\n0000000010 00000 n \ntrailer";
         let (index, remaining) = parse_xref_table(input).unwrap();
-        
+
         assert_eq!(index.get(0), Some(XRefEntry::Free { next: 0, generation: 65535 }));
         assert_eq!(index.get(3), Some(XRefEntry::InUse { offset: 10, generation: 0 }));
         assert_eq!(remaining, b"trailer");

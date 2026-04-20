@@ -1,15 +1,15 @@
+use super::object::{Dictionary, ObjectId, StringFormat};
+use bytes::Bytes;
 use nom::{
     branch::alt,
     bytes::complete::tag,
-    character::complete::{char, digit1, space0, none_of},
+    character::complete::{char, digit1, none_of, space0},
     combinator::map,
     multi::many0,
-    sequence::{delimited, tuple},
     number::complete::float,
+    sequence::{delimited, tuple},
     IResult,
 };
-use bytes::Bytes;
-use super::object::{Dictionary, StringFormat, ObjectId};
 
 pub mod lexical;
 
@@ -18,23 +18,26 @@ pub struct Parser;
 impl Parser {
     pub fn parse_object_id(input: &[u8]) -> IResult<&[u8], (u32, u16)> {
         let (input, _) = lexical::skip(input)?;
-        let (input, (id_bytes, _, gen_bytes, _, _)) = tuple((
-            digit1,
-            space0,
-            digit1,
-            space0,
-            tag("obj"),
-        ))(input)?;
+        let (input, (id_bytes, _, gen_bytes, _, _)) =
+            tuple((digit1, space0, digit1, space0, tag("obj")))(input)?;
 
         let id = std::str::from_utf8(id_bytes)
-            .map_err(|_| nom::Err::Error(nom::error::Error::new(id_bytes, nom::error::ErrorKind::MapRes)))?
+            .map_err(|_| {
+                nom::Err::Error(nom::error::Error::new(id_bytes, nom::error::ErrorKind::MapRes))
+            })?
             .parse::<u32>()
-            .map_err(|_| nom::Err::Error(nom::error::Error::new(id_bytes, nom::error::ErrorKind::MapRes)))?;
+            .map_err(|_| {
+                nom::Err::Error(nom::error::Error::new(id_bytes, nom::error::ErrorKind::MapRes))
+            })?;
 
         let gen = std::str::from_utf8(gen_bytes)
-            .map_err(|_| nom::Err::Error(nom::error::Error::new(gen_bytes, nom::error::ErrorKind::MapRes)))?
+            .map_err(|_| {
+                nom::Err::Error(nom::error::Error::new(gen_bytes, nom::error::ErrorKind::MapRes))
+            })?
             .parse::<u16>()
-            .map_err(|_| nom::Err::Error(nom::error::Error::new(gen_bytes, nom::error::ErrorKind::MapRes)))?;
+            .map_err(|_| {
+                nom::Err::Error(nom::error::Error::new(gen_bytes, nom::error::ErrorKind::MapRes))
+            })?;
 
         Ok((input, (id, gen)))
     }
@@ -84,21 +87,14 @@ impl Parser {
 
     pub fn parse_array(input: &[u8]) -> IResult<&[u8], Vec<super::Object>> {
         let (input, _) = lexical::skip(input)?;
-        delimited(
-            char('['),
-            many0(|i| Self::parse_object(i)),
-            char(']'),
-        )(input)
+        delimited(char('['), many0(|i| Self::parse_object(i)), char(']'))(input)
     }
 
     pub fn parse_dictionary(input: &[u8]) -> IResult<&[u8], Dictionary> {
         let (input, _) = lexical::skip(input)?;
         let (input, pairs) = delimited(
             tag("<<"),
-            many0(tuple((
-                |i| Self::parse_name(i),
-                |i| Self::parse_object(i),
-            ))),
+            many0(tuple((|i| Self::parse_name(i), |i| Self::parse_object(i)))),
             tuple((lexical::skip, tag(">>"))),
         )(input)?;
         Ok((input, pairs.into_iter().collect()))
@@ -110,7 +106,7 @@ impl Parser {
         let (input, _) = tag("stream")(input)?;
         // According to Clause 7.3.8.1, the 'stream' keyword is followed by CRLF or LF.
         let (input, _) = alt((tag("\r\n"), tag("\n")))(input)?;
-        
+
         // Find 'endstream'. In a robust parser, we'd use the /Length entry in 'dict'.
         // For legacy support, we search for the 'endstream' tag as a fallback.
         let length = if let Some(super::Object::Integer(l)) = dict.get(b"Length".as_slice()) {
@@ -141,23 +137,26 @@ impl Parser {
 
     pub fn parse_reference(input: &[u8]) -> IResult<&[u8], ObjectId> {
         let (input, _) = lexical::skip(input)?;
-        let (input, (id_bytes, _, gen_bytes, _, _)) = tuple((
-            digit1,
-            char(' '),
-            digit1,
-            char(' '),
-            char('R'),
-        ))(input)?;
+        let (input, (id_bytes, _, gen_bytes, _, _)) =
+            tuple((digit1, char(' '), digit1, char(' '), char('R')))(input)?;
 
         let id = std::str::from_utf8(id_bytes)
-            .map_err(|_| nom::Err::Error(nom::error::Error::new(id_bytes, nom::error::ErrorKind::MapRes)))?
+            .map_err(|_| {
+                nom::Err::Error(nom::error::Error::new(id_bytes, nom::error::ErrorKind::MapRes))
+            })?
             .parse::<u32>()
-            .map_err(|_| nom::Err::Error(nom::error::Error::new(id_bytes, nom::error::ErrorKind::MapRes)))?;
+            .map_err(|_| {
+                nom::Err::Error(nom::error::Error::new(id_bytes, nom::error::ErrorKind::MapRes))
+            })?;
 
         let gen = std::str::from_utf8(gen_bytes)
-            .map_err(|_| nom::Err::Error(nom::error::Error::new(gen_bytes, nom::error::ErrorKind::MapRes)))?
+            .map_err(|_| {
+                nom::Err::Error(nom::error::Error::new(gen_bytes, nom::error::ErrorKind::MapRes))
+            })?
             .parse::<u16>()
-            .map_err(|_| nom::Err::Error(nom::error::Error::new(gen_bytes, nom::error::ErrorKind::MapRes)))?;
+            .map_err(|_| {
+                nom::Err::Error(nom::error::Error::new(gen_bytes, nom::error::ErrorKind::MapRes))
+            })?;
         Ok((input, ObjectId { id, gen }))
     }
 

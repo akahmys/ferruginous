@@ -14,11 +14,11 @@ ferruginous-render = { path = "../ferruginous-render" }
 kurbo = { workspace = true }
 thiserror.workspace = true
 serde.workspace = true
-bytes.workspace = true
+bytes = { workspace = true }
 image = "0.25"
+tokio = { workspace = true }
 
 [dev-dependencies]
-tokio.workspace = true
 
 [lints]
 workspace = true

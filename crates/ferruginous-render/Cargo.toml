@@ -11,14 +11,16 @@ repository.workspace = true
 ferruginous-core = { path = "../ferruginous-core" }
 vello.workspace = true
 kurbo.workspace = true
-wgpu = "28.0"
+wgpu = "=28.0.0"
 serde.workspace = true
 thiserror.workspace = true
 bytes.workspace = true
 skrifa = "0.40.0"
+ttf-parser = { workspace = true }
 image = "0.25"
 pollster = "0.4"
 tokio = { workspace = true }
 ferruginous-doc = { version = "0.1.0", path = "../ferruginous-doc" }
 
 [dev-dependencies]
+ferruginous-sdk = { path = "../ferruginous-sdk" }

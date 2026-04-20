@@ -16,17 +16,17 @@ pub enum Token {
     Percent,            // %
 
     // Compound Delimiters
-    LiteralString(Bytes), // (...) 
+    LiteralString(Bytes), // (...)
     HexString(Bytes),     // <...>
     DictionaryOpen,       // <<
     DictionaryClose,      // >>
 
     // Literals and Regular Text
-    Name(Bytes),        // /Name
+    Name(Bytes), // /Name
     Integer(i64),
     Real(f64),
-    Keyword(Bytes),     // obj, endobj, stream, etc.
-    
+    Keyword(Bytes), // obj, endobj, stream, etc.
+
     // special
     Comment(Bytes),
 }
@@ -106,7 +106,10 @@ impl Lexer {
             b'/' => self.lex_name(),
             _ if c.is_ascii_digit() || c == b'-' || c == b'.' => self.lex_number(),
             _ if is_regular_char(c) => self.lex_keyword_or_bool(),
-            _ => Err(PdfError::Lexical { pos: self.pos, message: format!("Unexpected character: {}", c as char) }),
+            _ => Err(PdfError::Lexical {
+                pos: self.pos,
+                message: format!("Unexpected character: {}", c as char),
+            }),
         }
     }
 
@@ -117,11 +120,7 @@ impl Lexer {
     }
 
     fn peek(&self) -> Option<u8> {
-        if self.pos + 1 < self.input.len() {
-            Some(self.input[self.pos + 1])
-        } else {
-            None
-        }
+        if self.pos + 1 < self.input.len() { Some(self.input[self.pos + 1]) } else { None }
     }
 
     fn lex_literal_string(&mut self) -> PdfResult<Option<Token>> {
@@ -129,7 +128,7 @@ impl Lexer {
         self.pos += 1; // skip '('
         let mut depth = 1;
         let mut has_escapes = false;
-        
+
         let content_start = self.pos;
         while self.pos < self.input.len() {
             let c = self.input[self.pos];
@@ -144,7 +143,9 @@ impl Lexer {
                         let content_end = self.pos;
                         self.pos += 1;
                         if !has_escapes {
-                            return Ok(Some(Token::LiteralString(self.input.slice(content_start..content_end))));
+                            return Ok(Some(Token::LiteralString(
+                                self.input.slice(content_start..content_end),
+                            )));
                         } else {
                             // Re-parse with escapes to build a new buffer
                             self.pos = content_start;
@@ -165,7 +166,7 @@ impl Lexer {
                 }
             }
         }
-        
+
         // EOF reached without matching ')' - return partial as per robustness principle
         let content_end = self.pos;
         if !has_escapes {
@@ -179,7 +180,7 @@ impl Lexer {
     fn lex_literal_string_complex(&mut self, _start: usize) -> PdfResult<Option<Token>> {
         let mut depth = 1;
         let mut result = Vec::new();
-        
+
         while self.pos < self.input.len() {
             let c = self.input[self.pos];
             match c {
@@ -216,7 +217,9 @@ impl Lexer {
     }
 
     fn decode_escape_sequence(&mut self) -> PdfResult<Option<u8>> {
-        if self.pos >= self.input.len() { return Ok(None); }
+        if self.pos >= self.input.len() {
+            return Ok(None);
+        }
         let next = self.input[self.pos];
         match next {
             b'n' => Ok(Some(b'\n')),
@@ -228,7 +231,9 @@ impl Lexer {
             b')' => Ok(Some(b')')),
             b'\\' => Ok(Some(b'\\')),
             b'\r' | b'\n' => {
-                if next == b'\r' && self.peek() == Some(b'\n') { self.pos += 1; }
+                if next == b'\r' && self.peek() == Some(b'\n') {
+                    self.pos += 1;
+                }
                 Ok(None)
             }
             _ if next.is_ascii_digit() => Ok(Some(self.parse_octal_sequence(next))),
@@ -266,7 +271,7 @@ impl Lexer {
                 self.pos += 1;
                 return Ok(Some(Token::HexString(Bytes::from(result))));
             }
-            
+
             if is_whitespace(c) {
                 self.pos += 1;
                 continue;
@@ -302,7 +307,7 @@ impl Lexer {
         let _start = self.pos;
         self.pos += 1; // skip '/'
         let mut has_escapes = false;
-        
+
         let content_start = self.pos;
         while self.pos < self.input.len() {
             let c = self.input[self.pos];
@@ -345,7 +350,10 @@ impl Lexer {
     fn lex_comment(&mut self) -> PdfResult<Option<Token>> {
         let _start = self.pos;
         self.pos += 1; // skip '%'
-        while self.pos < self.input.len() && self.input[self.pos] != b'\r' && self.input[self.pos] != b'\n' {
+        while self.pos < self.input.len()
+            && self.input[self.pos] != b'\r'
+            && self.input[self.pos] != b'\n'
+        {
             self.pos += 1;
         }
         Ok(None)
@@ -357,7 +365,9 @@ impl Lexer {
         let mut seen_dot = false;
 
         // Handle leading sign
-        if self.pos < self.input.len() && (self.input[self.pos] == b'-' || self.input[self.pos] == b'+') {
+        if self.pos < self.input.len()
+            && (self.input[self.pos] == b'-' || self.input[self.pos] == b'+')
+        {
             self.pos += 1;
         }
 
@@ -377,9 +387,8 @@ impl Lexer {
             }
         }
 
-        let s = std::str::from_utf8(&self.input[start..self.pos]).map_err(|_| PdfError::Lexical {
-            pos: start,
-            message: "Invalid UTF-8 in number".into(),
+        let s = std::str::from_utf8(&self.input[start..self.pos]).map_err(|_| {
+            PdfError::Lexical { pos: start, message: "Invalid UTF-8 in number".into() }
         })?;
 
         // Robustness: handle degenerate cases like ".", "-", "+", "-."
@@ -394,10 +403,9 @@ impl Lexer {
             })?;
             Ok(Some(Token::Real(val)))
         } else {
-            let val = s.parse::<i64>().map_err(|_| PdfError::Lexical {
-                pos: start,
-                message: "Invalid integer".into(),
-            })?;
+            let val = s
+                .parse::<i64>()
+                .map_err(|_| PdfError::Lexical { pos: start, message: "Invalid integer".into() })?;
             Ok(Some(Token::Integer(val)))
         }
     }
@@ -440,24 +448,39 @@ mod tests {
     fn test_lex_basic() {
         let input = Bytes::from_static(b"%PDF-1.7\n1 0 obj\n<< /Type /Page >>\nendobj");
         let mut lexer = Lexer::new(input);
-        
+
         assert_eq!(lexer.next_token().unwrap().unwrap(), Token::Integer(1));
         assert_eq!(lexer.next_token().unwrap().unwrap(), Token::Integer(0));
-        assert_eq!(lexer.next_token().unwrap().unwrap(), Token::Keyword(Bytes::from_static(b"obj")));
+        assert_eq!(
+            lexer.next_token().unwrap().unwrap(),
+            Token::Keyword(Bytes::from_static(b"obj"))
+        );
         assert_eq!(lexer.next_token().unwrap().unwrap(), Token::DictionaryOpen);
         assert_eq!(lexer.next_token().unwrap().unwrap(), Token::Name(Bytes::from_static(b"Type")));
         assert_eq!(lexer.next_token().unwrap().unwrap(), Token::Name(Bytes::from_static(b"Page")));
         assert_eq!(lexer.next_token().unwrap().unwrap(), Token::DictionaryClose);
-        assert_eq!(lexer.next_token().unwrap().unwrap(), Token::Keyword(Bytes::from_static(b"endobj")));
+        assert_eq!(
+            lexer.next_token().unwrap().unwrap(),
+            Token::Keyword(Bytes::from_static(b"endobj"))
+        );
     }
 
     #[test]
     fn test_lex_strings() {
         let input = Bytes::from_static(b"(Literal string) <48656c6c6f> <41>");
         let mut lexer = Lexer::new(input);
-        
-        assert_eq!(lexer.next_token().unwrap().unwrap(), Token::LiteralString(Bytes::from_static(b"Literal string")));
-        assert_eq!(lexer.next_token().unwrap().unwrap(), Token::HexString(Bytes::from_static(b"Hello")));
-        assert_eq!(lexer.next_token().unwrap().unwrap(), Token::HexString(Bytes::from_static(b"A")));
+
+        assert_eq!(
+            lexer.next_token().unwrap().unwrap(),
+            Token::LiteralString(Bytes::from_static(b"Literal string"))
+        );
+        assert_eq!(
+            lexer.next_token().unwrap().unwrap(),
+            Token::HexString(Bytes::from_static(b"Hello"))
+        );
+        assert_eq!(
+            lexer.next_token().unwrap().unwrap(),
+            Token::HexString(Bytes::from_static(b"A"))
+        );
     }
 }

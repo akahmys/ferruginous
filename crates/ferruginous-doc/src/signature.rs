@@ -1,7 +1,7 @@
-use ferruginous_core::{Object, PdfResult, PdfError};
 use bytes::Bytes;
-use std::collections::BTreeMap;
 use ferruginous_core::PdfName;
+use ferruginous_core::{Object, PdfError, PdfResult};
+use std::collections::BTreeMap;
 
 /// Represents a PDF digital signature (/Sig dictionary).
 /// ISO 32000-2:2020 Clause 12.8
@@ -31,12 +31,14 @@ pub struct Signature {
 
 impl Signature {
     pub fn from_object(obj_id: u32, dict: &BTreeMap<PdfName, Object>) -> PdfResult<Self> {
-        let sub_filter = dict.get(&"SubFilter".into())
+        let sub_filter = dict
+            .get(&"SubFilter".into())
             .and_then(|o| o.as_name())
             .map(|n| n.as_str().to_string())
             .ok_or_else(|| PdfError::Other("Missing /SubFilter in signature".into()))?;
 
-        let byte_range = dict.get(&"ByteRange".into())
+        let byte_range = dict
+            .get(&"ByteRange".into())
             .and_then(|o| o.as_array())
             .ok_or_else(|| PdfError::Other("Missing /ByteRange in signature".into()))?
             .iter()
@@ -44,24 +46,19 @@ impl Signature {
             .collect::<Option<Vec<usize>>>()
             .ok_or_else(|| PdfError::Other("Invalid /ByteRange values".into()))?;
 
-        let contents = dict.get(&"Contents".into())
+        let contents = dict
+            .get(&"Contents".into())
             .and_then(|o| match o {
                 Object::String(b) => Some(b.as_ref().to_vec()),
-                _ => None
+                _ => None,
             })
             .ok_or_else(|| PdfError::Other("Missing /Contents in signature".into()))?;
 
-        let name = dict.get(&"Name".into())
-            .and_then(|o| o.as_string())
-            .map(decode_pdf_string);
+        let name = dict.get(&"Name".into()).and_then(|o| o.as_string()).map(decode_pdf_string);
 
-        let date = dict.get(&"M".into())
-            .and_then(|o| o.as_string())
-            .map(decode_pdf_string);
+        let date = dict.get(&"M".into()).and_then(|o| o.as_string()).map(decode_pdf_string);
 
-        let reason = dict.get(&"Reason".into())
-            .and_then(|o| o.as_string())
-            .map(decode_pdf_string);
+        let reason = dict.get(&"Reason".into()).and_then(|o| o.as_string()).map(decode_pdf_string);
 
         // MDP Extraction
         let mut doc_mdp = None;
@@ -70,28 +67,37 @@ impl Signature {
         if let Some(refs) = dict.get(&"Reference".into()).and_then(|o| o.as_array()) {
             for ref_obj in refs.iter() {
                 if let Some(ref_dict) = ref_obj.as_dict() {
-                    let method = ref_dict.get(&"TransformMethod".into())
+                    let method = ref_dict
+                        .get(&"TransformMethod".into())
                         .and_then(|o| o.as_name())
                         .map(|n| n.as_str())
                         .unwrap_or("");
-                    
+
                     let params = ref_dict.get(&"TransformParams".into()).and_then(|o| o.as_dict());
 
                     match method {
                         "DocMDP" => {
-                            if let Some(p) = params.and_then(|d| d.get(&"P".into())).and_then(|o| o.as_i64()) {
+                            if let Some(p) =
+                                params.and_then(|d| d.get(&"P".into())).and_then(|o| o.as_i64())
+                            {
                                 doc_mdp = Some(DocMdp { p: p as i32 });
                             }
                         }
                         "FieldMDP" => {
                             if let Some(p) = params {
-                                let action = p.get(&"Action".into())
+                                let action = p
+                                    .get(&"Action".into())
                                     .and_then(|o| o.as_name())
                                     .map(|n| n.as_str().to_string())
                                     .unwrap_or_else(|| "All".to_string());
-                                let fields = p.get(&"Fields".into())
+                                let fields = p
+                                    .get(&"Fields".into())
                                     .and_then(|o| o.as_array())
-                                    .map(|a| a.iter().filter_map(|o| o.as_string().map(decode_pdf_string)).collect())
+                                    .map(|a| {
+                                        a.iter()
+                                            .filter_map(|o| o.as_string().map(decode_pdf_string))
+                                            .collect()
+                                    })
                                     .unwrap_or_default();
                                 field_mdp.push(FieldMdp { action, fields });
                             }
@@ -138,10 +144,8 @@ impl Signature {
 fn decode_pdf_string(bytes: &[u8]) -> String {
     if bytes.starts_with(&[0xFE, 0xFF]) {
         // UTF-16BE
-        let words: Vec<u16> = bytes[2..]
-            .chunks_exact(2)
-            .map(|c| u16::from_be_bytes([c[0], c[1]]))
-            .collect();
+        let words: Vec<u16> =
+            bytes[2..].chunks_exact(2).map(|c| u16::from_be_bytes([c[0], c[1]])).collect();
         String::from_utf16_lossy(&words)
     } else {
         // Fallback to UTF-8 or PDFDocEncoding (simplified as UTF-8 lossy here)

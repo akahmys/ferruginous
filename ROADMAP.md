@@ -159,10 +159,11 @@ The "Rebirth" project aims to achieve the world's most robust and ISO-compliant 
 - [x] **M51: Predicate Engine**: Implement `nom`-based parser for ISO 32000-2 Arlington Model predicates.
 - [x] **M52: Evaluation Logic**: Develop a deterministic evaluator for complex validation conditions (SinceVersion, Required, etc.).
 
-## Phase 18: Advanced Filters & Tagged PDF Repair
-- [x] **M53: RunLengthDecode**: Implement the missing RLE stream filter for full ISO compliance.
-- [x] **M54: Structural Inference**: Implement heuristic-based tagging for non-accessible documents.
-- [x] **M55: Automatic Tag Repair**: Develop a repair engine to inject `StructTreeRoot` and establish logical structure.
+## [COMPLETED] Phase 19: Vertical Rendering & PDF 2.0 Standardization
+- [x] **M56: Vertical Writing (WMode 1)**: Implemented coordinate transformation logic for descending text advance in CJK vertical layout.
+- [x] **M57: PDF 2.0 Upgrade Engine**: Enhanced the SDK writer to support targeted version upgrades (`save_as_version`) including mandatory metadata injection.
+- [x] **M58: UI Interaction Hardening**: Integrated `Command + ScrollWheel` zoom and smooth panning into the egui-Vello bridge.
+- [x] **Verified vertical flow compliance** with Japanese literary samples (bokutokitan.pdf) converted to ISO 32000-2.
 
 ---
-*Roadmap updated: 2026-04-20 (Phase 17/18 Completed)*
+*Roadmap updated: 2026-04-20 (Phase 19 Completed)*

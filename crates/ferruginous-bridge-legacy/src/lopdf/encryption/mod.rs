@@ -1,7 +1,7 @@
 //! Encryption module for modified lopdf.
 
-pub mod rc4;
 pub mod algorithms;
+pub mod rc4;
 
-pub use algorithms::{Decryptor, Algorithm, derive_key_v2};
+pub use algorithms::{derive_key_v2, Algorithm, Decryptor};
 pub use rc4::Rc4;

@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use kurbo::Affine;
+use serde::{Deserialize, Serialize};
 
 /// ISO 32000-2:2020 Clause 8.3.2 - Transformation Matrices
 ///
@@ -76,15 +76,15 @@ impl Rect {
 /// ISO 32000-2:2020 Clause 9.3 - Text State Parameters
 #[derive(Debug, Clone, PartialEq)]
 pub struct TextState {
-    pub char_spacing: f64,    // Tc
-    pub word_spacing: f64,    // Tw
-    pub horizontal_scaling: f64, // Th (100.0 is normal)
-    pub leading: f64,         // Tl
-    pub font: Option<crate::PdfName>, // Tf (font name)
-    pub font_size: f64,       // Tfs
+    pub char_spacing: f64,                 // Tc
+    pub word_spacing: f64,                 // Tw
+    pub horizontal_scaling: f64,           // Th (100.0 is normal)
+    pub leading: f64,                      // Tl
+    pub font: Option<crate::PdfName>,      // Tf (font name)
+    pub font_size: f64,                    // Tfs
     pub rendering_mode: TextRenderingMode, // Tmode
-    pub rise: f64,            // Trise
-    pub knockout: bool,       // Tknockout
+    pub rise: f64,                         // Trise
+    pub knockout: bool,                    // Tknockout
 }
 
 impl Default for TextState {
@@ -95,7 +95,7 @@ impl Default for TextState {
             horizontal_scaling: 100.0,
             leading: 0.0,
             font: None,
-            font_size: 1.0, 
+            font_size: 1.0,
             rendering_mode: TextRenderingMode::Fill,
             rise: 0.0,
             knockout: true,
@@ -114,8 +114,8 @@ pub struct GraphicsState {
     pub stroke_color: Color,
     pub text_state: TextState,
     pub winding_rule: WindingRule,
-    pub fill_alpha: f64,   // ca
-    pub stroke_alpha: f64, // CA
+    pub fill_alpha: f64,       // ca
+    pub stroke_alpha: f64,     // CA
     pub blend_mode: BlendMode, // BM
 }
 
@@ -175,10 +175,7 @@ pub struct TextMatrices {
 
 impl Default for TextMatrices {
     fn default() -> Self {
-        Self {
-            tm: Matrix::IDENTITY,
-            tlm: Matrix::IDENTITY,
-        }
+        Self { tm: Matrix::IDENTITY, tlm: Matrix::IDENTITY }
     }
 }
 
