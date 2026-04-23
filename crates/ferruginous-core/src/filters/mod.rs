@@ -1,77 +1,76 @@
-use crate::error::{PdfError, PdfResult};
+//! PDF Stream Decoding Filters (ISO 32000-2:2020 Clause 7.4)
 
-pub mod dct;
+use crate::PdfResult;
+use crate::error::PdfError;
+use bytes::Bytes;
+use crate::object::Object;
+use crate::arena::PdfArena;
+
 pub mod flate;
-pub mod predict;
-pub mod run_length;
+pub mod predictor;
 
-pub use dct::decode_dct;
-pub use flate::decode_flate;
-pub use predict::decode_predictor;
+/// A trait for decoding PDF stream filters.
+pub trait DecodingFilter {
+    /// Decodes the input bytes according to the filter logic.
+    fn decode(&self, input: &[u8], params: Option<&Object>, arena: &PdfArena) -> PdfResult<Bytes>;
+}
 
-/// Dispatches decoding to the appropriate filter based on the filter name.
-/// (ISO 32000-2:2020 Clause 7.4)
-pub fn decode_stream(filter: &str, data: &[u8]) -> PdfResult<Vec<u8>> {
-    match filter {
-        "FlateDecode" | "Fl" => decode_flate(data),
-        "DCTDecode" | "DCT" => decode_dct(data),
-        "RunLengthDecode" | "RL" => run_length::decode_run_length(data),
-        "CCITTFaxDecode" | "CCF" => {
-            Err(PdfError::Other("CCITTFaxDecode not yet implemented".into()))
+/// Dispatches decoding requests to the appropriate filter implementation.
+pub fn decode_stream(
+    filter_name: &str,
+    input: &[u8],
+    params: Option<&Object>,
+    arena: &PdfArena,
+) -> PdfResult<Bytes> {
+    match filter_name {
+        "FlateDecode" | "Fl" => {
+            let decoder = flate::FlateFilter;
+            decoder.decode(input, params, arena)
         }
-        _ => Err(PdfError::Other(format!("Unsupported filter: {}", filter))),
+        _ => Err(PdfError::Filter(format!("Unsupported filter: {}", filter_name))),
     }
 }
 
-/// Decodes data using filters specified in a stream dictionary.
-pub fn decode_stream_from_dict(
-    dict: &std::collections::BTreeMap<crate::PdfName, crate::Object>,
-    mut data: Vec<u8>,
-) -> PdfResult<bytes::Bytes> {
-    let filters = match dict.get(&crate::PdfName::new(b"Filter")) {
-        Some(crate::Object::Name(n)) => vec![n.as_str().to_string()],
-        Some(crate::Object::Array(arr)) => {
-            arr.iter().filter_map(|o| o.as_name().map(|n| n.as_str().to_string())).collect()
-        }
-        _ => vec![],
-    };
+/// Orchestrates multi-filter decoding for a stream dictionary.
+pub fn process_arena_filters(
+    data: &[u8],
+    dict: &std::collections::BTreeMap<crate::handle::Handle<crate::object::PdfName>, Object>,
+    arena: &PdfArena,
+) -> PdfResult<Bytes> {
+    let filter_key = arena.intern_name(crate::object::PdfName::new("Filter"));
+    let params_key = arena.intern_name(crate::object::PdfName::new("DecodeParms"));
 
-    let parms = match dict
-        .get(&crate::PdfName::new(b"DecodeParms"))
-        .or_else(|| dict.get(&crate::PdfName::new(b"DP")))
-    {
-        Some(crate::Object::Dictionary(d)) => vec![Some(d.clone())],
-        Some(crate::Object::Array(arr)) => arr.iter().map(|o| o.as_dict_arc()).collect(),
-        None => vec![],
-        _ => vec![],
-    };
+    let mut current_data = Bytes::copy_from_slice(data);
 
-    for (i, filter) in filters.iter().enumerate() {
-        data = decode_stream(filter, &data)?;
-
-        // Predictor handling for this filter stage
-        if let Some(parm_dict) = parms.get(i).and_then(|p| p.as_ref()) {
-            let predictor =
-                parm_dict.get(&"Predictor".into()).and_then(|o| o.as_i64()).unwrap_or(1) as i32;
-            if predictor > 1 {
-                let colors =
-                    parm_dict.get(&"Colors".into()).and_then(|o| o.as_i64()).unwrap_or(1) as usize;
-                let bits_per_component =
-                    parm_dict.get(&"BitsPerComponent".into()).and_then(|o| o.as_i64()).unwrap_or(8)
-                        as usize;
-                let columns =
-                    parm_dict.get(&"Columns".into()).and_then(|o| o.as_i64()).unwrap_or(1) as usize;
-
-                data = crate::filters::predict::decode_predictor(
-                    predictor,
-                    colors,
-                    bits_per_component,
-                    columns,
-                    &data,
-                )?;
+    if let Some(filter_obj) = dict.get(&filter_key) {
+        let filter_obj = filter_obj.resolve(arena);
+        match filter_obj {
+            Object::Name(h) => {
+                let name = arena.get_name(h).ok_or_else(|| PdfError::Other("Filter name not found".into()))?;
+                let params = dict.get(&params_key).map(|o| o.resolve(arena));
+                current_data = decode_stream(name.as_str(), &current_data, params.as_ref(), arena)?;
             }
+            Object::Array(h) => {
+                let filters = arena.get_array(h).ok_or_else(|| PdfError::Other("Filter array not found".into()))?;
+                let params_arr = dict.get(&params_key).and_then(|o| {
+                    if let Object::Array(ah) = o.resolve(arena) {
+                        arena.get_array(ah)
+                    } else {
+                        None
+                    }
+                });
+
+                for (i, f_obj) in filters.iter().enumerate() {
+                    if let Object::Name(fh) = f_obj.resolve(arena) {
+                        let name = arena.get_name(fh).ok_or_else(|| PdfError::Other("Filter name not found".into()))?;
+                        let p = params_arr.as_ref().and_then(|a| a.get(i));
+                        current_data = decode_stream(name.as_str(), &current_data, p, arena)?;
+                    }
+                }
+            }
+            _ => {}
         }
     }
 
-    Ok(bytes::Bytes::from(data))
+    Ok(current_data)
 }

@@ -1,8 +1,12 @@
 # Rust / Cargo
 /target/
 Cargo.lock
+# PDF Files (Samples and Output) - DO NOT TRACK
+*.pdf
+**/*.pdf
 /samples/
-**/samples/*.pdf
+/tests/fixtures/pdfs/
+/fepdf_test/
 
 # IDEs
 .vscode/
@@ -42,7 +46,11 @@ clippy_*.txt
 .agent/tools/
 
 # Test data & Results
-/fepdf_test/ja/
-/fepdf_test/en/
-/fepdf_test/results/
-**/*.pdf
+/verification_results/
+/artifacts/
+/scratch/
+
+# Developer Playground
+scratch/
+verification_results/
+.DS_Store

@@ -2,6 +2,7 @@
 name = "fepdf"
 version = "0.1.0"
 authors = ["Ferruginous Developers"]
+license = "MIT OR Apache-2.0"
 edition = "2024"
 description = "Specialized CLI tool for converting PDF documents to version 2.0"
 
@@ -10,5 +11,8 @@ ferruginous-sdk = { path = "../ferruginous-sdk" }
 ferruginous-core = { path = "../ferruginous-core" }
 clap = { version = "4.5", features = ["derive"] }
 anyhow = "1.0"
+inquire = "0.7"
 bytes = { workspace = true }
 tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

@@ -9,7 +9,6 @@ repository.workspace = true
 
 [dependencies]
 ferruginous-sdk = { path = "../ferruginous-sdk" }
-ferruginous-doc = { path = "../ferruginous-doc" }
 ferruginous-core = { path = "../ferruginous-core" }
 rmcp = { workspace = true, features = ["macros", "server", "transport-io", "schemars"] }
 tokio.workspace = true

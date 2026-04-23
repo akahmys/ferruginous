@@ -14,7 +14,7 @@ async fn test_render_sample_pdf() {
     let output_path = Path::new("test_output.png");
 
     // Render page 0 (1st page)
-    doc.render_page_to_file(0, output_path).await.expect("Failed to render page to file");
+    doc.render_page_to_file(0, output_path).expect("Failed to render page to file");
 
     assert!(output_path.exists(), "Output PNG file was not created");
 

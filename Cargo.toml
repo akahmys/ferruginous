@@ -2,33 +2,59 @@
 resolver = "2"
 members = [
     "crates/ferruginous-core",
-    "crates/ferruginous-doc",
     "crates/ferruginous-render",
     "crates/ferruginous-sdk",
     "crates/ferruginous-mcp",
-    "crates/ferruginous-bridge-legacy",
-    "crates/ferruginous-cli",
     "crates/ferruginous-wasm",
+    "crates/ferruginous",
     "crates/fepdf",
-    "crates/ferruginous-ui",
 ]
 
 [workspace.dependencies]
+# Error Handling
 anyhow = "1.0"
-skrifa = "0.22"
-thiserror = "2.0.11"
+thiserror = "2.0"
+
+# Serialization
 serde = { version = "1.0", features = ["derive", "rc"] }
-tokio = { version = "1.43", features = ["full"] }
-rmcp = "1.5.0"
+serde_json = "1.0"
+bytes = { version = "1.10", features = ["serde"] }
+
+# Parallelism & Performance
+rayon = "1.10"
+parking_lot = "0.12"
+id-arena = "2.2"
+
+# PDF Physical Engine
+lopdf = "0.34"
+flate2 = "1.0"
+
+# PDF Optimized Output
+pdf-writer = "0.12"
+
+# Font Processing
+skrifa = "0.22"
+read-fonts = "0.22"
+ttf-parser = "0.21"
+
+# Graphics & Rendering
 vello = "0.8.0"
 kurbo = { version = "0.13", features = ["serde"] }
-rayon = "1.10"
-ttf-parser = "0.21"
-lcms2 = "6.0"
-bytes = { version = "1.10", features = ["serde"] }
-flate2 = "1.0"
-jpeg-decoder = "0.3.1"
+
+# Color Management (Hardening)
+moxcms = "0.8"
+
+# Image Processing (Refined)
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "tiff"] }
+
+# Metadata & Encoding
+xmp-writer = "0.3"
 roxmltree = "0.20"
+chardetng = "0.1"
+
+# Infrastructure & MCP
+tokio = { version = "1.43", features = ["full"] }
+rmcp = "1.5.0"
 
 [workspace.package]
 version = "0.1.0"
@@ -52,12 +78,11 @@ pedantic = { level = "warn", priority = -1 }
 nursery = { level = "warn", priority = -1 }
 all = { level = "warn", priority = -1 }
 too_many_lines = "allow"
-module_name_repetitions = "allow"
-cast_precision_loss = "allow"
-cast_possible_truncation = "allow"
-cast_sign_loss = "allow"
-cast_possible_wrap = "allow"
-cast_lossless = "allow"
+cast_precision_loss = "warn"
+cast_possible_truncation = "warn"
+cast_sign_loss = "warn"
+cast_possible_wrap = "warn"
+cast_lossless = "warn"
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
 if_not_else = "allow"
@@ -65,8 +90,8 @@ redundant_else = "allow"
 unnecessary_wraps = "allow"
 items_after_statements = "allow"
 option_if_let_else = "allow"
-collapsible_if = "allow"
-collapsible_else_if = "allow"
+collapsible_if = "warn"
+collapsible_else_if = "warn"
 doc_markdown = "allow"
 must_use_candidate = "allow"
 missing_const_for_fn = "allow"
@@ -92,4 +117,3 @@ lto = true
 codegen-units = 1
 panic = "abort"
 strip = true
-

@@ -15,12 +15,11 @@ wgpu = "=28.0.0"
 serde.workspace = true
 thiserror.workspace = true
 bytes.workspace = true
-skrifa = "0.40.0"
-ttf-parser = { workspace = true }
-image = "0.25"
+skrifa.workspace = true
+ttf-parser.workspace = true
+image.workspace = true
 pollster = "0.4"
-tokio = { workspace = true }
-ferruginous-doc = { version = "0.1.0", path = "../ferruginous-doc" }
+tokio.workspace = true
 
 [dev-dependencies]
 ferruginous-sdk = { path = "../ferruginous-sdk" }

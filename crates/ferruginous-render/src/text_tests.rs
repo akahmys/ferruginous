@@ -7,8 +7,8 @@ mod tests {
     #[test]
     fn test_text_matrix_init() {
         let tm = TextMatrices::default();
-        assert_eq!(tm.tm, Matrix::IDENTITY);
-        assert_eq!(tm.tlm, Matrix::IDENTITY);
+        assert_eq!(tm.tm, Matrix::default());
+        assert_eq!(tm.tlm, Matrix::default());
     }
 
     #[test]
@@ -23,7 +23,7 @@ mod tests {
         tm.tlm = tm.tlm.concat(&move_matrix);
         tm.tm = tm.tlm;
 
-        assert_eq!(tm.tm.0.as_coeffs()[4], 10.0);
-        assert_eq!(tm.tm.0.as_coeffs()[5], 20.0);
+        assert_eq!(tm.tm.0[4], 10.0);
+        assert_eq!(tm.tm.0[5], 20.0);
     }
 }

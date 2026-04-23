@@ -37,12 +37,12 @@ pub trait RenderBackend: Send {
     fn set_fill_color(&mut self, color: Color);
     fn set_stroke_color(&mut self, color: Color);
 
-    fn define_font(&mut self, name: &str, data: std::sync::Arc<Vec<u8>>, index: Option<usize>);
+    fn define_font(&mut self, name: &str, base_name: Option<&str>, data: Option<std::sync::Arc<Vec<u8>>>, index: Option<usize>, cid_to_gid_map: Option<Vec<u16>>);
     fn set_font(&mut self, name: &str);
     #[allow(clippy::too_many_arguments)]
     fn show_text(
         &mut self,
-        glyphs: &[(u32, f32)],
+        glyphs: &[(u32, f32, f32, f32, u32)], // (cid, advance, vx, vy, char_code)
         text: &str,
         size: f64,
         transform: kurbo::Affine,
@@ -50,6 +50,9 @@ pub trait RenderBackend: Send {
         tw: f64,
         is_vertical: bool,
     );
+    fn set_text_render_mode(&mut self, mode: ferruginous_core::graphics::TextRenderingMode);
+    fn set_char_spacing(&mut self, spacing: f64);
+    fn set_word_spacing(&mut self, spacing: f64);
 }
 
 /// Internal graphics state for VelloBackend.
@@ -64,6 +67,19 @@ struct VelloState {
     clip_count: usize,
     font_data: Option<std::sync::Arc<Vec<u8>>>,
     font_index: Option<usize>,
+    cid_to_gid_map: Option<Vec<u16>>,
+    text_render_mode: i32,
+    char_spacing: f64,
+    word_spacing: f64,
+    font_name: Option<String>,
+}
+
+/// Cached font information to satisfy clippy complexity rules.
+struct FontCacheEntry {
+    data: Option<std::sync::Arc<Vec<u8>>>,
+    collection_index: Option<usize>,
+    cid_to_gid_map: Option<Vec<u16>>,
+    base_name: Option<String>,
 }
 
 /// Vello-based implementation of [RenderBackend].
@@ -71,7 +87,7 @@ pub struct VelloBackend {
     scene: Scene,
     state: VelloState,
     state_stack: Vec<VelloState>,
-    font_cache: std::collections::BTreeMap<String, (std::sync::Arc<Vec<u8>>, Option<usize>)>, // Name -> (Data, CollectionIndex)
+    font_cache: std::collections::BTreeMap<String, FontCacheEntry>,
 }
 
 impl Default for VelloBackend {
@@ -94,10 +110,35 @@ impl VelloBackend {
                 clip_count: 0,
                 font_data: None,
                 font_index: None,
+                cid_to_gid_map: None,
+                text_render_mode: 0,
+                char_spacing: 0.0,
+                word_spacing: 0.0,
+                font_name: None,
             },
             state_stack: Vec::new(),
             font_cache: std::collections::BTreeMap::new(),
         }
+    }
+
+    pub fn set_transform(&mut self, transform: Affine) {
+        self.state.transform = transform;
+    }
+
+    pub fn define_font(
+        &mut self, 
+        name: &str, 
+        data: Option<&std::sync::Arc<Vec<u8>>>, 
+        index: usize, 
+        cid_to_gid_map: Option<&[u16]>,
+        base_name: Option<&str>
+    ) {
+        self.font_cache.insert(name.to_string(), FontCacheEntry {
+            data: data.cloned(),
+            collection_index: Some(index),
+            cid_to_gid_map: cid_to_gid_map.map(|m| m.to_vec()),
+            base_name: base_name.map(|s| s.to_string()),
+        });
     }
 
     pub fn scene(&self) -> &Scene {
@@ -112,13 +153,11 @@ impl RenderBackend for VelloBackend {
     }
 
     fn pop_state(&mut self) {
-        // Pop all clips pushed at this level
-        for _ in 0..self.state.clip_count {
-            self.scene.pop_layer();
-        }
-
-        if let Some(previous_state) = self.state_stack.pop() {
-            self.state = previous_state;
+        if let Some(old_state) = self.state_stack.pop() {
+            while self.state.clip_count > old_state.clip_count {
+                self.pop_clip();
+            }
+            self.state = old_state;
         }
     }
 
@@ -278,43 +317,63 @@ impl RenderBackend for VelloBackend {
         self.state.stroke_color = color;
     }
 
+    fn define_font(&mut self, name: &str, base_name: Option<&str>, data: Option<std::sync::Arc<Vec<u8>>>, index: Option<usize>, cid_to_gid_map: Option<Vec<u16>>) {
+        // Resolve font index if not provided (for collections)
+        let resolved_index = if index.is_none() {
+            if let Some(data_arc) = data.as_ref() {
+                if let Ok(file_ref) = skrifa::raw::FileRef::new(data_arc) {
+                    match file_ref {
+                        skrifa::raw::FileRef::Font(_) => None,
+                        skrifa::raw::FileRef::Collection(c) => {
+                            let mut best = 0;
+                            for i in 0..c.len() {
+                                if c.get(i).is_ok() { best = i; break; }
+                            }
+                            Some(best as usize)
+                        }
+                    }
+                } else { None }
+            } else { None }
+        } else { index };
+
+        self.font_cache.insert(name.to_string(), FontCacheEntry {
+            data,
+            collection_index: resolved_index,
+            cid_to_gid_map,
+            base_name: base_name.map(|s| s.to_string()),
+        });
+    }
+
     fn set_font(&mut self, name: &str) {
-        if let Some((data, index)) = self.font_cache.get(name) {
-            self.state.font_data = Some(data.clone());
-            self.state.font_index = *index;
+        if let Some(entry) = self.font_cache.get(name) {
+            self.state.font_data = entry.data.clone();
+            self.state.font_index = entry.collection_index;
+            self.state.cid_to_gid_map = entry.cid_to_gid_map.clone();
+            self.state.font_name = entry.base_name.clone();
         } else {
             self.state.font_data = None;
             self.state.font_index = None;
+            self.state.cid_to_gid_map = None;
+            self.state.font_name = None;
         }
     }
 
-    fn define_font(&mut self, name: &str, data: std::sync::Arc<Vec<u8>>, index: Option<usize>) {
-        // Pre-scan for Japanese support if it's a TTC
-        let safe_index = if let Ok(file_ref) = skrifa::raw::FileRef::new(&data) {
-            match file_ref {
-                skrifa::raw::FileRef::Font(_) => None,
-                skrifa::raw::FileRef::Collection(c) => {
-                    // Find a font with Japanese support or just default to 0
-                    let mut best_index = 0;
-                    for i in 0..c.len() {
-                        if let Ok(_font) = c.get(i) {
-                            best_index = i as usize;
-                            break;
-                        }
-                    }
-                    Some(best_index)
-                }
-            }
-        } else {
-            None
-        };
-        self.font_cache.insert(name.to_string(), (data.clone(), index.or(safe_index)));
+    fn set_text_render_mode(&mut self, mode: ferruginous_core::graphics::TextRenderingMode) {
+        self.state.text_render_mode = mode as i32;
+    }
+
+    fn set_char_spacing(&mut self, spacing: f64) {
+        self.state.char_spacing = spacing;
+    }
+
+    fn set_word_spacing(&mut self, spacing: f64) {
+        self.state.word_spacing = spacing;
     }
 
     #[allow(clippy::too_many_arguments)]
     fn show_text(
         &mut self,
-        glyphs: &[(u32, f32)],
+        glyphs: &[(u32, f32, f32, f32, u32)],
         text: &str,
         size: f64,
         transform: Affine,
@@ -322,64 +381,51 @@ impl RenderBackend for VelloBackend {
         _tw: f64,
         is_vertical: bool,
     ) {
-        let font_data = match &self.state.font_data {
-            Some(d) => d.clone(),
-            None => {
-                // Fallback for diagnostic/legacy (vital for non-embedded fonts like MS Mincho)
-                let fallback_path = "/System/Library/Fonts/Hiragino Sans GB.ttc";
-                match std::fs::read(fallback_path) {
-                    Ok(data) => std::sync::Arc::new(data),
-                    Err(_) => return,
-                }
-            }
-        };
-
-        let sfnt_data = crate::text::ensure_sfnt(&font_data);
-        let data_ref = sfnt_data.as_deref().unwrap_or(&font_data);
+        let raw_data = self.state.font_data.as_deref().map(|d| d.as_slice()).unwrap_or(&[]);
+        let sfnt_data = crate::text::ensure_sfnt(raw_data);
+        let data_ref = sfnt_data.as_deref().unwrap_or(raw_data);
 
         let bridge = crate::text::SkrifaBridge::new();
         let brush = to_vello_brush(&self.state.fill_color, self.state.fill_alpha as f32);
         let mut advance_offset = 0.0;
 
-        for (i, (gid_u32, _width)) in glyphs.iter().enumerate() {
-            let mut gid = *gid_u32;
-            let unicode_fallback = text.chars().nth(i);
+        let mut char_iter = text.chars();
+        for (gid_u32, _width, vx, vy, char_code) in glyphs.iter() {
+            let gid = *gid_u32;
+            let char_code = *char_code;
+            let unicode_fallback = char_iter.next();
 
-            if i == 0 {
-                eprintln!(
-                    "DEBUG: font_data len={}, first 4 bytes={:02X?}",
-                    font_data.len(),
-                    &font_data[0..std::cmp::min(4, font_data.len())]
-                );
-            }
+            // Skip rendering for common whitespace or if mode is 3 (Invisible)
+            let is_whitespace_code = char_code == 0x20 || char_code == 0x09 || char_code == 0x0A || char_code == 0x0D;
 
-            if font_data.len() >= 2 && font_data[0] == 0x01 && font_data[1] == 0x00 {
-                gid = crate::text::cff_get_gid_for_cid(&font_data, gid as u16).unwrap_or(gid as u16)
-                    as u32;
-            }
-
-            let path_opt = bridge.extract_path(data_ref, gid, is_vertical, unicode_fallback);
-            if let Some(mut path) = path_opt {
+            let is_repurposed_japanese = char_code == 0x20 && unicode_fallback.map(|c| (c as u32) >= 0x2E80).unwrap_or(false);
+            let should_skip = self.state.text_render_mode == 3 || (is_whitespace_code && !is_repurposed_japanese);
+            if should_skip {
                 let glyph_scale = size / 1000.0;
+                let advance = *_width as f64 * glyph_scale;
+                advance_offset += advance;
+                continue;
+            }
 
-                let offset_vec = if is_vertical {
-                    kurbo::Vec2::new(0.0, -advance_offset)
+            let path_opt: Option<BezPath> = bridge.extract_path(data_ref, gid, char_code, self.state.cid_to_gid_map.as_deref(), is_vertical, unicode_fallback, is_repurposed_japanese);
+            if let Some(mut path) = path_opt {
+                // Get units_per_em from the font if possible, fallback to 1000
+                let units_per_em = bridge.get_units_per_em(data_ref).unwrap_or(1000) as f64;
+                let glyph_scale = size / units_per_em;
+                let metrics_scale = size / 1000.0;
+                let origin_shift = kurbo::Vec2::new(-*vx as f64, -*vy as f64);
+                let writing_line_advance = if is_vertical {
+                    Affine::translate((0.0, -advance_offset))
                 } else {
-                    kurbo::Vec2::new(advance_offset, 0.0)
+                    Affine::translate((advance_offset, 0.0))
                 };
 
-                // The transform provided handles the page coordinate space, flip, and specific text matrix
                 let glyph_transform = self.state.transform
                     * transform
-                    * Affine::translate(offset_vec)
-                    * Affine::scale(glyph_scale);
-
-                let abs_pos = glyph_transform.translation();
-                eprintln!(
-                    "DEBUG: Rendering glyph gid={} unicode={:?} at abs_pos=({:.2}, {:.2}) scale={:.2}",
-                    gid, unicode_fallback, abs_pos.x, abs_pos.y, glyph_scale
-                );
-
+                    * writing_line_advance
+                    * Affine::scale(glyph_scale)
+                    * Affine::translate(origin_shift);
+                
                 path.apply_affine(glyph_transform);
                 self.scene.fill(
                     vello::peniko::Fill::NonZero,
@@ -389,7 +435,7 @@ impl RenderBackend for VelloBackend {
                     &path,
                 );
 
-                let advance = *_width as f64 * glyph_scale;
+                let advance = *_width as f64 * metrics_scale;
                 advance_offset += advance;
             } else {
                 eprintln!(
