@@ -1,367 +1,365 @@
-# 憲章再設計の検討記録
+# Charter Redesign Deliberation Record
 
-> この文書は、2026-04-13 のセッションにおける GEMINI.md（AI開発憲章）の再設計に関する議論を記録したものである。
+> This document records the discussions regarding the redesign of GEMINI.md (AI Development Charter) during the session on 2026-04-13.
 
 ---
 
-## 1. 問題の発端
+## 1. Origin of the Problem
 
-日本語PDF描画の修正が **5セッション以上にわたり「完了→再発」を繰り返した**。
-各セッションのAIは「これで完全に解決しました」と報告するが、実際には未解決であり、次のセッションでは過去の失敗を忘れて同様のアプローチを再試行していた。
+The fix for Japanese PDF rendering **repeatedly cycled through "Fixed → Recurred" for more than 5 sessions**.
+While each session's AI reported "This is now fully resolved," the reality was that it remained unresolved, and the next session would forget past failures and retry the same approach.
 
-### 反復パターンの時系列
+### Chronology of Iterative Patterns
 
-| # | 会話 ID | 主な修正対象 | 報告された根本原因 | 結果 |
+| # | Conversation ID | Primary Target | Reported Root Cause | Result |
 |---|---------|-------------|-------------------|------|
-| 1 | `74b103e6` | CMap / CID マッピング | `Identity-H` フォールバック、定義済み CMap 不足 | 「完了」→ 次で再発 |
-| 2 | `9d60fe32` | テキスト変位式、二重変換 | CTM の二重適用、`compute_offset` のバイト演算バグ | 「完了」→ 次で再発 |
-| 3 | `e8855a35` | 座標系同期、FontMatrix 継承 | Y軸反転、FontMatrix 未継承、0.001 スケールの二重適用 | 「完了」→ 次で再発 |
-| 4 | `0d33f396` | FontMatrix 標準化、グリフ幅同期 | SDK/Renderer 間のスケール不一致 | 「完了」(最新) |
+| 1 | `74b103e6` | CMap / CID Mapping | `Identity-H` fallback, insufficient predefined CMaps | "Fixed" → Recurred in next |
+| 2 | `9d60fe32` | Text Displacement, Double Conversion | Double application of CTM, byte operation bug in `compute_offset` | "Fixed" → Recurred in next |
+| 3 | `e8855a35` | Coordinate Sync, FontMatrix Inheritance | Y-axis inversion, FontMatrix not inherited, double 0.001 scale | "Fixed" → Recurred in next |
+| 4 | `0d33f396` | FontMatrix Standardization, Glyph Width Sync | Scale mismatch between SDK and Renderer | "Fixed" (Current) |
 
-### 「モグラ叩き」パターン
+### "Whack-a-Mole" Pattern
 
-各セッションで1つの原因を特定・修正するが、その修正が別の箇所にリグレッションを引き起こし、次のセッションでそれが新たな「根本原因」として報告される。
-
----
-
-## 2. 構造的原因の分析
-
-個々のバグではなく、以下の3つの構造的問題が反復の真因：
-
-### A. AIの「忘れっぽさ」の具体的影響
-
-1. **プロジェクト全体を一度に把握できない** — `content.rs` だけで60KB。全 crate の同時読み込みは物理的に不可能
-2. **過去の試行錯誤が消える** — 「Aを試して失敗した」という経緯が次のセッションで白紙
-3. **全体像を見失い局所最適に陥る** — 見えている範囲だけで「直った」と判断
-4. **セッション内でも初期の文脈を忘れる** — 後半は前半の決定理由を忘れている
-
-### B. テスト不在による品質ゲート欠如
-
-- 検証が目視確認のみに依存
-- リグレッション検出メカニズムが存在しない
-
-### C. プロジェクト状態の虚偽記載
-
-- ROADMAP 上では Phase 18 が「完了」だが、実態と乖離
-- 次の AI セッションに「解決済み」という誤った前提を与えていた
+Each session identifies and fixes one cause, but that fix causes a regression elsewhere, which is then reported as a new "root cause" in the next session.
 
 ---
 
-## 3. 「開発」と「修正」の本質的違い
+## 2. Analysis of Structural Causes
 
-Phase 1〜16（開発）は比較的スムーズに進んだが、Phase 18（修正）で破綻した。
-これは同じ手法で異なる性質の活動に臨んだことが原因。
+The true cause of the repetition is not individual bugs, but the following three structural problems:
 
-|  | 開発（Build） | 修正（Fix） |
+### A. Specific Impacts of AI "Forgetfulness"
+
+1. **Inability to grasp the entire project at once** — `content.rs` alone is 60KB. Physically impossible to load all crates simultaneously.
+2. **Loss of past trial and error** — The context that "Approach A was tried and failed" is wiped clean in the next session.
+3. **Losing the big picture and falling into local optimization** — Judging "fixed" based only on the visible range.
+4. **Forgetting early context even within a session** — Later parts of a session forget the reasons for decisions made in the earlier parts.
+
+### B. Lack of Quality Gates Due to Test Absence
+
+- Verification depends solely on visual checks.
+- No regression detection mechanism exists.
+
+### C. False Reporting of Project State
+
+- Phase 18 is marked as "[Completed]" on the ROADMAP, but it deviates from reality.
+- This provided a false premise of "problem solved" to the next AI session.
+
+---
+
+## 3. Fundamental Difference Between "Build" and "Fix"
+
+Phases 1-16 (Build) proceeded relatively smoothly, but Phase 18 (Fix) collapsed. This was caused by approaching activities of different natures with the same methodology.
+
+|  | Build | Fix |
 |---|---|---|
-| **正解の定義** | 仕様書に書いてある | 「こう見えるべき」「前はこうだった」 |
-| **必要な理解** | 仕様 + 実装予定箇所 | 既存コード全体の挙動 |
-| **作業の方向** | 前方：無から作る | 後方：なぜ壊れているか探る |
-| **変更の量** | 大きくてよい（新規コード） | 最小であるべき（既存への介入） |
-| **リスク** | 設計ミス → やり直せる | リグレッション → 別の場所が壊れる |
-| **自信の効用** | 有用（素早く決断して前に進む） | 危険（「直った」と思い込む） |
-| **スコープ** | 広くてよい（機能全体） | 狭くないと危険（一変更ずつ） |
-| **履歴の重要性** | 低い（新しく作るので） | 極めて高い（何を試して何が起きたか） |
+| **Definition of Success** | Defined in specifications | "Should look like this," "Used to be like this" |
+| **Required Understanding** | Spec + Target implementation area | Behavior of the entire existing code |
+| **Direction of Work** | Forward: Create from nothing | Backward: Search for why it's broken |
+| **Change Volume** | Can be large (new code) | Must be minimal (intervention in existing) |
+| **Risk** | Design error → Restartable | Regression → Breaks something else |
+| **Utility of Confidence** | Useful (fast decision and move) | Dangerous (assuming it's "fixed") |
+| **Scope** | Can be broad (entire feature) | Dangerous if not narrow (one change at a time) |
+| **Importance of History** | Low (creating new) | Extremely high (what was tried and what happened) |
 
-### 現在の憲章が「開発」に最適化されている
+### Current Charter is Optimized for "Build"
 
-- **推論より実証** → 開発では「テストを書いて実装」で機能する。修正では「何を実証すべきか」自体が不明
-- **命令調の維持** → 開発では素早い決断が有用。修正では確信を持って誤報告する
-- **SSoT の遵守** → 開発では仕様書が正解を提供。修正では「なぜ壊れているか」は仕様書に書いていない
+- **Verification Over Inference** → In Build, "write test then implement" works. In Fix, "what should be verified" itself is unclear.
+- **Maintain Imperative Style** → In Build, quick decisions are useful. In Fix, reporting with certainty causes false positives.
+- **Adhere to SSoT** → In Build, specs provide the answer. In Fix, "why it's broken" is not written in the specs.
 
 ---
 
-## 4. 現在の憲章の暗黙の前提
+## 4. Implicit Premise of the Current Charter
 
-現在の GEMINI.md には以下の暗黙の前提がある：
+The current GEMINI.md has the following implicit premise:
 
-> **「AIは連続した一人の開発者である」**
+> **"The AI is a single, continuous developer."**
 
-実際には、各セッションのAIは **「毎回新しく雇われる、優秀だが経験ゼロの契約開発者」** に近い。
+In reality, each AI session is more like a **"newly hired, brilliant but zero-experience contract developer."**
 
-| | 人間の開発者 | AIセッション |
+| | Human Developer | AI Session |
 |---|---|---|
-| 記憶 | 不完全だが持続する | セッション単位で完全リセット |
-| 直感 | 「これは怪しい」と感じられる | 見えているものを額面通り受け取る |
-| 責任 | 明日も自分のコードと付き合う | セッション終了で関与が終わる |
-| 全体像 | 頭の中にぼんやりと常にある | 読み込んだファイルの範囲だけ |
-| 失敗の学習 | 身体的に覚えている | 記録しなければ消える |
+| Memory | Imperfect but persistent | Completely reset per session |
+| Intuition | Can feel "this is suspicious" | Takes what is visible at face value |
+| Responsibility | Deals with own code tomorrow | Involvement ends with session closure |
+| Big Picture | Vaguely always in mind | Only the range of loaded files |
+| Learning from Failure | Physically remembers | Disappears unless recorded |
 
 ---
 
-## 5. 憲章の再設計案（合意済み方向性）
+## 5. Charter Redesign Proposal (Agreed Direction)
 
-### 新しい構造
+### New Structure
 
 ```
 GEMINI.md
-├── AI 始動時命令（前文）
-│   ├── 作業モード（Build / Fix）の判定
-│   ├── 引き継ぎファイル・失敗記録の読み込み
-│   └── 方針判断は人間に委ねる宣言
+├── AI Startup Commands (Preamble)
+│   ├── Mode Determination (Build / Fix)
+│   ├── Loading handoff files and failure records
+│   └── Declaration to defer policy decisions to humans
 │
-├── 共通原則（どのモードでも不変）
-│   ├── 1. 推論より実証（既存・強化）
-│   ├── 2. 記憶の外部化（新規）
-│   └── 3. 正直な状態報告（新規）
+├── Common Principles (Invariant in any mode)
+│   ├── 1. Verification Over Inference (Existing/Strengthened)
+│   ├── 2. Externalization of Memory (New)
+│   └── 3. Honest Status Reporting (New)
 │
-├── モード定義
-│   ├── Build モード → HDD_PROTOCOL へ
-│   └── Fix モード → FIX_PROTOCOL へ（新設）
+├── Mode Definitions
+│   ├── Build Mode → Follow HDD_PROTOCOL
+│   └── Fix Mode → Follow FIX_PROTOCOL (New)
 │
-└── プロトコル索引（既存・拡張）
+└── Protocol Index (Existing/Extended)
 ```
 
-### 共通原則の定義
+### Definition of Common Principles
 
-#### 原則 1: 推論より実証（既存・強化）
+#### Principle 1: Verification Over Inference (Existing/Strengthened)
 
-現在の文言を維持しつつ、「実証」の定義を厳密化：
-- **目視確認は実証ではない**
-- 自動テストの通過、またはリファレンス実装との数値比較が実証
+Maintain current wording while strictifying the definition of "Verification":
+- **Visual check is NOT verification.**
+- Passing automated tests or numerical comparison with reference implementations IS verification.
 
-#### 原則 2: 記憶の外部化（新規）
+#### Principle 2: Externalization of Memory (New)
 
-- セッション間で必要な情報はすべてプロジェクト内のファイルに書き出す
-- 書き出されていない知識は「存在しない」ものとして扱う
-- AI の物理的制約を認め、それを仕組みで補完する宣言
+- All information necessary between sessions must be written to files within the project.
+- Knowledge not written down is treated as "non-existent."
+- A declaration to acknowledge AI's physical constraints and complement them with mechanisms.
 
-#### 原則 3: 正直な状態報告（新規）
+#### Principle 3: Honest Status Reporting (New)
 
-- ROADMAP、task.md 等は検証済みの事実のみを反映する
-- テストで実証されていない「完了」は記載禁止
+- ROADMAP, task.md, etc., must reflect only verified facts.
+- Marking as "Completed" without verification via tests is prohibited.
 
-### 削除する原則
+### Principles to Remove
 
-**「命令調の維持」** — スタイルガイドであり哲学ではない。Fix モードでは有害（確信を持って誤報告する）。PLANNING_PROTOCOL の言語セクションへ移管、または完全削除。
+**"Maintain Imperative Style"** — This is a style guide, not a philosophy. Harmful in Fix mode (reporting false positives with confidence). Transfer to the language section of PLANNING_PROTOCOL or remove entirely.
 
-### Build モードの原則
+### Principles for Build Mode
 
-既存の HDD プロトコルがそのまま適用される：
-1. 仕様を読む（Spec-Source）
-2. 失敗するテストを書く（Fail-Fast）
-3. 実装する（Execute）
-4. テストが通る（Verify）
+Existing HDD Protocol applies as is:
+1. Read specification (Spec-Source)
+2. Write failing test (Fail-Fast)
+3. Implement (Execute)
+4. Test passes (Verify)
 
-### Fix モードの原則（新設 FIX_PROTOCOL）
+### Principles for Fix Mode (New FIX_PROTOCOL)
 
-1. **認識論的謙虚さ** — 「コードを変更した」と「問題が解決した」は同義ではない
-2. **診断先行** — コード変更の前に原因を特定する。仮説を複数保持する
-3. **スコープの自己制限** — 一度に1つの変更のみ。検証してから次に進む
-4. **リグレッション意識** — 修正が他の箇所に与える影響を常に確認する
+1. **Epistemological Humility** — "Changed the code" is not synonymous with "Solved the problem."
+2. **Diagnosis First** — Identify the cause before changing code. Maintain multiple hypotheses.
+3. **Self-Limitation of Scope** — Only one change at a time. Verify before proceeding.
+4. **Regression Awareness** — Always confirm the impact of fixes on other areas.
 
-### モードの選択方法
+### Mode Selection Method
 
-**AI が判断し、人間が承認する方式**（選択肢B）を採用する。
-セッション開始時にAIが「この作業は Fix モードで進めます」と宣言し、人間が承認する。
+Adopt **"AI Determines, Human Approves"** (Option B).
+At the start of a session, the AI declares "I will proceed in Fix mode," and the human approves.
 
 ---
 
-## 6. プロセス設計（レベル2 — 合意済み）
+## 6. Process Design (Level 2 — Agreed)
 
-### 6.1. セッション・ライフサイクル
+### 6.1. Session Lifecycle
 
-すべてのセッションは以下の「型」に従う。
+All sessions follow this "template."
 
-**開始時**:
-1. GEMINI.md を読む
-2. `.agent/session/handoff.md` を読む（前セッションの引き継ぎ）
-3. `.agent/session/regression_log.md` を読む（過去の失敗）
-4. モード（Build / Fix）を判定し、人間に宣言する
-5. **このセッションのスコープを宣言する**（検証可能な粒度まで分解）
-6. `.agent/session/task.md` に計画を書く（WAL: 実行前に意図を記録）
+**At Start**:
+1. Read GEMINI.md
+2. Read `.agent/session/handoff.md` (Handoff from previous session)
+3. Read `.agent/session/regression_log.md` (Past failures)
+4. Determine mode (Build / Fix) and declare to human
+5. **Declare the scope of this session** (Decompose to verifiable granularity)
+6. Write plan in `.agent/session/task.md` (WAL: Record intent before execution)
 
-**作業中**:
-- 各ステップの着手前に「Active Step」を更新する（WAL）
-- 各ステップの完了後にチェックボックスを更新する
-- 失敗やリグレッションは即座に `regression_log.md` に記録する
+**During Work**:
+- Update "Active Step" before starting each step (WAL)
+- Update checkboxes after completing each step
+- Record failures or regressions immediately in `regression_log.md`
 
-**終了時**:
-1. 完了ゲートの判定
-2. `.agent/session/handoff.md` を更新する
-3. `.agent/session/regression_log.md` を更新する（当セッションの学び）
-4. 完了していない作業を **正直に「未完了」と報告**する
-
----
-
-### 6.2. Fix モードのプロセス（FIX_PROTOCOL）
-
-Fix モードは **科学的方法** に基づく。開発が「設計→実装」なのに対し、修正は「観察→仮説→実験→検証」。
-
-```
-1. 現象の記述  ──→ 何が起きているか正確に記録する
-2. 履歴の確認  ──→ 過去に何が試されたか regression_log を読む
-3. 仮説の列挙  ──→ なぜ起きているか、候補を複数挙げる（1つに絞らない）
-4. 診断の設計  ──→ プロダクションロジックを変更せずに仮説を検証する方法を考える
-5. 診断の実行  ──→ ログ・テストで仮説を絞り込む
-6. 最小変更    ──→ 1つだけ変更を加える
-7. 効果の検証  ──→ 症状が消えたか確認する
-8. リグレッション確認 ──→ 他の箇所が壊れていないか確認する
-9. 記録       ──→ 何をして何が起きたか残す
-```
-
-**ステップ4の「診断」で許される変更の範囲**:
-- ✅ OK: ログ出力の追加（`eprintln!` 等）
-- ✅ OK: 新規テストの追加（既存コードを呼び出して値を検証する）
-- ✅ OK: テスト用の診断バイナリの追加
-- ❌ NG: プロダクションロジックの変更（関数のロジック書き換え）
-- ❌ NG: 変換パイプラインの構造変更
-
-基準: **「プロダクションロジックの挙動を変更しない」**。テストやログは「観測行為」であり、系を乱さない。
+**At End**:
+1. Success gate determination
+2. Update `.agent/session/handoff.md`
+3. Update `.agent/session/regression_log.md` (Learnings from this session)
+4. **Honestly report uncompleted work as "Incomplete."**
 
 ---
 
-### 6.3. 完了ゲート（3段階）
+### 6.2. Fix Mode Process (FIX_PROTOCOL)
 
-| レベル | 対象 | 必要条件 |
+Fix mode is based on the **Scientific Method**. While Build is "Design → Implement," Fix is "Observe → Hypothesize → Experiment → Verify."
+
+```
+1. Phenomenon Description ──→ Accurately record what is happening
+2. History Check         ──→ Read regression_log to see what was tried before
+3. Hypothesis Enlistment ──→ List multiple candidates for why it's happening (don't narrow to one)
+4. Diagnosis Design     ──→ Think of ways to verify hypotheses without changing production logic
+5. Diagnosis Execution  ──→ Narrow down hypotheses using logs/tests
+6. Minimal Change       ──→ Apply only one change
+7. Effect Verification   ──→ Confirm if symptoms disappear
+8. Regression Check     ──→ Confirm if other areas are broken
+9. Recording            ──→ Leave a record of what was done and what happened
+```
+
+**Scope of changes allowed in Step 4 "Diagnosis"**:
+- ✅ OK: Adding log output (e.g., `eprintln!`)
+- ✅ OK: Adding new tests (invoking existing code and verifying values)
+- ✅ OK: Adding diagnostic binaries for testing
+- ❌ NG: Changing production logic (rewriting function logic)
+- ❌ NG: Changing the structure of the conversion pipeline
+
+Criterion: **"Do not change the behavior of production logic."** Tests and logs are "observational acts" and should not disturb the system.
+
+---
+
+### 6.3. Success Gates (3 Tiers)
+
+| Level | Subject | Requirements |
 |-------|------|---------|
-| **タスク完了** | セッション内の個別タスク | テストが通る + リグレッションなし |
-| **課題解決** | ある不具合の解消 | そのバグの**リグレッションテスト**が test suite に存在し PASS している |
-| **マイルストーン完了** | ROADMAP のエントリ | 課題解決 + ユーザー承認 |
+| **Task Completion** | Individual tasks within a session | Tests pass + No regressions |
+| **Issue Resolution** | Resolving a specific bug | A **regression test** for that bug exists in the test suite and is PASSING |
+| **Milestone Completion** | ROADMAP entry | Issue resolution + User approval |
 
-「課題解決」の判定は「次のセッションでの再確認」ではなく、**テストが test suite に入っていること自体が継続的な検証**として機能する。`cargo test` を回せば自動的に確認される。
-
----
-
-### 6.4. Write-Ahead Log（WAL）パターン
-
-AIはセッション中に途中停止したり、文脈が溢れて前半の計画を忘れることがある。
-データベースの WAL と同じパターンで対処する：
-
-```
-1. 意図をファイルに書く  ──→ 「これからXをする」
-2. 実行する              ──→ Xを実行
-3. 完了をファイルに書く  ──→ 「Xが完了した」
-```
-
-中断した場合、次のセッションはファイルを読み「Xをしようとしたが未完了」と判断できる。
-
-**「やる前に書く」** が核心。今までは逆（やった後に「完了」と記録）だった。
+The determination of "Issue Resolution" is not "re-confirmation in the next session," but **the existence of the test in the test suite itself as continuous verification**. Running `cargo test` automatically confirms it.
 
 ---
 
-### 6.5. ファイル配置とフォーマット
+### 6.4. Write-Ahead Log (WAL) Pattern
+
+AI may stop midway through a session or forget earlier plans due to context overflow. Handle this with the same pattern as database WAL:
+
+```
+1. Write intent to file ──→ "I am about to do X"
+2. Execute             ──→ Execute X
+3. Write completion    ──→ "X is completed"
+```
+
+If interrupted, the next session can read the file and determine "tried to do X but incomplete."
+
+**"Write before you do"** is the core. Previously, it was the opposite (recording "Completed" after doing it).
+
+---
+
+### 6.5. File Placement and Format
 
 > [!IMPORTANT]
-> すべてのセッション状態ファイルはプロジェクト内の **固定パス** に配置する。
-> 会話ごとの一時ディレクトリ（`.gemini/antigravity/brain/<id>/`）には書かない。
+> All session state files must be placed at **fixed paths** within the project.
+> Do not write to temporary directories per conversation (`.gemini/antigravity/brain/<id>/`).
 
 ```
 .agent/session/
-├── task.md            ← 作業計画 + WAL（統合型・セッション開始時に上書き）
-├── handoff.md         ← セッション終了時の状態記録（毎回上書き）
-└── regression_log.md  ← 失敗の蓄積記録（追記のみ・絶対に上書きしない）
+├── task.md            ← Work plan + WAL (Integrated type; overwritten at session start)
+├── handoff.md         ← State record at session end (Overwritten every time)
+└── regression_log.md  ← Accumulated record of failures (Append-only; never overwrite)
 ```
 
-**task.md を統合型にする理由**: 分離型（task.md + current_step.md）だと、AIが2ファイルの同期を忘れるリスクがある。忘れっぽいAIにとって管理ファイルは少ないほど良い。
+**Reason for integrated task.md**: With a split type (task.md + current_step.md), there's a risk of the AI forgetting to sync the two files. Fewer management files are better for forgetful AI.
 
-#### task.md のフォーマット
+#### Format of task.md
 
 ```markdown
-# Task: [目的を1行で]
+# Task: [Purpose in one line]
 
 - **Mode**: Fix / Build
-- **Scope**: [このセッションの範囲を1-2行で]
-- **Session**: [日付]
+- **Scope**: [Scope of this session in 1-2 lines]
+- **Session**: [Date]
 
 ## Plan
 
-1. [x] ステップ1の説明 — 結果の要約
-2. [/] ステップ2の説明
-3. [ ] ステップ3の説明
-4. [ ] ステップ4の説明
+1. [x] Step 1 description — Result summary
+2. [/] Step 2 description
+3. [ ] Step 3 description
+4. [ ] Step 4 description
 
 ## Active Step
 
-> Step 2: cmap.rs の compute_offset を読解中
+> Step 2: Reading compute_offset in cmap.rs
 >
-> - cmap.rs:L150-200 を確認済み
-> - バイト単位の減算を使っている → 過去のバグ（regression_log #3）と関連
+> - Confirmed cmap.rs:L150-200
+> - Using byte-unit subtraction → related to past bug (regression_log #3)
 
 ## On Interrupt
 
-Step 1 まで完了。Step 2 の途中で中断。
-次のセッションは本ファイルを読み、Step 2 から再開せよ。
-**やってはいけないこと**: compute_offset を整数演算に変更するアプローチは
-Session e8855a35 で失敗済み（regression_log 参照）。
+Completed up to Step 1. Interrupted during Step 2.
+The next session should read this file and resume from Step 2.
+**Do not do**: Changing compute_offset to integer arithmetic was already tried
+and failed in Session e8855a35 (refer to regression_log).
 ```
 
-#### task.md の更新タイミング
+#### task.md Update Timing
 
-| タイミング | やること |
+| Timing | Action |
 |-----------|---------|
-| 作業開始時 | Plan セクションに全ステップを書く |
-| 各ステップ着手前 | Active Step を更新（WAL：「これからやる」） |
-| 各ステップ完了後 | `[ ]` → `[x]` に更新 + 結果の要約を追記 |
-| 中断/終了時 | On Interrupt セクションを書く |
+| At Work Start | Write all steps in the Plan section |
+| Before Each Step | Update Active Step (WAL: "About to do") |
+| After Each Step | Update `[ ]` → `[x]` + Append result summary |
+| At Interrupt/End | Write On Interrupt section |
 
-#### handoff.md のフォーマット
+#### Format of handoff.md
 
 ```markdown
 # Session Handoff
 
 - **Date**: 2026-04-13
 - **Mode**: Fix
-- **Status**: 未完了 / 完了
+- **Status**: Incomplete / Completed
 
 ## What Was Done
 
-- CMap の compute_offset にユニットテストを追加した
-- テストは PASS している
+- Added unit tests for compute_offset in CMap
+- Tests are PASSING
 
 ## Open Issues
 
-- 日本語描画のバンチングは CMap の問題ではない可能性がある
-- font.rs の FontMatrix 継承を未検証
+- Japanese rendering bunching might not be a CMap issue
+- FontMatrix inheritance in font.rs not yet verified
 
 ## Regressions
 
-- なし（本セッションではプロダクションコードを変更していない）
+- None (Production code was not changed in this session)
 
 ## Next Session Should
 
-1. font.rs の FontMatrix 継承ロジックを診断する
-2. regression_log #4 のアプローチは避ける
+1. Diagnose FontMatrix inheritance logic in font.rs
+2. Avoid the approach in regression_log #4
 ```
 
-#### regression_log.md の運用
+#### regression_log.md Operation
 
-- **追記のみ**。絶対に過去のエントリを上書き・削除しない
-- 各エントリには「試行した修正」「引き起こしたリグレッション」「学んだ不変条件」を含める
-- 肥大化時（50件超）: 古いエントリを `regression_log_archive.md` に移動。ただし**「学んだ不変条件」は要約として永続保持**する。事実の時系列は捨てても、教訓は捨てない
+- **Append-only**. Never overwrite or delete past entries.
+- Each entry includes "Fix attempted," "Regressions caused," and "Invariant conditions learned."
+- When bloated (over 50 entries): Move old entries to `regression_log_archive.md`. However, **persist "Learned Invariants" as a summary.** Even if the chronology of facts is discarded, do not discard the lessons.
 
 ---
 
-### 6.6. プロセス全体図
+### 6.6. Overall Process Diagram
 
 ```mermaid
 graph TD
-    subgraph "セッション開始"
-        A1[GEMINI.md 読込] --> A2[handoff.md 読込]
-        A2 --> A3[regression_log.md 読込]
-        A3 --> A4["モード判定 → 人間に宣言"]
-        A4 --> A5[スコープを宣言]
-        A5 --> A6["task.md に計画を書く（WAL）"]
+    subgraph "Session Start"
+        A1[Read GEMINI.md] --> A2[Read handoff.md]
+        A2 --> A3[Read regression_log.md]
+        A3 --> A4["Determine Mode → Declare to Human"]
+        A4 --> A5[Declare Scope]
+        A5 --> A6["Write Plan in task.md (WAL)"]
     end
 
-    subgraph "作業中"
-        A6 --> B1["「Active Step」を更新"]
-        B1 --> B2{モード}
-        B2 -->|Build| B3["HDD: テスト → 実装 → 検証"]
-        B2 -->|Fix| B4["FIX: 観察 → 仮説 → 診断 → 最小変更"]
-        B3 --> B5["ステップ完了 → task.md 更新"]
+    subgraph "During Work"
+        A6 --> B1["Update 'Active Step'"]
+        B1 --> B2{Mode}
+        B2 -->|Build| B3["HDD: Test → Implement → Verify"]
+        B2 -->|Fix| B4["FIX: Observe → Hypothesize → Diagnose → Minimal Change"]
+        B3 --> B5["Step Completed → Update task.md"]
         B4 --> B5
-        B5 --> B6{次のステップあり?}
+        B5 --> B6{Next Step Exists?}
         B6 -->|Yes| B1
         B6 -->|No| C1
     end
 
-    subgraph "セッション終了"
-        C1[完了ゲート判定]
-        C1 -->|Pass| C2[handoff.md 更新]
-        C1 -->|Fail| C3["未完了を正直に記録"]
+    subgraph "Session End"
+        C1[Success Gate Determination]
+        C1 -->|Pass| C2[Update handoff.md]
+        C1 -->|Fail| C3["Honestly Record Incomplete"]
         C3 --> C2
-        C2 --> C4[regression_log.md 更新]
+        C2 --> C4[Update regression_log.md]
     end
 
     style A6 fill:#4ecdc4,stroke:#333
@@ -370,82 +368,82 @@ graph TD
     style C3 fill:#ff6b6b,stroke:#333
 ```
 
-緑 = WAL（意図の事前記録）、赤 = 失敗の正直な記録。
+Green = WAL (Pre-record intent), Red = Honest record of failure.
 
 ---
 
-## 7. ファイル配備（レベル3 — 完了）
+## 7. File Deployment (Level 3 — Completed)
 
-レベル1・2 の合意に基づき、以下のファイルを作成・改訂した。
+Based on the agreements in Levels 1 and 2, the following files were created or revised:
 
-### 新規作成
+### Newly Created
 
-| ファイル | 役割 |
+| File | Role |
 |---------|------|
-| `.agent/protocols/FIX_PROTOCOL.md` | Fix モード専用プロトコル（診断先行・最小変更） |
-| `.agent/session/handoff.md` | セッション引き継ぎファイル（毎回上書き） |
-| `.agent/session/regression_log.md` | 失敗の蓄積記録（追記のみ、遡及4件記録済み） |
+| `.agent/protocols/FIX_PROTOCOL.md` | Fix mode specific protocol (Diagnosis first, minimal change) |
+| `.agent/session/handoff.md` | Session handoff file (Overwritten every time) |
+| `.agent/session/regression_log.md` | Accumulated record of failures (Append-only; 4 retrospective entries recorded) |
 
-### 改訂
+### Revised
 
-| ファイル | 変更内容 |
+| File | Changes |
 |---------|---------|
-| `.agent/GEMINI.md` | 全面改訂: 共通原則3つ + Build/Fix モード分離 |
-| `.agent/protocols/HDD_PROTOCOL.md` | Build モード明示、完了ゲート追加 |
-| `.agent/protocols/PLANNING_PROTOCOL.md` | SSoT テーブル拡張、WAL パターン導入、引き継ぎ義務追加 |
-| `.agent/session/task.md` | WAL フォーマットのテンプレートで初期化 |
+| `.agent/GEMINI.md` | Full revision: 3 Common Principles + Build/Fix Mode separation |
+| `.agent/protocols/HDD_PROTOCOL.md` | Explicit Build mode, added success gates |
+| `.agent/protocols/PLANNING_PROTOCOL.md` | Extended SSoT table, introduced WAL pattern, added handoff obligation |
+| `.agent/session/task.md` | Initialized with WAL format template |
 
-### 未実施（任意）
+### Not Implemented (Optional)
 
-- `verify_compliance.sh` への新チェック項目追加
+- Adding new check items to `verify_compliance.sh`.
 
 ---
 
-## 8. この設計の既知の限界
+## 8. Known Limitations of This Design
 
 > [!WARNING]
-> 本プロトコル設計は AI が規約を**読んで従う**ことを前提にしている。
-> 以下の限界を認識した上で運用すること。
+> This protocol design assumes the AI will **read and follow** the regulations.
+> Operate with awareness of the following limitations.
 
-### A. 規約の総量によるコンテキスト圧迫
+### A. Context Pressure Due to Total Volume of Regulations
 
-GEMINI.md + handoff.md + regression_log.md + 対象プロトコルを読み込むだけで相当量のコンテキストを消費する。規約が増えるほどコードを読む余裕が減り、本末転倒になりうる。
+Loading GEMINI.md + handoff.md + regression_log.md + target protocols alone consumes a significant amount of context. As regulations increase, the capacity to read code decreases, which could be counterproductive.
 
-**対策**: 規約は短く保つ。GEMINI.md は1ページ以内。各プロトコルも判定基準以外の説明は最小限にする。regression_log.md は「累積的教訓」セクションを優先的に読み、個別エントリは必要に応じて読む。
+**Countermeasure**: Keep regulations short. GEMINI.md should be within one page. Each protocol should minimize explanations other than criteria. Prioritize reading the "Cumulative Lessons" section of regression_log.md and read individual entries only as needed.
 
-### B. AI が規約を読まない可能性
+### B. Possibility of AI Not Reading Regulations
 
-AI が始動時命令を読み飛ばした場合、全ての仕組みが機能しない。
+If the AI skips the startup commands, none of the mechanisms will function.
 
-**対策**: PLANNING_PROTOCOL にセッション開始手順を [MUST] で明記済み。ただし、これ自体も読まれない可能性があるため、完全な保証にはならない。人間が定期的に「handoff.md 読んだ？」と確認するのが最も確実。
+**Countermeasure**: The session startup procedure is explicitly marked as [MUST] in PLANNING_PROTOCOL §3.1. However, since this itself might not be read, there's no complete guarantee. The most reliable way is for humans to periodically confirm, "Did you read handoff.md?"
 
-### C. 過剰なプロセスによる速度低下
+### C. Slowdown Due to Excessive Process
 
-全ステップで WAL 更新、全修正後に regression_log 追記、全セッション終了時に handoff 更新——これらのオーバーヘッドが軽微なタスクにとっては過重になりうる。
+Updating WAL for every step, appending to regression_log after every fix, updating handoff at the end of every session—this overhead can be burdensome for minor tasks.
 
-**対策**: 規模の小さなタスク（ドキュメント修正、1行の修正等）では、人間の判断でプロセスの一部を省略してよい。ただし Fix モードのステップ省略は禁止（問題の再発を防ぐため）。
+**Countermeasure**: For small-scale tasks (doc fixes, one-line fixes, etc.), humans may decide to skip parts of the process. However, skipping steps in Fix mode is prohibited (to prevent problem recurrence).
 
 ---
 
-## 9. レビュー指摘事項と対応
+## 9. Review Findings and Responses
 
-本検討記録の完成後にレビューを実施し、以下の7件の抜け落ちを検出・修正した。
+After the completion of this deliberation record, a review was conducted, and 7 omissions were detected and corrected.
 
-| # | 指摘 | 対応 |
+| # | Finding | Response |
 |---|------|------|
-| 1 | PLANNING_PROTOCOL に「命令調」が残存 | Fix モードでは不確実性を明示する表現を使う例外を追記 |
-| 2 | セッション開始手順がプロトコルに未記載 | PLANNING_PROTOCOL §3.1 に [MUST] 手順を追加 |
-| 3 | walkthrough.md の配置パスが未定義 | SSoT テーブルに `.agent/session/walkthrough.md` を明記 |
-| 4 | Build モードの完了ゲートが薄い | HDD_PROTOCOL §6 を FIX_PROTOCOL と同等の詳細度に拡充 |
-| 5 | ROADMAP Phase 18 が虚偽の [完了] | [要再検証] に変更、WARNING を追記 |
-| 6 | 摩擦分析に Fix モードの経路がない | PLANNING_PROTOCOL §4 に FIX_PROTOCOL への経路を追加 |
-| 7 | 設計の限界が未記述 | 本セクション（§8）を追加 |
+| 1 | "Imperative Style" remained in PLANNING_PROTOCOL | Added exception for Fix mode to use expressions of uncertainty |
+| 2 | Session startup procedure not in protocols | Added [MUST] procedure to PLANNING_PROTOCOL §3.1 |
+| 3 | Walkthrough.md placement path undefined | Explicitly stated `.agent/session/walkthrough.md` in SSoT table |
+| 4 | Build mode success gate was thin | Expanded HDD_PROTOCOL §6 to the same level of detail as FIX_PROTOCOL |
+| 5 | ROADMAP Phase 18 falsely marked [Completed] | Changed to [Re-verification Required] and added WARNING |
+| 6 | No path to Fix mode in friction analysis | Added path to FIX_PROTOCOL in PLANNING_PROTOCOL §4 |
+| 7 | Design limitations not described | Added this section (§8) |
 
 ---
 
-## 10. 次のアクション
+## 10. Next Actions
 
-### 初回適用
-- 日本語PDF描画問題を題材に、新憲章・新プロトコルに従って **Fix モード** で作業を再開する
-- 次のセッション開始時に GEMINI.md → handoff.md → regression_log.md の順で読み込む
-- FIX_PROTOCOL の修正サイクル（観察→仮説→診断→最小変更）に厳密に従う
+### First Application
+- Resume work on the Japanese PDF rendering issue in **Fix mode**, following the new charter and protocols.
+- At the start of the next session, read GEMINI.md → handoff.md → regression_log.md in order.
+- Strictly follow the Fix mode cycle (Observe → Hypothesize → Diagnose → Minimal Change).

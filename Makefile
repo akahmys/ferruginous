@@ -2,8 +2,10 @@
 # Makefile for multi-platform distribution
 
 BINARY_NAME=fepdf
+GUI_BINARY_NAME=ferruginous
 CRATE_PATH=crates/fepdf
-VERSION=$(shell grep version crates/fepdf/Cargo.toml | head -n 1 | cut -d '"' -f 2)
+GUI_CRATE_PATH=crates/ferruginous
+VERSION=$(shell grep "^version" crates/fepdf/Cargo.toml | head -n 1 | cut -d '"' -f 2)
 DIST_DIR=dist
 
 # Targets
@@ -26,6 +28,10 @@ help:
 
 build-local:
 	cargo build -p $(BINARY_NAME) --release
+	cargo build -p $(GUI_BINARY_NAME) --release
+
+run:
+	cargo run -p $(GUI_BINARY_NAME)
 
 build-all: build-mac build-win build-linux
 

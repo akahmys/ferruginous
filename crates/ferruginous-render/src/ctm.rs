@@ -55,7 +55,7 @@ impl CtmStack {
     /// Concatenates a matrix to the current CTM (corresponds to `cm` operator).
     pub fn concat(&mut self, matrix: &Matrix) {
         if let Some(state) = self.stack.last_mut() {
-            state.ctm = matrix.0 * (state.ctm);
+            state.ctm = matrix.as_affine() * state.ctm;
         }
     }
 

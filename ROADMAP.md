@@ -1,169 +1,72 @@
-# Ferruginous Rebirth Roadmap (v2.0)
+# Ferruginous Rebirth Roadmap (v2.1)
 
-The "Rebirth" project aims to achieve the world's most robust and ISO-compliant PDF 2.0 toolkit.
-
-## Phase 1: Core Foundation [Complete]
-
-- **M1-CORE: Zero-copy Lexer** [x]
-- **M2-CORE: Recursive Descent Parser** [x]
-- **M3-CORE: RR-15 Type System** [x]
-
-## Phase 2: Document Structure [Complete]
-
-- **M4-DOC: XRef Table & Stream Parsing** [x]
-- **M5-DOC: Object Resolution (Lazy Loading)** [x]
-- **M6-DOC: Non-recursive Page Tree Walk** [x]
-
-## Phase 3: Project Architecture & Quality [Complete]
-
-- **M7-ARCH: Protocol Standardization** [x]
-- **M8-ARCH: Documentation Synchronization** [x]
-- **M9-CORE: RR-15 Hardening & Refactoring** [x]
-
-### [x] Phase 6: Functional Verification & Crash Stabilization
-- [x] Comprehensive test suite execution (日・英 10 files)
-- [x] Implementation of full Object-based Interpreter (Fixed TJ parsing)
-- [x] Support for Resource Inheritance & Reference Resolution
-- [x] GPU Rendering stabilization (Indexed color detection & Buffer guards)
-- [x] 100% SUCCESS rate for core rendering/text extraction
-
-## Phase 4: Graphics & Rendering (`ferruginous-render`) [Complete]
-
-- **M10-RENDER: Vello Integration** [x]
-- **M11-RENDER: CTM (Cumulative Transformation Matrix) Engine** [x]
-- **M12-RENDER: Primitive Drawing (Path, Shape, Dash, Clip)** [x]
-
-## Phase 5: High-Precision Typography [Complete]
-
-- **M13-FONT: CIDFont & CMap Resolution** [x]
-- **M14-FONT: Glyph Positioning & Width Synchronization (Skrifa)** [x]
-
-## Phase 6: Document MCP & Hardening (`ferruginous-mcp`)
-
-- **M15-MCP: Protocol Server Implementation** [x]
-- **M16-MCP: Structural Compliance Auditing Tool** [x]
-- **M17-HARD: Architectural Hardening (XRef Stream, Caching, Parser Lookahead)** [x]
-
-## Phase 7: Advanced Content & Transparency [x]
-
-- **M17-CONTENT: Advanced Text Interpreter (Stateful positioning & Showing)** [x]
-- **M18-CONTENT: Image Streams (DCTDecode & multiple filters)** [x]
-- **M19-CONTENT: Form XObjects & Resource Nesting (16-level limit)** [x]
-- [x] Phase 7: Transparency & Hardening
-  - [x] Implement BlendModes and Alpha support (ca, CA, BM)
-  - [x] Enforce Context Propagation Guard (RR-15 Clause 16)
-  - [x] Audit-ready codebase with zero Clippy warnings
-- [x] **Phase 7 Closure (Ritual)**
-  - [x] Codebase Validation & Refactoring (RR-15 Audit Passed)
-  - [x] Rule Refinement & Retrospective ([docs/retrospectives/phase_7.md])
-  - [x] Update Documentation (ROADMAP, README)
-  - [x] GitHub Synchronization (Commit/Push Ready)
-
-## Phase 8: Text & Fonts [Complete]
-
-- [x] M20-FONT: Complete CIDFont and CMap resolution
-- [x] M21-FONT: Standard 14 font fallbacks
-- [x] M22-CONTENT: Advanced text rendering pipeline
-- [x] **Phase 8 Closure (Ritual)**
-  - [x] Codebase Validation & Refactoring (RR-15 Audit Passed)
-  - [x] Rule Refinement & Retrospective ([docs/retrospectives/phase_8.md])
-  - [x] Update Documentation (ROADMAP, README)
-
-## Phase 9: Security & Protection
-
-- **M23-SEC: PDF Encryption (AES-256, Unicode Passwords)** [x]
-- **M24-SEC: Digital Signatures & LTV (PAdES)** [x]
-- [x] **Phase Closure (Ritual)**
-  - [x] Codebase Validation & Refactoring (Data Structure & Data Flow Audit)
-  - [x] Rule Refinement & Retrospective (`REFLECTION_PROTOCOL`)
-  - [x] Update Documentation (ROADMAP, README, DESIGN_SPEC)
-  - [x] GitHub Synchronization (Commit/Push)
-
-## Phase 10: Standards & Compliance [Complete]
-
-- **M25-COMP: PDF/A-4 & PDF/X-6 Conformance** [x]
-- **M26-COMP: Tagged PDF & Accessibility (PDF/UA-2)** [x]
-- **M27-COMP: Associated Files (PDF/A-4f)** [x]
-- [x] **Phase Closure (Ritual)**
-  - [x] Codebase Validation & Refactoring (Data Structure & Data Flow Audit)
-  - [x] Rule Refinement & Retrospective (`REFLECTION_PROTOCOL`)
-  - [x] Update Documentation (ROADMAP, README, DESIGN_SPEC)
-  - [x] GitHub Synchronization (Commit/Push)
-
-## Phase 11: Production & Ecosystem [Complete]
-
-- **M28-SDK: High-Performance CLI Tooling** [x]
-- **M30-SDK: WASM / Web Integration** [x]
-- **M31-SDK: v1.0 Production Readiness & Audit** [x]
-- [x] **Phase Closure (Ritual)**
-  - [x] Codebase Validation & Refactoring (Data Structure & Data Flow Audit)
-  - [x] Rule Refinement & Retrospective (`REFLECTION_PROTOCOL`)
-  - [x] Update Documentation (ROADMAP, README, DESIGN_SPEC)
-  - [x] GitHub Synchronization (Commit/Push)
-
-## Phase 12: Advanced Web Optimization [Complete]
-
-- [x] **M32-LIN: Linearization Dictionary & Object Reordering**
-- [x] **M33-LIN: Multi-pass Serialization Engine**
-- [x] **M34-LIN: Primary Hint Stream Generation (Page Offset & Shared Objects)**
-- [x] **M35-LIN: Upgrader Integration (`--linearize` flag)**
-- [x] **Phase Closure (Ritual)**
-
-## [COMPLETED] Phase 13: Ferruginous Modern Standard Suite (Recovery & Hardening)
-- [x] Integrate Info/Audit CLI targets into `fepdf`.
-- [x] Implement UTF-16BE decoding for broad metadata support.
-- [x] Implement structural tree visualizer (`--structure`).
-- [x] Implement object garbage collection (`--vacuum`) and metadata stripping.
-- [x] **Restored Document engine integrity (Resolved all 23+ compilation errors).**
-- [x] Final end-to-end verification of the auditing engine.
-
-## [COMPLETED] Phase 14: Ferruginous fepdf CLI Transformation
-- [x] **M40: CLI Transformation**: Developed `fepdf` as the official subcommand-based CLI sub-project.
-- [x] **M41: Feature Enrichment**:
-  - [x] Implemented Object Cloning engine with recursive ID remapping in SDK.
-  - [x] Integrated `merge`, `split`, and `rotate` functional handlers.
-- [x] **M44: Scavenger Mode**: Implemented robust object marker scanning in the core engine.
-- [x] **M42: Multi-platform Distribution**: Created `Makefile` for distribution of fepdf binaries across Mac/Win/Linux.
-
-- [x] **Phase 14 Closure (Ritual)**
-  - [x] Codebase Validation & Refactoring (Resolved trait regressions and sample path issues)
-  - [x] Rule Refinement & Retrospective ([docs/retrospectives/phase_14.md])
-  - [x] Update Documentation (ROADMAP, README)
-
-
-## [COMPLETED] Phase 15: CJK Font Hardening
-- [x] **M45: Robust ToUnicode Decoding**: Implemented mandatory stream decoding (De-compression) for mapping dictionaries.
-- [x] **M46: Character Mapping Hardening**: Developed bidirectional padding normalization for subsetted CMap entries.
-- [x] **M47: Legacy Encoding Support**: Integrated `encoding_rs` for robust Shift-JIS/CP932 fallback.
-- [x] **Verified zero-mojibake rendering** of complex Japanese legal documents (e.g., Constitution of Japan).
-
-- [x] **Phase 15 Closure (Ritual)**
-  - [x] Codebase Validation & Refactoring (100% Clippy & Test success)
-  - [x] Rule Refinement & Retrospective ([docs/retrospectives/cjk_mojibake_resolution.md])
-  
-## [COMPLETED] Phase 16: Stream Filter & Security Hardening
-- [x] **M48: Filter Hardening**: Implemented Raw Deflate (RFC 1951) fallback and improved skip logic for non-standard EOL markers.
-- [x] **M49: Advanced Predictors**: Integrated TIFF Predictor 2 (Horizontal Differencing) and variable bit-depth support.
-- [x] **M50: Security Integration**:
-  - [x] Implemented legacy key derivation (Algorithm 3.2, Revision 2/3/4).
-  - [x] Hardened AESV3 (Revision 6) decryption via specialized partial block masking.
-  - [x] Enforced ISO 32000-2 compliance: Bypassed decryption for `ObjStm` and `XRef` streams.
-- [x] **Verified stabilization** of complex administrative and legal Japanese PDF samples (cao_guide.pdf, mext_report.pdf).
-
-- [x] **Phase 16 Closure (Ritual)**
-  - [x] Codebase Validation & Refactoring (Resolved AESV3 salt offset and trailer resolution bugs)
-  - [x] Rule Refinement & Reflection ([.agent/hardening_rules.md], [.agent/reflections.md])
-  - [x] Update Documentation (ROADMAP, README)
-
-## Phase 17: Arlington Predicates & Structural Validation
-- [x] **M51: Predicate Engine**: Implement `nom`-based parser for ISO 32000-2 Arlington Model predicates.
-- [x] **M52: Evaluation Logic**: Develop a deterministic evaluator for complex validation conditions (SinceVersion, Required, etc.).
-
-## [COMPLETED] Phase 19: Vertical Rendering & PDF 2.0 Standardization
-- [x] **M56: Vertical Writing (WMode 1)**: Implemented coordinate transformation logic for descending text advance in CJK vertical layout.
-- [x] **M57: PDF 2.0 Upgrade Engine**: Enhanced the SDK writer to support targeted version upgrades (`save_as_version`) including mandatory metadata injection.
-- [x] **M58: UI Interaction Hardening**: Integrated `Command + ScrollWheel` zoom and smooth panning into the egui-Vello bridge.
-- [x] **Verified vertical flow compliance** with Japanese literary samples (bokutokitan.pdf) converted to ISO 32000-2.
+The "Rebirth" project aims to achieve the world's most robust and ISO-compliant PDF 2.0 toolkit, culminating in the **Ferruginous Flagship GUI Editor**.
 
 ---
-*Roadmap updated: 2026-04-20 (Phase 19 Completed)*
+
+## [COMPLETED] Phase 1 - 20: Foundation & Unified Architecture
+- [x] **M1 - M31**: Core engine development, Vello rendering, CJK font hardening, and security integration.
+- [x] **M60-M62: Ferruginous Unified Architecture (FUA)**: Consolidated `core` engine and established the SDK/App/CLI hierarchy.
+
+## [COMPLETED] Phase 21: The Refinery Evolution
+**Goal**: Establish position as a "Strict PDF 2.0 Translator" and build the highest purity data model.
+
+- [x] **M63: Ingestion Gateway**: Adopt `lopdf` as the physical parsing gateway and implement high-speed ownership transfer to `PdfArena`. [COMPLETED]
+- [x] **M64: Concurrent Refinery Pipeline**: Parallelized text/color/metadata normalization via `rayon`. [COMPLETED]
+- [x] **M65: Typed Arena & Handle System**: Maximize memory efficiency and safety. [COMPLETED]
+
+## [COMPLETED] Phase 22: fepdf & UA-2 Bridge (CLI Hardening)
+**Goal**: Transform `fepdf` into a world-class diagnostic and accessibility tool.
+
+- [x] **M66: UA-2 Structure Engine**:
+    - [x] **Structure Tree**: Implement full traversal and validation of the logical structure tree (Clause 14.7). [COMPLETED]
+    - [x] **Matterhorn Protocol**: Detailed auditor based on the failure conditions for UA-2. [COMPLETED]
+    - [x] **Alt-Text Audit**: Diagnostic logic for non-textual content descriptions. [COMPLETED]
+- [x] **M67: fepdf Readiness (M67 Prep)**:
+    - [x] **Core Restoration**: Stabilized RefCell-based Arena and modernized SDK interpreter. [COMPLETED]
+    - [x] **Font & CMap Engine**: Functional Unicode mapping for structural auditing. [COMPLETED]
+    - [x] **Build Integrity**: 100% clean check across all crates. [COMPLETED]
+
+## [IN PROGRESS] Phase 23: fepdf Field Deployment & Rendering Hardening
+**Goal**: Finalize command-line utilities and achieve ISO-compliant CJK rendering stability.
+
+- [x] **M67: Rendering Engine Hardening**:
+    - [x] **Coordinate Mapping**: Implemented robust non-zero MediaBox origin handling and coordinate space inversion. [COMPLETED]
+    - [x] **CMap Engine v2**: Smart byte-length detection and support for complex `beginbfrange` mappings. [COMPLETED]
+    - [x] **Text Matrix Advancement**: Implemented strict Tm/TLM synchronization for multi-line layout. [COMPLETED]
+- [x] **M67d: Unicode-Native Arena & Color Hardening**:
+    - [x] **Restructuring Ingest**: Implement 2-pass "能動的精製" (Active Refinement) to normalize content streams to UTF-8. [COMPLETED]
+    - [x] **Unified Font Mapping**: Construct authoritative Unicode-to-GID maps during ingest. [COMPLETED]
+    - [x] **Strict ICC Profiling**: Implement full `ICCBased` color space support using `moxcms`. [COMPLETED]
+    - [x] **Operator Coverage**: Complete implementation of `g`, `G`, `k`, `K`, `Do` (Form), and Marked Content. [COMPLETED]
+- [ ] **M67e: fepdf Release Features (Rich Reporting & Refinery Controls)**:
+    - [ ] **Ingestion Options**: Expose `active_refinement`, `metadata_sublimation`, and `color_policy` controls.
+    - [ ] **Rich Reporting**: Exportable JSON/Markdown compliance reports, including **Embedded Font Audit**.
+    - [ ] **Metadata Recovery**: Implement full Document Info to XMP sublimation.
+- [x] **M67f: Antigravity Standard Ruleset**: Reorganized all project protocols and agent rules into the standardized `.antigravity/` tiered structure and unified project language to English. [COMPLETED]
+
+## Phase 24: Ferruginous Flagship GUI (Application)
+**Goal**: Provide the world's best PDF 2.0 editing experience using the hardened UA-2 library.
+
+- [ ] **M68: High-Fidelity Workspace**: Vello-accelerated rendering and asynchronous status visualization.
+- [ ] **M69: Semantic Structure Editor**: Direct manipulation of the logical structure tree (Tags).
+- [ ] **M70: The Forge (Export & Security)**: PAdES-compliant signatures and optimized PDF 2.0 save engine.
+
+---
+
+## 5. Progress History (Highlights)
+
+### [x] Phase 23 (First Half): Rendering Hardening
+- [x] **M67**: Achieved stable rendering of complex Japanese PDFs (nihonkokukenpou.pdf, bokutokitan.pdf) by hardening the coordinate mapping and CMap parsing logic.
+
+### [x] Phase 22: fepdf & UA-2 Bridge (2.2)
+- [x] **M66/M67**: Restored core engine, implemented iterative `StructureVisitor`, and unified `MatterhornAuditor`. Achieved 100% build health with new Arena handle system.
+
+### [x] Phase 21: The Refinery Evolution (Refinery 2.1)
+- [x] **M64: Concurrent Pipeline**: Integrated `rayon`, `chardetng`, and `moxcms` for parallel high-purity ingestion.
+- [x] **M63/M65: Ingestion & Handle System**: Transitioned to `lopdf` physical parsing and handle-based memory model.
+
+... (Previous Phases 1 - 20 summarized)
+
+---
+*Roadmap updated: 2026-04-24 (Phase 23 Rule Reorganization Completed | Rendering Hardening Verified)*

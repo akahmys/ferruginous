@@ -1,6 +1,5 @@
 //! Visual audit tool for PDF rendering.
 use bytes::Bytes;
-use ferruginous_render::headless;
 use ferruginous_sdk::PdfDocument;
 use std::path::Path;
 
@@ -19,22 +18,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let page_index = 0;
     println!("Rendering Page {page_index} to {output_path}");
 
-    let mut backend = ferruginous_render::VelloBackend::new();
-    doc.render_page(page_index, &mut backend)?;
-    let scene = backend.scene();
-
-    // High-resolution render (200 DPI approx)
-    let width = 1654;
-    let height = 2339;
-
-    headless::render_to_image(
-        scene,
-        width,
-        height,
-        Path::new(output_path),
-        image::ImageFormat::Png,
-    )
-    .await?;
+    // Use the high-level SDK method which handles the interpreter and backend
+    doc.render_page_to_file(page_index, Path::new(output_path))?;
 
     println!("Render complete. Please check {output_path}");
     Ok(())

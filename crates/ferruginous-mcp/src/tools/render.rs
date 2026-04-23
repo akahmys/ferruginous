@@ -17,12 +17,12 @@ pub struct RenderArgs {
 
 /// Implementation of the page rendering logic for the MCP tool.
 pub async fn render_page_impl(args: RenderArgs) -> Result<String, String> {
-    render_page_internal(args).await.map_err(|e| e.to_string())
+    render_page_internal(args).map_err(|e| e.to_string())
 }
 
-async fn render_page_internal(args: RenderArgs) -> McpResult<String> {
+fn render_page_internal(args: RenderArgs) -> McpResult<String> {
     let data = fs::read(&args.path).map_err(McpError::from)?;
-    let doc = PdfDocument::open(Bytes::from(data)).map_err(|e| McpError::Pdf(e.to_string()))?;
+    let doc = PdfDocument::open(Bytes::from(data)).map_err(|e: ferruginous_sdk::PdfError| McpError::Pdf(e.to_string()))?;
 
     let output_dir = PathBuf::from("artifacts/screenshots");
     if !output_dir.exists() {
@@ -37,8 +37,7 @@ async fn render_page_internal(args: RenderArgs) -> McpResult<String> {
     let output_path = output_dir.join(filename);
 
     doc.render_page_to_file(args.page_number, &output_path)
-        .await
-        .map_err(|e| McpError::Pdf(e.to_string()))?;
+        .map_err(|e: ferruginous_sdk::PdfError| McpError::Pdf(e.to_string()))?;
 
     Ok(output_path.to_string_lossy().to_string())
 }
