@@ -50,3 +50,13 @@ This document defines the official naming conventions for the Ferruginous projec
 - **Mechanism**: All cross-document object transfers (Merge, Split, Extract) MUST utilize the `ObjectCloner` to ensure unique ID re-mapping.
 - **Pattern**: Manual assignment of `Reference` IDs outside of the `Document::next_object_id()` and `ObjectCloner` flow is strictly prohibited to prevent structural corruption.
 - **API Framing**: CLI commands must be thin wrappers (Handlers) around high-level SDK methods exposed in `PdfDocument`.
+
+## 7. CLI Option Standardization
+- **Uniformity Principle**: All subcommands in `fepdf` that perform writing or transformation MUST use the standardized `OptimizationArgs` and `IngestionArgs` structures.
+- **Reserved Flag Names**:
+    - `--compress`: Stream compression (FlateDecode).
+    - `--vacuum`: Removal of unreachable objects.
+    - `--strip`: Removal of descriptive metadata.
+    - `--password`: Encryption setting.
+    - `--no-refinement`: Disabling of active 2-pass refinement.
+- **Consistency**: Argument names in CLI must map 1:1 to `SaveOptions` or `IngestionOptions` fields in the SDK.

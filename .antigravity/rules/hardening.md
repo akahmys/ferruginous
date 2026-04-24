@@ -84,3 +84,8 @@
 - **Rule**: Interpretation of document data MUST enforce type-level provision of a `Resolver` and `ResourceStack`.
 - **Purpose**: Eliminate runtime "Missing Resolver" or "Missing Resource" errors.
 - **Compliance Criterion**: Public high-level interpreters MUST NOT have default constructors that omit these dependencies.
+
+## 17. Binary Integrity Guard
+- **Rule**: Non-textual streams (Fonts, Images, ICCProfiles) MUST be strictly excluded from text-based refinement pipelines.
+- **Purpose**: Prevent data corruption caused by misapplying UTF-8 normalization or text substitutions to binary data.
+- **Compliance Criterion**: The refinery engine must maintain an explicit "Refinement Denylist" based on PDF object types (e.g., `/FontFile`, `/XObject`).

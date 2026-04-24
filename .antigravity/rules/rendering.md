@@ -20,5 +20,7 @@ Design and implementation conventions for the Ferruginous rendering engine (Core
 - **Isolation**: Each `FontResource` must have its own independent mapping table. "Rescue" logic (using common CMaps) is permitted only for clearly identified CJK fonts and must not have side effects (cache pollution).
 - **Strict Parsing**: CMap parsing must accurately handle both literal strings (UTF-16BE) and hex notations.
 
-## 5. Diagnostic Traceability
-- **Instrumentation**: Implement trace logs for scaling, matrix transformations, and advancement calculations that can be enabled via environment variables. Do not leave ad-hoc `eprintln!` calls in the code.
+## 6. High-Fidelity CJK Decoding
+- **Boundary Precision**: Multi-byte character decoding (CMap) MUST accurately detect byte-length boundaries (1-byte vs 2-byte) based on the specific CMap's range definitions.
+- **Fail-Safe Mapping**: If a character mapping is missing, the engine MUST fallback to a diagnostic placeholder (e.g., `.notdef`) and log the incident, rather than silently guessing or shifting indices.
+- **WMode Fidelity**: Vertical writing (WMode=1) metrics MUST be applied strictly according to the CIDFont's W/W2 dictionaries.
