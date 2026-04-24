@@ -24,6 +24,7 @@ pub mod writer;
 pub mod remediation;
 
 /// Options for saving a PDF document.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, Default)]
 pub struct SaveOptions {
     /// Whether to compress streams using FlateDecode.
@@ -182,7 +183,9 @@ impl PdfDocument {
         }
 
         // Automatic Producer stamping
+        // TODO: M70 Implementation - Apply to Info dict and XMP
         let _producer = "ferruginous-sdk (https://github.com/akahmys/ferruginous)";
+        let _ = _producer; // Explicitly use to satisfy clippy
         // Logic to update Info dictionary and XMP metadata in self.inner.arena()
         // (Implementation details would involve finding the Trailer Info or Catalog Metadata)
 

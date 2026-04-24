@@ -453,6 +453,7 @@ fn handle_inspect(input: PathBuf, audit: bool, structure: bool, format: String, 
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_upgrade(
     input: PathBuf,
     output: PathBuf,
