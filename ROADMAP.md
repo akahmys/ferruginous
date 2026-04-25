@@ -50,7 +50,7 @@ The "Rebirth" project aims to achieve the world's most robust and ISO-compliant 
 
 - [ ] **M68: High-Fidelity Workspace**: Vello-accelerated rendering and asynchronous status visualization.
 - [ ] **M69: Semantic Structure Editor**: Direct manipulation of the logical structure tree (Tags).
-- [ ] **M70: The Forge (Export & Security)**: PAdES-compliant signatures, **Full Linearization (Fast Web View)** with Hint Table generation, and optimized PDF 2.0 save engine.
+- [x] **M70: The Forge (Export & Security)**: PAdES-compliant signatures, **Full Linearization (Fast Web View)** with Hint Table generation, and optimized PDF 2.0 save engine. [COMPLETED]
 
 ---
 

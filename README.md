@@ -92,19 +92,21 @@ The rendering pipeline is designed for resolution-independent, low-latency visua
 ### Key Subcommands
 - **`inspect`**: Audit compliance (UA-2) and visualize document structure.
 - **`upgrade`**: Modernize legacy PDFs to ISO 32000-2 (PDF 2.0).
-- **`merge` / `split`**: High-fidelity document manipulation.
-- **`repair`**: Salvage corrupted PDF files.
+- **`merge` / `split`**: High-fidelity document manipulation using iterative `ObjectCloner`.
+- **`sign`**: Apply PAdES-compliant digital signatures with robust `ByteRange` patching.
+- **`repair`**: Salvage corrupted PDF files using the hardened parser.
 - **`credits`**: Display open-source attributions and licenses.
 
 ### Unified Optimization & Ingestion Flags
 All processing commands share a consistent set of professional-grade options:
 
 #### Optimization (Writing)
-- `--compress`: Enable **FlateDecode** stream compression for minimal file size.
-- `--vacuum`: Remove all unreachable objects (structural garbage collection).
-- `--strip`: Remove descriptive metadata for anonymity and size reduction.
-- `--obj-stm`: Use **Object Streams** for high-density compression (PDF 1.5+).
-- `--password <PWD>`: Apply document open encryption.
+- **`--compress`**: Enable **FlateDecode** stream compression for minimal file size.
+- **`--vacuum`**: Remove all unreachable objects (structural garbage collection).
+- **`--linearize`**: Enable **Fast Web View** (ISO 32000-2 Annex F) with Hint Table generation.
+- **`--strip`**: Remove descriptive metadata for anonymity and size reduction.
+- **`--obj-stm`**: Use **Object Streams** for high-density compression (PDF 1.5+).
+- **`--password <PWD>`**: Apply document open encryption.
 
 #### Ingestion (Reading)
 - `--no-refinement`: Skip the active 2-pass UTF-8 normalization.

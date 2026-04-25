@@ -426,7 +426,8 @@ impl<'a, W: Write> PdfWriter<'a, W> {
         // 2. 2 0 obj (Catalog)
         self.xref.insert(2, self.current_offset());
         self.write_all(b"2 0 obj\r\n")?;
-        self.write_object(&self.arena.get_object(root_handle).unwrap())?;
+        let root_obj = self.arena.get_object(root_handle).ok_or_else(|| PdfError::Other("Root missing".into()))?;
+        self.write_object(&root_obj)?;
         self.write_all(b"\r\nendobj\r\n")?;
 
         // 3. 3 0 obj (Hint Stream Placeholder)
@@ -443,7 +444,8 @@ impl<'a, W: Write> PdfWriter<'a, W> {
         if !page_handles.is_empty() {
             self.xref.insert(4, page1_start);
             self.write_all(b"4 0 obj\r\n")?;
-            self.write_object(&self.arena.get_object(page_handles[0]).unwrap())?;
+            let p1_obj = self.arena.get_object(page_handles[0]).ok_or_else(|| PdfError::Other("Page 1 missing".into()))?;
+            self.write_object(&p1_obj)?;
             self.write_all(b"\r\nendobj\r\n")?;
         }
 
@@ -452,7 +454,8 @@ impl<'a, W: Write> PdfWriter<'a, W> {
             let id = self.id_map[&h];
             self.xref.insert(id, self.current_offset());
             self.write_all(format!("{id} 0 obj\r\n").as_bytes())?;
-            self.write_object(&self.arena.get_object(h).unwrap())?;
+            let obj = self.arena.get_object(h).ok_or_else(|| PdfError::Other("Object missing".into()))?;
+            self.write_object(&obj)?;
             self.write_all(b"\r\nendobj\r\n")?;
         }
         let page1_end = *self.xref.get(&(primary_count - 1)).unwrap_or(&self.current_offset());
@@ -582,97 +585,110 @@ impl<'a, W: Write> PdfWriter<'a, W> {
 
     fn trace_reachable(
         &self,
-        obj: Object,
+        initial_obj: Object,
         reachable: &mut std::collections::HashSet<Handle<Object>>,
     ) {
-        match obj {
-            Object::Reference(h) => {
-                if reachable.insert(h)
-                    && let Some(inner) = self.arena.get_object(h) {
-                    self.trace_reachable(inner, reachable);
-                }
-            }
-            Object::Array(h) => {
-                if let Some(a) = self.arena.get_array(h) {
-                    for item in a {
-                        self.trace_reachable(item.clone(), reachable);
+        let mut stack = vec![initial_obj];
+        while let Some(obj) = stack.pop() {
+            match obj {
+                Object::Reference(h) => {
+                    if reachable.insert(h) {
+                        if let Some(inner) = self.arena.get_object(h) {
+                            stack.push(inner.clone());
+                        }
                     }
                 }
-            }
-            Object::Dictionary(h) | Object::Stream(h, _) => {
-                if let Some(d) = self.arena.get_dict(h) {
-                    for v in d.values() {
-                        self.trace_reachable(v.clone(), reachable);
+                Object::Array(h) => {
+                    if let Some(a) = self.arena.get_array(h) {
+                        for item in a {
+                            stack.push(item.clone());
+                        }
                     }
                 }
+                Object::Dictionary(h) | Object::Stream(h, _) => {
+                    if let Some(d) = self.arena.get_dict(h) {
+                        for v in d.values() {
+                            stack.push(v.clone());
+                        }
+                    }
+                }
+                _ => {}
             }
-            _ => {}
         }
     }
 
     fn collect_pages_recursive(
         &self,
-        pages_h: Handle<BTreeMap<Handle<PdfName>, Object>>,
-        out: &mut Vec<Handle<Object>>,
+        root_pages_dh: Handle<BTreeMap<Handle<PdfName>, Object>>,
+        pages: &mut Vec<Handle<Object>>,
     ) -> PdfResult<()> {
-        let dict =
-            self.arena.get_dict(pages_h).ok_or_else(|| PdfError::Other("Invalid Pages".into()))?;
-        let kids_k = self.arena.name("Kids");
+        let mut stack = vec![root_pages_dh];
         let type_key = self.arena.name("Type");
-        let page_n = self.arena.name("Page");
         let pages_n = self.arena.name("Pages");
+        let page_n = self.arena.name("Page");
+        let kids_k = self.arena.name("Kids");
 
-        if let Some(Object::Array(ah)) = dict.get(&kids_k)
-            && let Some(kids) = self.arena.get_array(*ah) {
-            for kid in kids {
-                if let Object::Reference(h) = kid
-                    && let Some(Object::Dictionary(dh)) = self.arena.get_object(h) {
-                    let kdict = self.arena.get_dict(dh).unwrap();
-                    if kdict.get(&type_key).and_then(|o| o.as_name()) == Some(page_n) {
-                        out.push(h);
-                    } else if kdict.get(&type_key).and_then(|o| o.as_name())
-                        == Some(pages_n)
-                    {
-                        self.collect_pages_recursive(dh, out)?;
+        while let Some(dh) = stack.pop() {
+            let dict = self.arena.get_dict(dh).ok_or_else(|| PdfError::Other("Pages dict missing".into()))?;
+            let kids_obj = dict.get(&kids_k).ok_or_else(|| PdfError::Other("Kids missing".into()))?;
+            let kids_handle = kids_obj.as_array().ok_or_else(|| PdfError::Other("Kids not an array".into()))?;
+            let kids = self.arena.get_array(kids_handle).ok_or_else(|| PdfError::Other("Kids array missing".into()))?;
+
+            for kid_obj in kids.iter().rev() {
+                if let Object::Reference(h) = kid_obj {
+                    if let Some(Object::Dictionary(kdh)) = self.arena.get_object(*h) {
+                        let kdict = self.arena.get_dict(kdh).ok_or_else(|| PdfError::Other("Kid dict missing".into()))?;
+                        let ktype = kdict.get(&type_key).and_then(|o| o.as_name());
+                        
+                        if ktype == Some(pages_n) {
+                            stack.push(kdh);
+                        } else if ktype == Some(page_n) {
+                            pages.push(*h);
+                        }
                     }
                 }
             }
         }
+        // Since we pushed in reverse and use pop, the order should be correct.
+        // If not, we might need to reverse the whole list if we pushed in normal order.
         Ok(())
     }
 
     fn trace_page_resources(
         &self,
-        h: Handle<Object>,
+        initial_h: Handle<Object>,
         visited: &mut std::collections::HashSet<Handle<Object>>,
     ) {
-        if visited.contains(&h) {
-            return;
-        }
-        visited.insert(h);
-        if let Some(Object::Dictionary(dh)) = self.arena.get_object(h)
-            && let Some(dict) = self.arena.get_dict(dh) {
-            for (k, v) in dict {
-                let name = self.arena.get_name_str(k).unwrap_or_default();
-                if name == "Parent" || name == "Prev" || name == "Next" {
-                    continue;
+        let mut stack = vec![Object::Reference(initial_h)];
+        while let Some(obj) = stack.pop() {
+            match obj {
+                Object::Reference(h) => {
+                    if visited.insert(h) {
+                        if let Some(inner) = self.arena.get_object(h) {
+                            stack.push(inner.clone());
+                        }
+                    }
                 }
-                self.trace_recursive_internal(v.clone(), visited);
-            }
-        }
-    }
-
-    fn trace_recursive_internal(
-        &self,
-        obj: Object,
-        visited: &mut std::collections::HashSet<Handle<Object>>,
-    ) {
-        if let Object::Reference(h) = obj {
-            self.trace_page_resources(h, visited);
-        } else if let Object::Array(ah) = obj
-            && let Some(a) = self.arena.get_array(ah) {
-            for item in a {
-                self.trace_recursive_internal(item.clone(), visited);
+                Object::Array(ah) => {
+                    if let Some(a) = self.arena.get_array(ah) {
+                        for item in a {
+                            stack.push(item.clone());
+                        }
+                    }
+                }
+                Object::Dictionary(dh) | Object::Stream(dh, _) => {
+                    if let Some(dict) = self.arena.get_dict(dh) {
+                        for (k, v) in dict {
+                            let name = self.arena.get_name_str(k).unwrap_or_default();
+                            // Skip tree traversal keys to avoid cycles or unnecessary depth
+                            if name == "Parent" || name == "Prev" || name == "Next" {
+                                continue;
+                            }
+                            stack.push(v.clone());
+                        }
+                    }
+                }
+                _ => {}
             }
         }
     }

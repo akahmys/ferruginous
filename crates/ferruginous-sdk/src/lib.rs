@@ -491,7 +491,7 @@ impl PdfDocument {
         // 3. Add to Page
         let page = self.inner.get_page(sign_options.page_index)?;
         let page_dict_handle = page.dict_handle();
-        let mut page_dict = arena.get_dict(page_dict_handle).unwrap();
+        let mut page_dict = arena.get_dict(page_dict_handle).ok_or_else(|| PdfError::Other("Page dictionary missing".into()))?;
 
         let annots_key = arena.name("Annots");
         let mut annots = if let Some(Object::Array(ah)) = page_dict.get(&annots_key) {
@@ -506,7 +506,7 @@ impl PdfDocument {
         // 4. Add to Catalog AcroForm
         let root_handle = *self.inner.root_handle();
         if let Some(Object::Dictionary(rdh)) = arena.get_object(root_handle) {
-            let mut root_dict = arena.get_dict(rdh).unwrap();
+            let mut root_dict = arena.get_dict(rdh).ok_or_else(|| PdfError::Other("AcroForm root missing".into()))?;
 
             let mut acro_form =
                 if let Some(Object::Dictionary(afh)) = root_dict.get(&arena.name("AcroForm")) {
