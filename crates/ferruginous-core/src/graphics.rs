@@ -1,7 +1,7 @@
 //! PDF Graphics State Constants & Types (ISO 32000-2:2020 Clause 8)
 
-use serde::{Serialize, Deserialize};
 use kurbo::Affine;
+use serde::{Deserialize, Serialize};
 
 /// PDF Color representation.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]

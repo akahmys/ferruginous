@@ -1,6 +1,6 @@
 #![allow(missing_docs)]
-use ferruginous_sdk::PdfDocument;
 use bytes::Bytes;
+use ferruginous_sdk::PdfDocument;
 use std::path::Path;
 
 fn main() {
@@ -11,17 +11,17 @@ fn main() {
     }
     let data = std::fs::read(path).unwrap();
     let doc = PdfDocument::open(Bytes::from(data)).unwrap();
-    
+
     // Page 3 is index 2
     let page_count = doc.page_count().unwrap();
     if page_count < 3 {
         eprintln!("Document only has {page_count} pages");
         return;
     }
-    
+
     let summary = doc.get_summary().unwrap();
     println!("Document Version: {}", summary.version);
-    
+
     // Get contents via resolve_attribute
     let page = doc.inner().get_page(2).unwrap();
     if let Some(contents_obj) = page.resolve_attribute("Contents") {

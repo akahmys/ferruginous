@@ -4,18 +4,18 @@
 //! where objects are refined using `rayon` before being sequentially
 //! integrated into the `PdfArena`.
 
+use crate::arena::{PdfArena, RemappingTable};
 use crate::handle::Handle;
 use crate::object::{Object, PdfName};
-use crate::arena::{PdfArena, RemappingTable};
 
 use bytes::Bytes;
-use std::collections::BTreeMap;
 use rayon::prelude::*;
+use std::collections::BTreeMap;
 
-pub mod text;
 pub mod color;
-pub mod metadata;
 pub mod font;
+pub mod metadata;
+pub mod text;
 
 use crate::font::FontResource;
 use std::sync::Arc;
@@ -56,20 +56,16 @@ impl RefinedObject {
             lopdf::Object::Dictionary(dict) => {
                 let mut refined_dict = BTreeMap::new();
                 for (k, v) in dict {
-                    refined_dict.insert(
-                        PdfName(Bytes::copy_from_slice(k)),
-                        Self::from_lopdf(v, table)
-                    );
+                    refined_dict
+                        .insert(PdfName(Bytes::copy_from_slice(k)), Self::from_lopdf(v, table));
                 }
                 RefinedObject::Dictionary(refined_dict)
             }
             lopdf::Object::Stream(stream) => {
                 let mut refined_dict = BTreeMap::new();
                 for (k, v) in &stream.dict {
-                    refined_dict.insert(
-                        PdfName(Bytes::copy_from_slice(k)),
-                        Self::from_lopdf(v, table)
-                    );
+                    refined_dict
+                        .insert(PdfName(Bytes::copy_from_slice(k)), Self::from_lopdf(v, table));
                 }
                 RefinedObject::Stream(refined_dict, Bytes::copy_from_slice(&stream.content))
             }
@@ -89,7 +85,8 @@ impl ParallelRefinery {
         table: &RemappingTable,
         fonts: &BTreeMap<String, Arc<FontResource>>,
     ) -> Vec<((u32, u16), RefinedObject)> {
-        objects.par_iter()
+        objects
+            .par_iter()
             .map(|(&id, obj)| {
                 let refined = Self::refine_recursive_depth(obj, table, fonts, 0);
                 (id, refined)
@@ -120,9 +117,7 @@ impl ParallelRefinery {
             lopdf::Object::Boolean(b) => RefinedObject::Boolean(*b),
             lopdf::Object::Integer(i) => RefinedObject::Integer(*i),
             lopdf::Object::Real(f) => RefinedObject::Real(*f as f64),
-            lopdf::Object::String(s, _) => {
-                RefinedObject::String(text::refine_string(s))
-            }
+            lopdf::Object::String(s, _) => RefinedObject::String(text::refine_string(s)),
             lopdf::Object::Name(n) => {
                 let name = PdfName(Bytes::copy_from_slice(n));
                 if let Some(refined) = color::normalize_colorspace(&name) {
@@ -136,7 +131,10 @@ impl ParallelRefinery {
                 RefinedObject::Reference(handle)
             }
             lopdf::Object::Array(arr) => {
-                let refined_arr = arr.iter().map(|item| Self::refine_recursive_depth(item, table, fonts, depth + 1)).collect();
+                let refined_arr = arr
+                    .iter()
+                    .map(|item| Self::refine_recursive_depth(item, table, fonts, depth + 1))
+                    .collect();
                 RefinedObject::Array(refined_arr)
             }
             lopdf::Object::Dictionary(dict) => {
@@ -144,18 +142,19 @@ impl ParallelRefinery {
                 for (k, v) in dict {
                     refined_dict.insert(
                         PdfName(Bytes::copy_from_slice(k)),
-                        Self::refine_recursive_depth(v, table, fonts, depth + 1)
+                        Self::refine_recursive_depth(v, table, fonts, depth + 1),
                     );
                 }
-                
+
                 // Apply Font normalization if it's a font dictionary
                 let type_key = PdfName(Bytes::from_static(b"Type"));
                 let font_name = PdfName(Bytes::from_static(b"Font"));
                 if let Some(RefinedObject::Name(t)) = refined_dict.get(&type_key)
-                    && t == &font_name {
-                        return font::normalize_font(refined_dict);
-                    }
-                
+                    && t == &font_name
+                {
+                    return font::normalize_font(refined_dict);
+                }
+
                 RefinedObject::Dictionary(refined_dict)
             }
             lopdf::Object::Stream(s) => {
@@ -163,10 +162,10 @@ impl ParallelRefinery {
                 for (k, v) in &s.dict {
                     refined_dict.insert(
                         PdfName(Bytes::copy_from_slice(k)),
-                        Self::refine_recursive_depth(v, table, fonts, depth + 1)
+                        Self::refine_recursive_depth(v, table, fonts, depth + 1),
                     );
                 }
-                
+
                 // Active Refinement: Restructure Content Stream if it's likely a Page or XObject content.
                 // Hardening: Skip if it contains font-specific (Length1/2/3) or image-specific keys.
                 let length_key = PdfName::new("Length");
@@ -174,15 +173,15 @@ impl ParallelRefinery {
                 let l1 = PdfName::new("Length1");
                 let l2 = PdfName::new("Length2");
 
-                let is_likely_content = refined_dict.contains_key(&length_key) 
+                let is_likely_content = refined_dict.contains_key(&length_key)
                     && !refined_dict.contains_key(&subtype_key)
                     && !refined_dict.contains_key(&l1)
                     && !refined_dict.contains_key(&l2);
 
                 let content = if is_likely_content {
-                   text::restructure_content_stream(&s.content, fonts)
+                    text::restructure_content_stream(&s.content, fonts)
                 } else {
-                   Bytes::copy_from_slice(&s.content)
+                    Bytes::copy_from_slice(&s.content)
                 };
 
                 RefinedObject::Stream(refined_dict, content)

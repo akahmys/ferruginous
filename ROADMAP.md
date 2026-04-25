@@ -39,10 +39,10 @@ The "Rebirth" project aims to achieve the world's most robust and ISO-compliant 
     - [x] **Unified Font Mapping**: Construct authoritative Unicode-to-GID maps during ingest. [COMPLETED]
     - [x] **Strict ICC Profiling**: Implement full `ICCBased` color space support using `moxcms`. [COMPLETED]
     - [x] **Operator Coverage**: Complete implementation of `g`, `G`, `k`, `K`, `Do` (Form), and Marked Content. [COMPLETED]
-- [ ] **M67e: fepdf Release Features (Rich Reporting & Refinery Controls)**:
-    - [ ] **Ingestion Options**: Expose `active_refinement`, `metadata_sublimation`, and `color_policy` controls.
-    - [ ] **Rich Reporting**: Exportable JSON/Markdown compliance reports, including **Embedded Font Audit**.
-    - [ ] **Metadata Recovery**: Implement full Document Info to XMP sublimation.
+- [x] **M67e: fepdf Release Features (Rich Reporting & Refinery Controls)**:
+    - [x] **Ingestion Options**: Expose `active_refinement`, `metadata_sublimation`, and `color_policy` controls. [COMPLETED]
+    - [x] **Rich Reporting**: Exportable JSON/Markdown compliance reports, including **Embedded Font Audit**. [COMPLETED]
+    - [x] **Metadata Recovery**: Implement full Document Info to XMP sublimation. [COMPLETED]
 - [x] **M67f: Antigravity Standard Ruleset**: Reorganized all project protocols and agent rules into the standardized `.antigravity/` tiered structure and unified project language to English. [COMPLETED]
 
 ## Phase 24: Ferruginous Flagship GUI (Application)
@@ -50,14 +50,14 @@ The "Rebirth" project aims to achieve the world's most robust and ISO-compliant 
 
 - [ ] **M68: High-Fidelity Workspace**: Vello-accelerated rendering and asynchronous status visualization.
 - [ ] **M69: Semantic Structure Editor**: Direct manipulation of the logical structure tree (Tags).
-- [ ] **M70: The Forge (Export & Security)**: PAdES-compliant signatures and optimized PDF 2.0 save engine.
+- [ ] **M70: The Forge (Export & Security)**: PAdES-compliant signatures, **Full Linearization (Fast Web View)** with Hint Table generation, and optimized PDF 2.0 save engine.
 
 ---
 
 ## 5. Progress History (Highlights)
 
 ### [x] Phase 23 (First Half): Rendering Hardening
-- [x] **M67**: Achieved stable rendering of complex Japanese PDFs (nihonkokukenpou.pdf, bokutokitan.pdf) by hardening the coordinate mapping and CMap parsing logic.
+- [x] **M67**: Achieved stable rendering of complex Japanese PDFs. Implemented **Advanced Metadata Sublimation** (Info <-> XMP), **Advanced Vacuum** (Contiguous ID Remapping), and **Primary Linearization** (Object Reordering) in the export engine.
 
 ### [x] Phase 22: fepdf & UA-2 Bridge (2.2)
 - [x] **M66/M67**: Restored core engine, implemented iterative `StructureVisitor`, and unified `MatterhornAuditor`. Achieved 100% build health with new Arena handle system.
@@ -69,4 +69,4 @@ The "Rebirth" project aims to achieve the world's most robust and ISO-compliant 
 ... (Previous Phases 1 - 20 summarized)
 
 ---
-*Roadmap updated: 2026-04-24 (Phase 23 Rule Reorganization Completed | Rendering Hardening Verified)*
+*Roadmap updated: 2026-04-25 (M67 Advanced Metadata & Optimization Hardening Completed)*

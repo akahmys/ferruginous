@@ -2,11 +2,11 @@
 
 use crate::object::PdfName;
 use crate::refine::RefinedObject;
-use std::collections::BTreeMap;
 use bytes::Bytes;
+use std::collections::BTreeMap;
 
 /// Normalizes a font dictionary to a PDF 2.0 compliant state.
-/// 
+///
 /// This involves:
 /// 1. Standardizing /Encoding (ensuring Identity-H for Type0 if appropriate)
 /// 2. Synthesizing or cleaning /ToUnicode maps for CJK fonts.
@@ -17,7 +17,10 @@ pub fn normalize_font(mut dict: BTreeMap<PdfName, RefinedObject>) -> RefinedObje
 
     // Only process if it's actually a Font
     if let Some(RefinedObject::Name(t)) = dict.get(&type_key)
-        && t.as_str() != "Font" { return RefinedObject::Dictionary(dict); }
+        && t.as_str() != "Font"
+    {
+        return RefinedObject::Dictionary(dict);
+    }
 
     let subtype_str = dict.get(&subtype_key).and_then(|o| match o {
         RefinedObject::Name(n) => Some(n.as_str()),

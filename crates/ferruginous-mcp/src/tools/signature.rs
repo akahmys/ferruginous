@@ -25,5 +25,6 @@ pub struct SignatureReport {
 /// Implementation of the verify_signatures tool.
 pub async fn verify_signatures_impl(_args: VerifySignaturesArgs) -> Result<String, String> {
     // STUB: Signature verification engine is currently undergoing migration to the new Arena model.
-    Ok("Digital signature verification is temporarily disabled during core engine modernization.".to_string())
+    Ok("Digital signature verification is temporarily disabled during core engine modernization."
+        .to_string())
 }

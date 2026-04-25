@@ -1,7 +1,7 @@
 //! ISO 32000-2:2020 Clause 7.2 - Lexical Conventions
 
-use bytes::Bytes;
 use crate::PdfResult;
+use bytes::Bytes;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
@@ -58,10 +58,22 @@ impl Lexer {
                     Ok(Token::Keyword(">".to_string()))
                 }
             }
-            b'[' => { self.pos += 1; Ok(Token::LeftArray) }
-            b']' => { self.pos += 1; Ok(Token::RightArray) }
-            b'{' => { self.pos += 1; Ok(Token::Keyword("{".to_string())) }
-            b'}' => { self.pos += 1; Ok(Token::Keyword("}".to_string())) }
+            b'[' => {
+                self.pos += 1;
+                Ok(Token::LeftArray)
+            }
+            b']' => {
+                self.pos += 1;
+                Ok(Token::RightArray)
+            }
+            b'{' => {
+                self.pos += 1;
+                Ok(Token::Keyword("{".to_string()))
+            }
+            b'}' => {
+                self.pos += 1;
+                Ok(Token::Keyword("}".to_string()))
+            }
             b'0'..=b'9' | b'+' | b'-' | b'.' => self.lex_number_or_keyword(),
             _ => self.lex_keyword_or_other(),
         }
@@ -86,7 +98,10 @@ impl Lexer {
     fn lex_name(&mut self) -> PdfResult<Token> {
         self.pos += 1; // skip '/'
         let start = self.pos;
-        while self.pos < self.data.len() && !is_delimiter(self.data[self.pos]) && !is_whitespace(self.data[self.pos]) {
+        while self.pos < self.data.len()
+            && !is_delimiter(self.data[self.pos])
+            && !is_whitespace(self.data[self.pos])
+        {
             self.pos += 1;
         }
         let name = String::from_utf8_lossy(&self.data[start..self.pos]).to_string();
@@ -100,10 +115,15 @@ impl Lexer {
         while self.pos < self.data.len() && balance > 0 {
             let b = self.data[self.pos];
             match b {
-                b'(' => { balance += 1; result.push(b); }
-                b')' => { 
-                    balance -= 1; 
-                    if balance > 0 { result.push(b); }
+                b'(' => {
+                    balance += 1;
+                    result.push(b);
+                }
+                b')' => {
+                    balance -= 1;
+                    if balance > 0 {
+                        result.push(b);
+                    }
                 }
                 b'\\' => {
                     self.pos += 1;
@@ -117,11 +137,16 @@ impl Lexer {
                             b'f' => result.push(12),
                             b'(' | b')' | b'\\' => result.push(b2),
                             b'\r' | b'\n' => { /* ignore line break */ }
-                            _ => { /* handle octal if needed, but simplified for now */ result.push(b2); }
+                            _ => {
+                                /* handle octal if needed, but simplified for now */
+                                result.push(b2);
+                            }
                         }
                     }
                 }
-                _ => { result.push(b); }
+                _ => {
+                    result.push(b);
+                }
             }
             self.pos += 1;
         }
@@ -157,8 +182,13 @@ impl Lexer {
     fn lex_number_or_keyword(&mut self) -> PdfResult<Token> {
         let start = self.pos;
         let mut is_real = false;
-        while self.pos < self.data.len() && !is_delimiter(self.data[self.pos]) && !is_whitespace(self.data[self.pos]) {
-            if self.data[self.pos] == b'.' { is_real = true; }
+        while self.pos < self.data.len()
+            && !is_delimiter(self.data[self.pos])
+            && !is_whitespace(self.data[self.pos])
+        {
+            if self.data[self.pos] == b'.' {
+                is_real = true;
+            }
             self.pos += 1;
         }
         let s = String::from_utf8_lossy(&self.data[start..self.pos]);
@@ -178,7 +208,10 @@ impl Lexer {
         if self.pos < self.data.len() {
             self.pos += 1;
         }
-        while self.pos < self.data.len() && !is_delimiter(self.data[self.pos]) && !is_whitespace(self.data[self.pos]) {
+        while self.pos < self.data.len()
+            && !is_delimiter(self.data[self.pos])
+            && !is_whitespace(self.data[self.pos])
+        {
             self.pos += 1;
         }
         let s = String::from_utf8_lossy(&self.data[start..self.pos]).to_string();

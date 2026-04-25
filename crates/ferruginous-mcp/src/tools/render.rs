@@ -22,7 +22,8 @@ pub async fn render_page_impl(args: RenderArgs) -> Result<String, String> {
 
 fn render_page_internal(args: RenderArgs) -> McpResult<String> {
     let data = fs::read(&args.path).map_err(McpError::from)?;
-    let doc = PdfDocument::open(Bytes::from(data)).map_err(|e: ferruginous_sdk::PdfError| McpError::Pdf(e.to_string()))?;
+    let doc = PdfDocument::open(Bytes::from(data))
+        .map_err(|e: ferruginous_sdk::PdfError| McpError::Pdf(e.to_string()))?;
 
     let output_dir = PathBuf::from("artifacts/screenshots");
     if !output_dir.exists() {

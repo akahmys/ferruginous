@@ -3,11 +3,11 @@
 //! This model adheres strictly to ISO 32000-2:2020 and utilizes the Handle system
 //! for all internal references, ensuring maximum memory efficiency.
 
-use crate::handle::Handle;
 use crate::arena::PdfArena;
+use crate::handle::Handle;
 use bytes::Bytes;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use serde::{Serialize, Deserialize};
 
 /// ISO 32000-2:2020 Clause 7.3.5 - Name Objects
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -60,6 +60,8 @@ pub enum Object {
     /// Stream objects (Clause 7.3.8)
     /// References a dictionary handle and holds the raw/encoded data.
     Stream(Handle<BTreeMap<Handle<PdfName>, Object>>, Bytes),
+    /// Hexadecimal string objects (Clause 7.3.4.3)
+    Hex(Bytes),
     /// Null object (Clause 7.3.9)
     Null,
     /// Reference to an indirect object (external to this object but in the same arena).
@@ -111,7 +113,9 @@ impl Object {
                 break;
             }
             depth += 1;
-            if depth > 10 { break; } // Safety break for circular references
+            if depth > 10 {
+                break;
+            } // Safety break for circular references
         }
         current
     }
@@ -138,7 +142,9 @@ pub struct ObjectEntry {
 }
 
 /// A legacy-compatible PDF indirect reference (ISO 32000-2 Clause 7.3.10).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub struct Reference {
     pub id: u32,
     pub generation: u16,

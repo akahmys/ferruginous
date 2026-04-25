@@ -37,7 +37,14 @@ pub trait RenderBackend: Send {
     fn set_fill_color(&mut self, color: Color);
     fn set_stroke_color(&mut self, color: Color);
 
-    fn define_font(&mut self, name: &str, base_name: Option<&str>, data: Option<std::sync::Arc<Vec<u8>>>, index: Option<usize>, cid_to_gid_map: Option<Vec<u16>>);
+    fn define_font(
+        &mut self,
+        name: &str,
+        base_name: Option<&str>,
+        data: Option<std::sync::Arc<Vec<u8>>>,
+        index: Option<usize>,
+        cid_to_gid_map: Option<Vec<u16>>,
+    );
     fn set_font(&mut self, name: &str);
     #[allow(clippy::too_many_arguments)]
     fn show_text(
@@ -126,19 +133,22 @@ impl VelloBackend {
     }
 
     pub fn define_font(
-        &mut self, 
-        name: &str, 
-        data: Option<&std::sync::Arc<Vec<u8>>>, 
-        index: usize, 
+        &mut self,
+        name: &str,
+        data: Option<&std::sync::Arc<Vec<u8>>>,
+        index: usize,
         cid_to_gid_map: Option<&[u16]>,
-        base_name: Option<&str>
+        base_name: Option<&str>,
     ) {
-        self.font_cache.insert(name.to_string(), FontCacheEntry {
-            data: data.cloned(),
-            collection_index: Some(index),
-            cid_to_gid_map: cid_to_gid_map.map(|m| m.to_vec()),
-            base_name: base_name.map(|s| s.to_string()),
-        });
+        self.font_cache.insert(
+            name.to_string(),
+            FontCacheEntry {
+                data: data.cloned(),
+                collection_index: Some(index),
+                cid_to_gid_map: cid_to_gid_map.map(|m| m.to_vec()),
+                base_name: base_name.map(|s| s.to_string()),
+            },
+        );
     }
 
     pub fn scene(&self) -> &Scene {
@@ -317,7 +327,14 @@ impl RenderBackend for VelloBackend {
         self.state.stroke_color = color;
     }
 
-    fn define_font(&mut self, name: &str, base_name: Option<&str>, data: Option<std::sync::Arc<Vec<u8>>>, index: Option<usize>, cid_to_gid_map: Option<Vec<u16>>) {
+    fn define_font(
+        &mut self,
+        name: &str,
+        base_name: Option<&str>,
+        data: Option<std::sync::Arc<Vec<u8>>>,
+        index: Option<usize>,
+        cid_to_gid_map: Option<Vec<u16>>,
+    ) {
         // Resolve font index if not provided (for collections)
         let resolved_index = if index.is_none() {
             if let Some(data_arc) = data.as_ref() {
@@ -327,21 +344,33 @@ impl RenderBackend for VelloBackend {
                         skrifa::raw::FileRef::Collection(c) => {
                             let mut best = 0;
                             for i in 0..c.len() {
-                                if c.get(i).is_ok() { best = i; break; }
+                                if c.get(i).is_ok() {
+                                    best = i;
+                                    break;
+                                }
                             }
                             Some(best as usize)
                         }
                     }
-                } else { None }
-            } else { None }
-        } else { index };
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            index
+        };
 
-        self.font_cache.insert(name.to_string(), FontCacheEntry {
-            data,
-            collection_index: resolved_index,
-            cid_to_gid_map,
-            base_name: base_name.map(|s| s.to_string()),
-        });
+        self.font_cache.insert(
+            name.to_string(),
+            FontCacheEntry {
+                data,
+                collection_index: resolved_index,
+                cid_to_gid_map,
+                base_name: base_name.map(|s| s.to_string()),
+            },
+        );
     }
 
     fn set_font(&mut self, name: &str) {
@@ -396,10 +425,13 @@ impl RenderBackend for VelloBackend {
             let unicode_fallback = char_iter.next();
 
             // Skip rendering for common whitespace or if mode is 3 (Invisible)
-            let is_whitespace_code = char_code == 0x20 || char_code == 0x09 || char_code == 0x0A || char_code == 0x0D;
+            let is_whitespace_code =
+                char_code == 0x20 || char_code == 0x09 || char_code == 0x0A || char_code == 0x0D;
 
-            let is_repurposed_japanese = char_code == 0x20 && unicode_fallback.map(|c| (c as u32) >= 0x2E80).unwrap_or(false);
-            let should_skip = self.state.text_render_mode == 3 || (is_whitespace_code && !is_repurposed_japanese);
+            let is_repurposed_japanese = char_code == 0x20
+                && unicode_fallback.map(|c| (c as u32) >= 0x2E80).unwrap_or(false);
+            let should_skip =
+                self.state.text_render_mode == 3 || (is_whitespace_code && !is_repurposed_japanese);
             if should_skip {
                 let glyph_scale = size / 1000.0;
                 let advance = *_width as f64 * glyph_scale;
@@ -407,7 +439,15 @@ impl RenderBackend for VelloBackend {
                 continue;
             }
 
-            let path_opt: Option<BezPath> = bridge.extract_path(data_ref, gid, char_code, self.state.cid_to_gid_map.as_deref(), is_vertical, unicode_fallback, is_repurposed_japanese);
+            let path_opt: Option<BezPath> = bridge.extract_path(
+                data_ref,
+                gid,
+                char_code,
+                self.state.cid_to_gid_map.as_deref(),
+                is_vertical,
+                unicode_fallback,
+                is_repurposed_japanese,
+            );
             if let Some(mut path) = path_opt {
                 // Get units_per_em from the font if possible, fallback to 1000
                 let units_per_em = bridge.get_units_per_em(data_ref).unwrap_or(1000) as f64;
@@ -425,7 +465,7 @@ impl RenderBackend for VelloBackend {
                     * writing_line_advance
                     * Affine::scale(glyph_scale)
                     * Affine::translate(origin_shift);
-                
+
                 path.apply_affine(glyph_transform);
                 self.scene.fill(
                     vello::peniko::Fill::NonZero,

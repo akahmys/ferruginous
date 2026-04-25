@@ -1,11 +1,11 @@
 //! Refinery 2.1 Sequential Object Arena (RR-15 Hardened).
 
-use std::collections::BTreeMap;
-use std::cell::RefCell;
-use crate::handle::Handle;
-use crate::object::{Object, PdfName, ObjectEntry};
 use crate::PdfResult;
+use crate::handle::Handle;
+use crate::object::{Object, ObjectEntry, PdfName};
 use bytes::Bytes;
+use std::cell::RefCell;
+use std::collections::BTreeMap;
 
 /// A sequential arena for PDF objects, optimized for cache locality.
 #[derive(Default)]
@@ -70,15 +70,15 @@ impl PdfArena {
     pub fn alloc_object(&self, object: Object) -> Handle<Object> {
         let mut objects = self.objects.borrow_mut();
         let index = u32::try_from(objects.len()).expect("Arena capacity exceeded");
-        objects.push(ObjectEntry {
-            object,
-            generation: 0,
-        });
+        objects.push(ObjectEntry { object, generation: 0 });
         Handle::new(index)
     }
 
     /// Allocates a dictionary.
-    pub fn alloc_dict(&self, dict: BTreeMap<Handle<PdfName>, Object>) -> Handle<BTreeMap<Handle<PdfName>, Object>> {
+    pub fn alloc_dict(
+        &self,
+        dict: BTreeMap<Handle<PdfName>, Object>,
+    ) -> Handle<BTreeMap<Handle<PdfName>, Object>> {
         let mut dicts = self.dicts.borrow_mut();
         let index = u32::try_from(dicts.len()).expect("Arena capacity exceeded");
         dicts.push(dict);
@@ -98,7 +98,10 @@ impl PdfArena {
         self.objects.borrow().get(handle.index() as usize).map(|e| e.object.clone())
     }
 
-    pub fn get_dict(&self, handle: Handle<BTreeMap<Handle<PdfName>, Object>>) -> Option<BTreeMap<Handle<PdfName>, Object>> {
+    pub fn get_dict(
+        &self,
+        handle: Handle<BTreeMap<Handle<PdfName>, Object>>,
+    ) -> Option<BTreeMap<Handle<PdfName>, Object>> {
         self.dicts.borrow().get(handle.index() as usize).cloned()
     }
 
@@ -113,16 +116,24 @@ impl PdfArena {
         }
     }
 
-    pub fn set_dict(&self, handle: Handle<BTreeMap<Handle<PdfName>, Object>>, dict: BTreeMap<Handle<PdfName>, Object>) {
+    pub fn set_dict(
+        &self,
+        handle: Handle<BTreeMap<Handle<PdfName>, Object>>,
+        dict: BTreeMap<Handle<PdfName>, Object>,
+    ) {
         if let Some(entry) = self.dicts.borrow_mut().get_mut(handle.index() as usize) {
             *entry = dict;
         }
     }
 
     // Processing
-    pub fn process_filters(&self, data: &[u8], dict: &BTreeMap<Handle<PdfName>, Object>) -> PdfResult<Bytes> {
-         // Re-implementing simplified filter processing or delegating to filters module
-         crate::filters::process_arena_filters(data, dict, self)
+    pub fn process_filters(
+        &self,
+        data: &[u8],
+        dict: &BTreeMap<Handle<PdfName>, Object>,
+    ) -> PdfResult<Bytes> {
+        // Re-implementing simplified filter processing or delegating to filters module
+        crate::filters::process_arena_filters(data, dict, self)
     }
 
     /// Returns the number of objects in the primary pool.

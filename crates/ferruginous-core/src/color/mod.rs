@@ -22,8 +22,9 @@ pub enum ColorSpace {
 impl ColorSpace {
     /// Loads an ICCBased color space from raw profile data.
     pub fn from_icc(data: &[u8]) -> PdfResult<Self> {
-        let profile = ColorProfile::new_from_slice(data)
-            .map_err(|e| crate::error::PdfError::Ingestion(format!("ICC Profile error: {:?}", e)))?;
+        let profile = ColorProfile::new_from_slice(data).map_err(|e| {
+            crate::error::PdfError::Ingestion(format!("ICC Profile error: {:?}", e))
+        })?;
         Ok(Self::ICCBased(Arc::new(profile)))
     }
 
@@ -32,7 +33,9 @@ impl ColorSpace {
         match self {
             Self::DeviceGray => Color::Gray(components[0]),
             Self::DeviceRGB => Color::Rgb(components[0], components[1], components[2]),
-            Self::DeviceCMYK => Color::Cmyk(components[0], components[1], components[2], components[3]),
+            Self::DeviceCMYK => {
+                Color::Cmyk(components[0], components[1], components[2], components[3])
+            }
             Self::ICCBased(_profile) => {
                 // In a real implementation: map through ICC profile
                 // For now, simple fallback based on component count

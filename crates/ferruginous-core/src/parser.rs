@@ -1,12 +1,12 @@
 //! ISO 32000-2:2020 Clause 7.3 - Objects
 
-use bytes::Bytes;
-use crate::error::PdfError;
 use crate::PdfResult;
+use crate::arena::PdfArena;
+use crate::error::PdfError;
+use crate::handle::Handle;
 use crate::lexer::{Lexer, Token};
 use crate::object::{Object, PdfName};
-use crate::arena::PdfArena;
-use crate::handle::Handle;
+use bytes::Bytes;
 use std::collections::BTreeMap;
 
 pub struct Parser<'a> {
@@ -16,10 +16,7 @@ pub struct Parser<'a> {
 
 impl<'a> Parser<'a> {
     pub fn new(data: Bytes, arena: &'a PdfArena) -> Self {
-        Self {
-            lexer: Lexer::new(data),
-            arena,
-        }
+        Self { lexer: Lexer::new(data), arena }
     }
 
     pub fn peek(&mut self) -> PdfResult<Token> {
@@ -41,10 +38,11 @@ impl<'a> Parser<'a> {
                 let saved_pos = self.lexer.pos();
                 if let Ok(Token::Integer(_gen_num)) = self.lexer.next()
                     && let Ok(Token::Keyword(ref k)) = self.lexer.peek()
-                        && k == "R" {
-                            let _ = self.lexer.next(); // consume "R"
-                            return Ok(Object::Reference(Handle::new(i as u32)));
-                        }
+                    && k == "R"
+                {
+                    let _ = self.lexer.next(); // consume "R"
+                    return Ok(Object::Reference(Handle::new(i as u32)));
+                }
                 // Backtrack if it's not an indirect reference
                 self.lexer.set_pos(saved_pos);
                 Ok(Object::Integer(i))
@@ -79,13 +77,18 @@ impl<'a> Parser<'a> {
             let key_token = self.lexer.next()?;
             let key_handle = match key_token {
                 Token::Name(n) => self.arena.intern_name(PdfName::new(&n)),
-                _ => return Err(PdfError::Parse(format!("Expected name as dictionary key, found {:?}", key_token))),
+                _ => {
+                    return Err(PdfError::Parse(format!(
+                        "Expected name as dictionary key, found {:?}",
+                        key_token
+                    )));
+                }
             };
             let val = self.parse_object()?;
             dict.insert(key_handle, val);
         }
         self.lexer.next()?; // consume '>>'
-        
+
         let handle = self.arena.alloc_dict(dict);
         Ok(Object::Dictionary(handle))
     }

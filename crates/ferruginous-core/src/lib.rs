@@ -6,30 +6,32 @@
 //! and the Ingestion Gateway for the Ferruginous toolkit.
 
 pub mod arena;
+pub mod color;
 pub mod document;
 pub mod filters;
+pub mod font;
 pub mod graphics;
 pub mod handle;
 pub mod ingest;
-pub mod object;
 pub mod lexer;
-pub mod parser;
-pub mod font;
-pub mod refine;
-pub mod color;
 pub mod metadata;
+pub mod object;
+pub mod parser;
+pub mod refine;
 
 extern crate chardetng;
 
+pub use crate::refine::{ParallelRefinery, commit_to_arena};
 pub use arena::{PdfArena, RemappingTable};
 pub use document::Document;
 pub use document::page::Page;
-pub use crate::refine::{ParallelRefinery, commit_to_arena};
 
+pub use graphics::{
+    BlendMode, Color, LineCap, LineJoin, Matrix, PixelFormat, StrokeStyle, WindingRule,
+};
 pub use handle::Handle;
-pub use object::{Object, PdfName, Reference};
 pub use ingest::LopdfIngestor;
-pub use graphics::{Color, Matrix, BlendMode, LineCap, LineJoin, WindingRule, StrokeStyle, PixelFormat};
+pub use object::{Object, PdfName, Reference};
 
 pub use error::PdfError;
 /// Standard Result type for Ferruginous Core operations.

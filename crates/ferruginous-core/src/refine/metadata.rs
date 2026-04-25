@@ -1,15 +1,15 @@
 //! Metadata Refinement: Conversion of /Info to XMP using xmp-writer.
 
-use xmp_writer::XmpWriter;
-use crate::refine::RefinedObject;
 use crate::object::PdfName;
-use std::collections::BTreeMap;
+use crate::refine::RefinedObject;
 use bytes::Bytes;
+use std::collections::BTreeMap;
+use xmp_writer::XmpWriter;
 
 /// Generates an XMP Metadata stream from a PDF Info dictionary.
 pub fn info_to_xmp(info: &BTreeMap<PdfName, RefinedObject>) -> String {
     let mut writer = XmpWriter::new();
-    
+
     if let Some(RefinedObject::String(s)) = info.get(&PdfName::new("Title")) {
         writer.title([(None, std::str::from_utf8(s).unwrap_or(""))]);
     }
@@ -19,7 +19,7 @@ pub fn info_to_xmp(info: &BTreeMap<PdfName, RefinedObject>) -> String {
     if let Some(RefinedObject::String(s)) = info.get(&PdfName::new("Subject")) {
         writer.description([(None, std::str::from_utf8(s).unwrap_or(""))]);
     }
-    
+
     if let Some(RefinedObject::String(s)) = info.get(&PdfName::new("Keywords")) {
         writer.pdf_keywords(std::str::from_utf8(s).unwrap_or(""));
     }
@@ -35,6 +35,6 @@ pub fn create_metadata_stream(xmp: String) -> RefinedObject {
     let mut dict = BTreeMap::new();
     dict.insert(PdfName::new("Type"), RefinedObject::Name(PdfName::new("Metadata")));
     dict.insert(PdfName::new("Subtype"), RefinedObject::Name(PdfName::new("XML")));
-    
+
     RefinedObject::Stream(dict, Bytes::from(xmp))
 }

@@ -20,7 +20,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut backend = ferruginous_render::VelloBackend::new();
     let (p_w, p_h) = doc.get_page_size(page_index).unwrap_or((595.0, 842.0));
-    
+
     // High-resolution render (200 DPI approx)
     let width = 1654;
     let height = 2339;

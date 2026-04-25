@@ -1,18 +1,16 @@
-use ferruginous_core::graphics::{
-    GraphicsState, TextMatrices, WindingRule, Rect,
-};
-use ferruginous_core::{Object, PdfError, PdfName, PdfResult, Document, Handle};
 use ferruginous_core::font::FontResource;
+use ferruginous_core::graphics::{GraphicsState, Rect, TextMatrices, WindingRule};
 use ferruginous_core::lexer::Token;
 use ferruginous_core::parser::Parser;
+use ferruginous_core::{Document, Handle, Object, PdfError, PdfName, PdfResult};
 use ferruginous_render::{RenderBackend, path::PathBuilder};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-/// Operators handling submodules.
-pub mod ops;
 /// Font resolution and rescue logic.
 pub mod font;
+/// Operators handling submodules.
+pub mod ops;
 
 /// A content stream interpreter that translates PDF operators into [RenderBackend] calls.
 pub struct Interpreter<'a> {
@@ -57,9 +55,9 @@ impl<'a> Interpreter<'a> {
             ctm: ferruginous_core::graphics::Matrix(initial_transform.as_coeffs()),
             ..GraphicsState::default()
         };
-        
+
         backend.transform(initial_transform);
-        
+
         let mut interpreter = Self {
             backend,
             doc,
@@ -77,7 +75,7 @@ impl<'a> Interpreter<'a> {
             font_name_map: BTreeMap::new(),
             global_rescue_cmap: None,
         };
-        
+
         interpreter.scan_for_global_rescue_cmap(initial_resources);
         interpreter
     }
@@ -91,11 +89,13 @@ impl<'a> Interpreter<'a> {
         let mut parser = Parser::new(bytes::Bytes::copy_from_slice(data), self.doc.arena());
 
         while let Ok(token) = parser.peek() {
-            if token == Token::EOF { break; }
+            if token == Token::EOF {
+                break;
+            }
             match token {
                 Token::Keyword(ref op) => {
                     let op_str = op.clone();
-                    
+
                     let _ = parser.next()?; // Consume operator
                     self.execute_operator(&op_str)?;
                 }
@@ -110,11 +110,17 @@ impl<'a> Interpreter<'a> {
 
     fn execute_operator(&mut self, op: &str) -> PdfResult<()> {
         match op {
-            "m" | "l" | "c" | "v" | "y" | "re" | "h" | "W" | "W*" => self.handle_path_operator(op)?,
-            "S" | "f" | "F" | "f*" | "n" | "b" | "b*" | "B" | "B*" | "s" => self.handle_painting_operator(op)?,
+            "m" | "l" | "c" | "v" | "y" | "re" | "h" | "W" | "W*" => {
+                self.handle_path_operator(op)?;
+            }
+            "S" | "f" | "F" | "f*" | "n" | "b" | "b*" | "B" | "B*" | "s" => {
+                self.handle_painting_operator(op)?;
+            }
             "q" | "Q" | "cm" | "gs" => self.handle_state_operator(op)?,
             "g" | "G" | "rg" | "RG" | "k" | "K" => self.handle_color_operator(op)?,
-            "Tc" | "Tw" | "Tz" | "TL" | "Tf" | "Tr" | "Ts" => self.handle_text_state_operator(op)?,
+            "Tc" | "Tw" | "Tz" | "TL" | "Tf" | "Tr" | "Ts" => {
+                self.handle_text_state_operator(op)?;
+            }
             "BT" | "ET" => self.handle_text_scope_operator(op)?,
             "Td" | "TD" | "Tm" | "T*" => self.handle_text_positioning_operator(op)?,
             "Tj" | "TJ" | "'" | "\"" => self.handle_text_showing_operator(op)?,
@@ -156,29 +162,50 @@ impl<'a> Interpreter<'a> {
 
     pub(crate) fn pop_name(&mut self) -> PdfResult<PdfName> {
         match self.stack.pop() {
-            Some(Object::Name(h)) => {
-                self.doc.arena().get_name(h).ok_or_else(|| PdfError::Other("Invalid name handle".into()))
-            }
+            Some(Object::Name(h)) => self
+                .doc
+                .arena()
+                .get_name(h)
+                .ok_or_else(|| PdfError::Other("Invalid name handle".into())),
             _ => Err(PdfError::Other("Expected name".into())),
         }
     }
 
-    pub(crate) fn find_resource(&self, res_type: &Handle<PdfName>, name: &PdfName) -> PdfResult<Object> {
+    pub(crate) fn find_resource(
+        &self,
+        res_type: &Handle<PdfName>,
+        name: &PdfName,
+    ) -> PdfResult<Object> {
         let res_type_key = *res_type;
         let name_handle = self.doc.arena().intern_name(name.clone());
-        
+
         for res_handle in self.resource_stack.iter().rev() {
             let h = *res_handle;
-            let dict = self.doc.arena().get_dict(h).ok_or_else(|| PdfError::Other("Invalid resource dict handle".into()))?;
-                if let Some(entry) = dict.get(&res_type_key).and_then(|o| o.resolve(self.doc.arena()).as_dict_handle()) {
-                    let res_dict = self.doc.arena().get_dict(entry).ok_or_else(|| PdfError::Other("Invalid resource type dict".into()))?;
-                    if let Some(res) = res_dict.get(&name_handle) {
-                        return Ok(res.clone());
-                    }
+            let dict = self
+                .doc
+                .arena()
+                .get_dict(h)
+                .ok_or_else(|| PdfError::Other("Invalid resource dict handle".into()))?;
+            if let Some(entry) =
+                dict.get(&res_type_key).and_then(|o| o.resolve(self.doc.arena()).as_dict_handle())
+            {
+                let res_dict = self
+                    .doc
+                    .arena()
+                    .get_dict(entry)
+                    .ok_or_else(|| PdfError::Other("Invalid resource type dict".into()))?;
+                if let Some(res) = res_dict.get(&name_handle) {
+                    return Ok(res.clone());
                 }
             }
-        
-        let type_name = self.doc.arena().get_name(res_type_key).map(|n| n.as_str().to_string()).unwrap_or_default();
+        }
+
+        let type_name = self
+            .doc
+            .arena()
+            .get_name(res_type_key)
+            .map(|n| n.as_str().to_string())
+            .unwrap_or_default();
         Err(PdfError::Other(format!("Resource not found: {} /{}", type_name, name.as_str())))
     }
 }

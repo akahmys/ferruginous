@@ -1,6 +1,6 @@
 use crate::{McpError, McpResult};
 use bytes::Bytes;
-use ferruginous_sdk::{PdfDocument, IssueSeverity};
+use ferruginous_sdk::{IssueSeverity, PdfDocument};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -69,7 +69,7 @@ fn audit_document_internal(args: AuditArgs) -> McpResult<String> {
 
     // 3. Use SDK Summary for Audit
     let summary = doc.get_summary().map_err(|e| McpError::Pdf(e.to_string()))?;
-    
+
     for issue in summary.compliance.issues {
         findings.push(Finding {
             severity: match issue.severity {

@@ -5,11 +5,8 @@ use ferruginous_render::path::PathBuilder;
 
 impl Interpreter<'_> {
     pub(crate) fn handle_painting_operator(&mut self, op: &str) -> PdfResult<()> {
-        let p_for_clip = if self.pending_clip.is_some() {
-            Some(self.path.clone().finish())
-        } else {
-            None
-        };
+        let p_for_clip =
+            if self.pending_clip.is_some() { Some(self.path.clone().finish()) } else { None };
 
         match op {
             "S" => {
@@ -59,8 +56,9 @@ impl Interpreter<'_> {
         self.path = PathBuilder::new();
 
         if let Some(p) = p_for_clip
-            && let Some(rule) = self.pending_clip.take() {
-                self.backend.push_clip(&p, rule);
+            && let Some(rule) = self.pending_clip.take()
+        {
+            self.backend.push_clip(&p, rule);
         }
 
         Ok(())

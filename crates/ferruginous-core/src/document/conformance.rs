@@ -1,6 +1,6 @@
 //! Compliance & Conformance Artifacts (ISO 32000 / 19005 / 15930 / 14289)
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 /// High-level compliance status of a PDF document.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

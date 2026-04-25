@@ -3,9 +3,9 @@
 //! Handles provide O(1) access to objects within a `PdfArena` without the overhead
 //! of Reference Counting (Arc) or the risks of raw pointers.
 
-use std::marker::PhantomData;
+use serde::{Deserialize, Serialize};
 use std::fmt;
-use serde::{Serialize, Deserialize};
+use std::marker::PhantomData;
 
 /// A typesafe handle to an object in the `PdfArena`.
 ///
@@ -47,10 +47,7 @@ impl<T> std::hash::Hash for Handle<T> {
 impl<T> Handle<T> {
     /// Creates a new handle from a raw index.
     pub const fn new(index: u32) -> Self {
-        Self {
-            index,
-            _phantom: PhantomData,
-        }
+        Self { index, _phantom: PhantomData }
     }
 
     /// Returns the raw index of the handle.
@@ -69,6 +66,11 @@ impl<T> Copy for Handle<T> {}
 
 impl<T> fmt::Debug for Handle<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Handle<{}>({})", std::any::type_name::<T>().split("::").last().unwrap_or("Unknown"), self.index)
+        write!(
+            f,
+            "Handle<{}>({})",
+            std::any::type_name::<T>().split("::").last().unwrap_or("Unknown"),
+            self.index
+        )
     }
 }

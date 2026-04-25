@@ -5,12 +5,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let data = std::fs::read("/Users/jun/Downloads/nihonkokukenpou.pdf")?;
     let doc = PdfDocument::open(data.into())?;
     let arena = doc.inner().arena();
-    let fonts_node = doc.inner().get_page(4)?.resolve_attribute("Resources").expect("No res")
-        .resolve(arena).as_dict_handle().expect("No dict");
-    let fonts = arena.get_dict(fonts_node).expect("No dict")
-        .get(&arena.name("Font")).expect("No font cat").resolve(arena).as_dict_handle().expect("No font dict");
+    let fonts_node = doc
+        .inner()
+        .get_page(4)?
+        .resolve_attribute("Resources")
+        .expect("No res")
+        .resolve(arena)
+        .as_dict_handle()
+        .expect("No dict");
+    let fonts = arena
+        .get_dict(fonts_node)
+        .expect("No dict")
+        .get(&arena.name("Font"))
+        .expect("No font cat")
+        .resolve(arena)
+        .as_dict_handle()
+        .expect("No font dict");
     let fonts_dict = arena.get_dict(fonts).expect("No font dict");
-    
+
     for (name_h, font_obj) in fonts_dict {
         let name = arena.get_name(name_h).unwrap();
         println!("--- Font: {} ---", name.as_str());
