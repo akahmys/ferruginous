@@ -6,17 +6,14 @@
 pub fn lookup(name: &str) -> Option<String> {
     // 1. Check for uniXXXX or uXXXXX patterns
     if name.starts_with("uni") && name.len() >= 7 {
-        if let Ok(val) = u32::from_str_radix(&name[3..7], 16) {
-            if let Some(c) = std::char::from_u32(val) {
-                return Some(c.to_string());
-            }
+        if let Ok(val) = u32::from_str_radix(&name[3..7], 16)
+            && let Some(c) = std::char::from_u32(val) {
+            return Some(c.to_string());
         }
-    } else if name.starts_with('u') && name.len() >= 5 {
-        if let Ok(val) = u32::from_str_radix(&name[1..], 16) {
-            if let Some(c) = std::char::from_u32(val) {
-                return Some(c.to_string());
-            }
-        }
+    } else if name.starts_with('u') && name.len() >= 5
+        && let Ok(val) = u32::from_str_radix(&name[1..], 16)
+        && let Some(c) = std::char::from_u32(val) {
+        return Some(c.to_string());
     }
 
     // 2. Standard AGL lookup

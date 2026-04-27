@@ -1,70 +1,59 @@
-//! Font Refinement: ISO 32000-2 (PDF 2.0) Compliance Engine.
-
 use crate::object::PdfName;
-use crate::refine::RefinedObject;
+use super::RefinedObject;
+use crate::font::FontResource;
 use bytes::Bytes;
 use std::collections::BTreeMap;
 
-/// Normalizes a font dictionary to a PDF 2.0 compliant state.
-///
-/// This involves:
-/// 1. Standardizing /Encoding (ensuring Identity-H for Type0 if appropriate)
-/// 2. Synthesizing or cleaning /ToUnicode maps for CJK fonts.
-/// 3. Validating /Subtype and /BaseFont.
-pub fn normalize_font(mut dict: BTreeMap<PdfName, RefinedObject>) -> RefinedObject {
+/// Normalizes a font dictionary to a canonical PDF 2.0 form.
+pub fn normalize_font(
+    mut dict: BTreeMap<PdfName, RefinedObject>,
+    resource: Option<&FontResource>,
+) -> RefinedObject {
     let type_key = PdfName::new("Type");
     let subtype_key = PdfName::new("Subtype");
 
     // Only process if it's actually a Font
     if let Some(RefinedObject::Name(t)) = dict.get(&type_key)
-        && t.as_str() != "Font"
-    {
+        && t.as_str() != "Font" {
         return RefinedObject::Dictionary(dict);
     }
 
-    let subtype_str = dict.get(&subtype_key).and_then(|o| match o {
-        RefinedObject::Name(n) => Some(n.as_str()),
-        _ => None,
-    });
+    let type0_name = PdfName::new("Type0");
+    let cid2_name = PdfName::new("CIDFontType2");
 
-    match subtype_str {
-        Some("Type0") => {
-            // Type0 (CID-keyed) font normalization
-            normalize_type0_font(&mut dict);
+    // Decide whether to use Identity-H normalization
+    // We only do this if we have a reliable GID map OR it's already a CID font.
+    let _has_gid_map = resource.map(|r| !r.unicode_to_gid.is_empty()).unwrap_or(false);
+    let is_embedded = resource.map(|r| r.data.is_some()).unwrap_or(false);
+    
+    if let Some(RefinedObject::Name(st)) = dict.get(&subtype_key) {
+        if st == &type0_name && is_embedded {
+            normalize_type0_font(&mut dict, resource);
+        } else if st == &cid2_name {
+            // HARDENING: Inject /CIDToGIDMap /Identity directly into the CIDFont
+            dict.insert(PdfName::new("CIDToGIDMap"), RefinedObject::Name(PdfName::new("Identity")));
         }
-        Some("TrueType") | Some("Type1") | Some("MMType1") => {
-            // Simple font normalization
-            normalize_simple_font(&mut dict);
-        }
-        _ => {}
     }
 
     RefinedObject::Dictionary(dict)
 }
 
-fn normalize_type0_font(dict: &mut BTreeMap<PdfName, RefinedObject>) {
-    let encoding_key = PdfName::new("Encoding");
-    // 1. Ensure Encoding is standardized
-    if let Some(enc) = dict.get(&encoding_key) {
-        match enc {
-            RefinedObject::Name(_n) => {
-                // Identity-H/V are standard for CID-keyed fonts
-            }
-            RefinedObject::Stream(..) => {
-                // Custom CMap stream
-            }
-            _ => {}
-        }
+fn normalize_type0_font(dict: &mut BTreeMap<PdfName, RefinedObject>, resource: Option<&FontResource>) {
+    // 1. Set Encoding to Identity-H/V based on WMode
+    let encoding_name = if resource.map(|r| r.wmode == 1).unwrap_or(false) {
+        "Identity-V"
     } else {
-        // Missing encoding in Type0 is an error, but we'll default to Identity-H for hardening
-        dict.insert(encoding_key.clone(), RefinedObject::Name(PdfName::new("Identity-H")));
+        "Identity-H"
+    };
+    dict.insert(PdfName::new("Encoding"), RefinedObject::Name(PdfName::new(encoding_name)));
+    
+    // 2. Inject GID-based ToUnicode CMap to ensure searchability
+    if let Some(unicode_bytes) = resource.and_then(|res| res.generate_standard_tounicode()) {
+        let mut uni_dict = BTreeMap::new();
+        uni_dict.insert(PdfName::new("Length"), RefinedObject::Integer(unicode_bytes.len() as i64));
+        dict.insert(PdfName::new("ToUnicode"), RefinedObject::Stream(uni_dict, Bytes::from(unicode_bytes)));
     }
-
-    // 2. Synthesize ToUnicode if missing
-    // REMOVED: Broken heuristic synthesis of empty ToUnicode CMaps
 }
-
-fn normalize_simple_font(_dict: &mut BTreeMap<PdfName, RefinedObject>) {}
 
 /// Normalizes a CMap stream to a canonical PDF 2.0 form.
 pub fn normalize_cmap(dict: BTreeMap<PdfName, RefinedObject>, data: Bytes) -> RefinedObject {

@@ -41,6 +41,8 @@ pub struct Interpreter<'a> {
     pub(crate) font_cache: BTreeMap<Handle<Object>, Arc<FontResource>>,
     pub(crate) font_name_map: BTreeMap<Handle<Object>, String>,
     pub(crate) global_rescue_cmap: Option<ferruginous_core::font::cmap::CMap>,
+    /// Index of the current operator in the content stream.
+    pub op_index: usize,
 }
 
 impl<'a> Interpreter<'a> {
@@ -74,6 +76,7 @@ impl<'a> Interpreter<'a> {
             font_cache: BTreeMap::new(),
             font_name_map: BTreeMap::new(),
             global_rescue_cmap: None,
+            op_index: 0,
         };
 
         interpreter.scan_for_global_rescue_cmap(initial_resources);
@@ -96,7 +99,11 @@ impl<'a> Interpreter<'a> {
                 Token::Keyword(ref op) => {
                     let op_str = op.clone();
 
-                    let _ = parser.next()?; // Consume operator
+                    let _ = parser.next_token()?; // Consume operator
+                    self.op_index += 1;
+                    if self.op_index.is_multiple_of(100) {
+                        eprintln!("fepdf: interpreter at op_index={} (op={})", self.op_index, op_str);
+                    }
                     self.execute_operator(&op_str)?;
                 }
                 _ => {
@@ -206,6 +213,6 @@ impl<'a> Interpreter<'a> {
             .get_name(res_type_key)
             .map(|n| n.as_str().to_string())
             .unwrap_or_default();
-        Err(PdfError::Other(format!("Resource not found: {} /{}", type_name, name.as_str())))
+        Err(PdfError::Other(format!("Resource not found: {} /{}", type_name, name.as_str()).into()))
     }
 }

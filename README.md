@@ -23,24 +23,74 @@ Ferruginous is more than just a library; it is a "Foundation of Trust" for the P
 
 Ferruginous is developed through a deep partnership between a human developer and the AI agent **Antigravity (Gemini 2.0 / 3 Flash)**. 
 
+### AI-Native Design (MCP & ELM)
+The architecture is designed to be fully transparent to AI agents:
 - **Autonomous Implementation**: Antigravity handles the bulk of the implementation, including the design and enforcement of its own safety protocols (`RR-15`).
-- **Headless Verification**: A dedicated visual regression module allows Antigravity to "self-inspect" rendering outputs via automated JPEG/PNG comparisons, ensuring high-fidelity results without human intervention.
+- **Headless Verification**: A dedicated visual regression module allows Antigravity to "self-inspect" rendering outputs via automated JPEG/PNG comparisons.
 - **MCP Integration**: The **Model Context Protocol** is a first-class citizen, enabling AI agents to directly interact with PDF structures as a native tool.
-- **ELM (External Long-Term Memory)**: Real-time persistence of state and design decisions prevents context loss and ensures continuity across long-running development cycles.
+- **ELM (External Long-Term Memory)**: All stateful decisions and design intents are recorded in `.antigravity/session/` to survive session resets and ensure continuity.
 
 ---
 
-## 🛡️ Core Architecture: The Ingest & Refinement Pipeline
+## 🛡️ Core Technical Architecture: The "Active Ingestion" Pipeline
 
-Ferruginous implements a multi-pass "Active Ingestion" pipeline that converts physical PDF structures into a high-purity internal data model.
+Ferruginous does not simply "read" a PDF; it **ingests** it. This process converts the physical, often inconsistent byte-stream of a PDF file into a high-purity, semantically indexed internal model.
 
-1.  **Physical Parsing**: Utilizes `lopdf` as a gateway for initial object extraction.
-2.  **Typed Arena Storage (`PdfArena`)**: Objects are decoupled from physical offsets and stored in a type-safe arena using generational `u32` handles.
-3. **Active Normalization**:
-    *   **Unicode-Native Pipeline**: Context-aware string re-encoding (`Byte` -> `UTF-8`) during ingestion to eliminate mojibake.
-    *   **Color Harmonization**: Strict ICC profile application via **moxcms**.
-    *   **Metadata Sublimation**: Conversion of legacy Info dictionaries into XMP-compliant streams.
-    *   **Structural Hardening**: Active remediation of logical structure tags for **ISO 14289-2 (PDF/UA-2)** compliance.
+### 1. The Multi-Pass Pipeline
+
+The ingestion process is divided into distinct, non-overlapping phases:
+
+#### **Pass 0: Physical Normalization (The Guard Phase)**
+- **Scope**: Raw `lopdf::Document` objects.
+- **Objective**: Ensure the data is plain, reachable, and safe for semantic indexing.
+- **Operations**:
+    - **Recursive Decryption**: A stack-based (Rule 6) walk of all objects to decrypt strings and streams.
+    - **Security Handler Removal**: Stripping the `/Encrypt` dictionary from the trailer to prevent Acrobat Error 135.
+    - **Physical Repair**: Fixing broken XRef offsets and object numbers before they reach the `PdfArena`.
+- **Naming Convention**: `perform_pass_0_<action>`.
+
+#### **Pass 1: Structural Ingestion (The Arena Phase)**
+- **Scope**: Mapping physical objects to generational `Handle<Object>`.
+- **Objective**: Decouple the document structure from its physical byte-offsets.
+- **Operations**:
+    - Object stream expansion.
+    - Generation of unique IDs for every object.
+    - Deduplication of common resource objects.
+
+#### **Pass 2: Semantic Refinement (The Truth Phase)**
+- **Scope**: Typed interpretation of object dictionaries.
+- **Objective**: Normalize the content to ISO 32000-2:2020 standards.
+- **Operations**:
+    - **Unicode-Native Pipeline**: Context-aware string re-encoding (`Byte` -> `UTF-8`) to eliminate mojibake.
+    - **Color Sublimation**: Strict ICC profile application via **moxcms**.
+    - **Metadata Extraction**: Converting legacy `/Info` to XMP metadata.
+    - **Structural Hardening**: Active remediation of logical structure tags for **ISO 14289-2 (PDF/UA-2)** compliance.
+
+### 2. Memory & Safety: `PdfArena`
+
+`PdfArena` is the backbone of the Ferruginous SDK. It utilizes a generational arena to manage object lifetimes.
+
+- **Handles vs. Pointers**: All object references are `Handle<Object>` (a `u32` index and a generation count). This prevents "use-after-free" and makes the entire document structure easily serializable and AI-inspectable.
+- **RR-15 Compliance**: 
+    - **Rule 6 (No Recursion)**: All traversals of the PDF object graph must use an explicit stack (`Vec`) to prevent stack overflow on deeply nested documents.
+    - **Rule 10 (Determinism)**: Iteration over objects and metadata generation is deterministic to ensure bit-perfect output and reliable digital signatures.
+    - **Rule 11 (Error Transparency)**: Zero use of generic `String` errors. All failures use structured Enum variants with mandatory context (e.g., `pos`, `context`).
+    - **Rule 19 (Unbounded Recursion Guard)**: Strict enforcement of depth limits (e.g., max 32 levels) for tree-like structures like the Page Tree and Structure Tree.
+
+---
+
+## 🔐 Security & Compliance
+
+### Encryption Handling
+Ferruginous implements custom security handlers for PDF 1.4-2.0, focusing on Adobe fidelity:
+- **AES-128 (Revision 4)**: Used in PDF 1.6. Requires specific key padding and alignment with MD5-based derivation.
+- **AES-256 (Revision 5/6)**: Used in PDF 1.7/2.0. Implements the SHA-256 based key derivation.
+- **Pass 0 Decryption**: Ensures the internal engine only ever sees plaintext, reducing the surface area for logical bugs.
+
+### ISO Standards & Audit
+- **Specifications**: Optimized for **ISO 32000-2:2020** and **ISO 14289-2 (PDF/UA-2)**.
+- **Audit Protocol**: Adopts the **Matterhorn Protocol** for rigorous accessibility validation.
+- **Limitation Policy**: "Liberal Read, Strict Write" — maximizes compatibility for ingestion while enforcing 100% specification compliance for output.
 
 ---
 
@@ -48,7 +98,7 @@ Ferruginous implements a multi-pass "Active Ingestion" pipeline that converts ph
 
 We conquer PDF complexity by decomposing it into independently verifiable layers:
 
-1.  **`ferruginous-core` (The Grammar)**: Basic types, zero-copy lexical analysis, and COS parsing.
+1.  **`ferruginous-core` (The Grammar)**: Foundational `PdfArena`, normalization logic, and typesafe handles.
 2.  **`ferruginous-doc` (The Structure)**: XRef systems, object streams, and the document catalog.
 3.  **`ferruginous-render` (The Expression)**: Coordinate transformations, graphics states, and hardware bridges.
 4.  **`ferruginous-sdk` (The Conductor)**: A high-level API that safely integrates all underlying layers.
@@ -66,20 +116,12 @@ The rendering pipeline is designed for resolution-independent, low-latency visua
 
 ---
 
-## 🛠️ Compliance & Specifications
-
-- **ISO Standards**: Optimized for ISO 32000-2:2020 and **ISO 14289-2 (PDF/UA-2)**.
-- **Audit Protocol**: Adopts the **Matterhorn Protocol** for rigorous accessibility validation.
-- **Limitation Policy**: "Liberal Read, Strict Write" — maximizes compatibility for ingestion while enforcing 100% specification compliance for output.
-
----
-
 ## 📦 Project Structure
 
 - **`ferruginous`**: The "Sentinel" GUI application — CAD-grade viewing and editing.
 - **`fepdf`**: Professional diagnostic and remediation CLI toolkit.
 - **`ferruginous-sdk`**: Primary library for standard-compliant PDF manipulation.
-- **`ferruginous-core`**: The foundational `PdfArena` and normalization logic.
+- **`ferruginous-core`**: The engine's heart: `PdfArena` and ingestion pipeline.
 - **`ferruginous-render`**: GPU-accelerated drawing backend.
 - **`ferruginous-mcp`**: MCP server for AI-driven PDF management.
 
@@ -95,31 +137,20 @@ The rendering pipeline is designed for resolution-independent, low-latency visua
 - **`merge` / `split`**: High-fidelity document manipulation using iterative `ObjectCloner`.
 - **`sign`**: Apply PAdES-compliant digital signatures with robust `ByteRange` patching.
 - **`repair`**: Salvage corrupted PDF files using the hardened parser.
-- **`credits`**: Display open-source attributions and licenses.
 
-### Unified Optimization & Ingestion Flags
-All processing commands share a consistent set of professional-grade options:
-
-#### Optimization (Writing)
-- **`--compress`**: Enable **FlateDecode** stream compression for minimal file size.
-- **`--vacuum`**: Remove all unreachable objects (structural garbage collection).
-- **`--linearize`**: Enable **Fast Web View** (ISO 32000-2 Annex F) with Hint Table generation.
-- **`--strip`**: Remove descriptive metadata for anonymity and size reduction.
+### Optimization & Ingestion Flags
+- **`--compress`**: Enable **FlateDecode** stream compression.
+- **`--vacuum`**: Remove all unreachable objects (GC).
+- **`--linearize`**: Enable **Fast Web View** (Annex F).
 - **`--obj-stm`**: Use **Object Streams** for high-density compression (PDF 1.5+).
-- **`--password <PWD>`**: Apply document open encryption.
-
-#### Ingestion (Reading)
-- `--no-refinement`: Skip the active 2-pass UTF-8 normalization.
-- `--relaxed-color`: Use a lenient color validation policy.
-
----
+- **`--no-refinement`**: Skip the active 2-pass normalization.
 
 ---
 
 ## ⚙️ Development Requirements
 
 - **Toolchain**: Rust 1.94+ / Edition 2024.
-- **Automated Verification**: Run `make verify` to execute the full RR-15 compliance audit and visual regression suite.
+- **Verification**: Run `make verify` to execute the RR-15 compliance audit and visual regression suite.
 
 ---
 

@@ -9,7 +9,8 @@ pub enum Token {
     Integer(i64),
     Real(f64),
     String(Bytes),
-    Name(String),
+    Hex(Bytes),
+    Name(Bytes),
     Keyword(String),
     LeftArray,
     RightArray,
@@ -18,6 +19,74 @@ pub enum Token {
     Comment(String),
     Null,
     EOF,
+}
+
+impl Token {
+    pub fn write_to(&self, output: &mut Vec<u8>) {
+        match self {
+            Token::Boolean(b) => output.extend_from_slice(if *b { b"true " } else { b"false " }),
+            Token::Integer(i) => output.extend_from_slice(format!("{} ", i).as_bytes()),
+            Token::Real(f) => output.extend_from_slice(format!("{:.4} ", f).as_bytes()),
+            Token::String(s) => {
+                output.push(b'(');
+                for &b in s {
+                    if b == b'(' || b == b')' || b == b'\\' {
+                        output.push(b'\\');
+                    }
+                    output.push(b);
+                }
+                output.push(b')');
+                output.push(b' ');
+            }
+            Token::Hex(s) => {
+                output.push(b'<');
+                for &b in s {
+                    output.extend_from_slice(format!("{:02X}", b).as_bytes());
+                }
+                output.push(b'>');
+                output.push(b' ');
+            }
+            Token::Name(n) => {
+                output.push(b'/');
+                for &b in n {
+                    if b == b'#' || b <= 32 || b >= 127 || is_delimiter(b) {
+                        output.extend_from_slice(format!("#{b:02X}").as_bytes());
+                    } else {
+                        output.push(b);
+                    }
+                }
+                output.push(b' ');
+            }
+            Token::Keyword(kw) => {
+                output.extend_from_slice(kw.as_bytes());
+                output.push(b' ');
+            }
+            Token::LeftArray => output.extend_from_slice(b"[ "),
+            Token::RightArray => output.extend_from_slice(b"] "),
+            Token::LeftDict => output.extend_from_slice(b"<< "),
+            Token::RightDict => output.extend_from_slice(b">> "),
+            Token::Comment(c) => {
+                output.push(b'%');
+                output.extend_from_slice(c.as_bytes());
+                output.push(b'\n');
+            }
+            Token::Null => output.extend_from_slice(b"null "),
+            Token::EOF => {}
+        }
+    }
+}
+
+/// Convenience function to tokenize a buffer.
+pub fn tokenize(data: &[u8]) -> Vec<Token> {
+    let mut lexer = Lexer::new(Bytes::copy_from_slice(data));
+    let mut tokens = Vec::new();
+    while let Ok(token) = lexer.next_token() {
+        if token == Token::EOF {
+            break;
+        }
+        tokens.push(token);
+    }
+    tokens
 }
 
 pub struct Lexer {
@@ -30,8 +99,7 @@ impl Lexer {
         Self { data, pos: 0 }
     }
 
-    #[allow(clippy::should_implement_trait)]
-    pub fn next(&mut self) -> PdfResult<Token> {
+    pub fn next_token(&mut self) -> PdfResult<Token> {
         self.skip_whitespace_and_comments();
         if self.pos >= self.data.len() {
             return Ok(Token::EOF);
@@ -97,15 +165,25 @@ impl Lexer {
 
     fn lex_name(&mut self) -> PdfResult<Token> {
         self.pos += 1; // skip '/'
-        let start = self.pos;
+        let mut result = Vec::new();
         while self.pos < self.data.len()
             && !is_delimiter(self.data[self.pos])
             && !is_whitespace(self.data[self.pos])
         {
+            let b = self.data[self.pos];
+            if b == b'#' && self.pos + 2 < self.data.len() {
+                let hex = &self.data[self.pos + 1..self.pos + 3];
+                if let Ok(utf8_str) = std::str::from_utf8(hex)
+                    && let Ok(val) = u8::from_str_radix(utf8_str, 16) {
+                    result.push(val);
+                    self.pos += 3;
+                    continue;
+                }
+            }
+            result.push(b);
             self.pos += 1;
         }
-        let name = String::from_utf8_lossy(&self.data[start..self.pos]).to_string();
-        Ok(Token::Name(name))
+        Ok(Token::Name(Bytes::from(result)))
     }
 
     fn lex_literal_string(&mut self) -> PdfResult<Token> {
@@ -135,18 +213,29 @@ impl Lexer {
                             b't' => result.push(b'\t'),
                             b'b' => result.push(8),
                             b'f' => result.push(12),
-                            b'(' | b')' | b'\\' => result.push(b2),
-                            b'\r' | b'\n' => { /* ignore line break */ }
-                            _ => {
-                                /* handle octal if needed, but simplified for now */
-                                result.push(b2);
+                            b'(' => result.push(b'('),
+                            b')' => result.push(b')'),
+                            b'\\' => result.push(b'\\'),
+                            b'0'..=b'7' => {
+                                let mut octal = (b2 - b'0') as u32;
+                                let mut count = 1;
+                                while count < 3 && self.pos + 1 < self.data.len() {
+                                    let next_b = self.data[self.pos + 1];
+                                    if (b'0'..=b'7').contains(&next_b) {
+                                        octal = (octal << 3) | (next_b - b'0') as u32;
+                                        self.pos += 1;
+                                        count += 1;
+                                    } else {
+                                        break;
+                                    }
+                                }
+                                result.push(octal as u8);
                             }
+                            _ => result.push(b2),
                         }
                     }
                 }
-                _ => {
-                    result.push(b);
-                }
+                _ => result.push(b),
             }
             self.pos += 1;
         }
@@ -176,7 +265,7 @@ impl Lexer {
         if let Some(high) = high_nibble {
             result.push(high << 4);
         }
-        Ok(Token::String(Bytes::from(result)))
+        Ok(Token::Hex(Bytes::from(result)))
     }
 
     fn lex_number_or_keyword(&mut self) -> PdfResult<Token> {
@@ -204,7 +293,6 @@ impl Lexer {
 
     fn lex_keyword_or_other(&mut self) -> PdfResult<Token> {
         let start = self.pos;
-        // Ensure we advance at least one byte if we're not at EOF and not a known delimiter
         if self.pos < self.data.len() {
             self.pos += 1;
         }
@@ -225,17 +313,15 @@ impl Lexer {
 
     pub fn peek(&mut self) -> PdfResult<Token> {
         let prev_pos = self.pos;
-        let token = self.next();
+        let token = self.next_token();
         self.pos = prev_pos;
         token
     }
 
-    /// Returns the current byte position in the stream.
     pub fn pos(&self) -> usize {
         self.pos
     }
 
-    /// sets the current byte position in the stream (use with caution).
     pub fn set_pos(&mut self, pos: usize) {
         self.pos = pos;
     }
@@ -249,6 +335,6 @@ fn is_newline(b: u8) -> bool {
     matches!(b, 10 | 13)
 }
 
-fn is_delimiter(b: u8) -> bool {
+pub fn is_delimiter(b: u8) -> bool {
     matches!(b, b'(' | b')' | b'<' | b'>' | b'[' | b']' | b'{' | b'}' | b'/' | b'%')
 }

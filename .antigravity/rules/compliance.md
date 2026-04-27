@@ -17,6 +17,7 @@
 - **Rule**: Validate generated/rendered output against external reference implementations and compliance suites (e.g., VeraPDF).
 - **Purpose**: Ensure that the logical implementation results in a byte-perfect or visually consistent standard-compliant PDF.
 - **Criterion**: Rendering results must match reference baselines within a defined pixel tolerance, and generated files must pass VeraPDF "Level 2.0" validation.
+- **Fidelity Standard**: All generated PDFs must be compatible with Adobe Acrobat Reader (current version). Errors like "Error 135" or structural warnings during document opening are considered compliance failures.
 
 ## 3. Persistent Evidence Log
 

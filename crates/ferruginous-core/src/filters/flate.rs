@@ -18,7 +18,10 @@ impl DecodingFilter for FlateFilter {
 
         decoder
             .read_to_end(&mut decoded)
-            .map_err(|e| PdfError::Filter(format!("Flate decompression failed: {}", e)))?;
+            .map_err(|e| PdfError::Filter {
+                filter: "FlateDecode".into(),
+                message: format!("Flate decompression failed: {}", e).into(),
+            })?;
 
         // Apply predictors if present in DecodeParms
         if let Some(p) = params {

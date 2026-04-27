@@ -8,6 +8,7 @@ members = [
     "crates/ferruginous-wasm",
     "crates/ferruginous",
     "crates/fepdf",
+    "crates/ferruginous-macros",
 ]
 
 [workspace.dependencies]
@@ -19,6 +20,12 @@ thiserror = "2.0"
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = "1.0"
 bytes = { version = "1.10", features = ["serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+# Meta-programming
+syn = { version = "2.0", features = ["full", "extra-traits"] }
+quote = "1.0"
+proc-macro2 = "1.0"
 
 # Parallelism & Performance
 rayon = "1.10"

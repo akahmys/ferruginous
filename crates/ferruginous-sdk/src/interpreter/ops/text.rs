@@ -167,6 +167,7 @@ impl Interpreter<'_> {
             self.state.text_state.char_spacing,
             self.state.text_state.word_spacing,
             res.wmode() == 1,
+            self.op_index,
         );
 
         // Update Tm based on text advancement
@@ -268,12 +269,12 @@ impl Interpreter<'_> {
                     i += consumed;
                     continue;
                 }
-                glyphs.push((cid, w, vx, vy, char_code));
+                glyphs.push((font.to_gid(cid), w, vx, vy, char_code));
                 uni.push_str(&s);
             } else {
                 // If no Unicode mapping, we still render the glyph if it's a printable code
                 if char_code > 31 || char_code == 0x09 || char_code == 0x0A || char_code == 0x0D {
-                    glyphs.push((cid, w, vx, vy, char_code));
+                    glyphs.push((font.to_gid(cid), w, vx, vy, char_code));
                     uni.push('\u{FFFD}');
                 }
             }

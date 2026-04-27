@@ -10,6 +10,7 @@ Global project rules and principles are defined in [.antigravity/rules.md](file:
 - **Rendering**: [.antigravity/rules/rendering.md](file:///.antigravity/rules/rendering.md)
 - **Debugging**: [.antigravity/rules/debugging.md](file:///.antigravity/rules/debugging.md)
 - **Naming**: [.antigravity/rules/naming.md](file:///.antigravity/rules/naming.md)
+- **Discovery**: [.antigravity/rules/discovery.md](file:///.antigravity/rules/discovery.md)
 
 ## Specialized Skills
 Procedural instructions for planning, fixing, and verifying compliance are located in [.antigravity/skills/](file:///.antigravity/skills/).

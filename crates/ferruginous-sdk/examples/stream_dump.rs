@@ -19,8 +19,7 @@ fn main() {
     let arena = doc.arena();
 
     for h in 0..arena.object_count() {
-        let handle =
-            ferruginous_core::handle::Handle::new(u32::try_from(h).expect("Too many objects"));
+        let handle = ferruginous_core::handle::Handle::new(h);
         if let Some(obj) = arena.get_object(handle)
             && let Object::Stream(_, _) = obj
             && let Ok(decoded) = doc.decode_stream(&obj)

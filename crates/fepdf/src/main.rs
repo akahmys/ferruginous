@@ -486,6 +486,14 @@ fn render_compliance_markdown(summary: &ferruginous_sdk::DocumentSummary) -> Res
     } else {
         println!("\n✅ No compliance issues found.");
     }
+
+    if !summary.compliance.iso_clauses.is_empty() {
+        println!("\n## Validated ISO 32000-2 Clauses");
+        println!("The following structural components were validated against the specification:");
+        for clause in &summary.compliance.iso_clauses {
+            println!("- **Clause {}**", clause);
+        }
+    }
     Ok(())
 }
 
@@ -537,6 +545,11 @@ fn render_summary_text(
             for issue in &summary.compliance.issues {
                 println!("[{:?}] {:<10} | {}", issue.severity, issue.standard, issue.message);
             }
+        }
+        
+        if !summary.compliance.iso_clauses.is_empty() {
+            println!("\n--- [ ISO 32000-2 COMPLIANCE ] ---");
+            println!("Validated Clauses: {}", summary.compliance.iso_clauses.join(", "));
         }
     }
 

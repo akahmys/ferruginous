@@ -48,7 +48,7 @@ impl Interpreter<'_> {
             "h" => self.path.close_path(),
             "W" => self.pending_clip = Some(WindingRule::NonZero),
             "W*" => self.pending_clip = Some(WindingRule::EvenOdd),
-            _ => return Err(PdfError::Other(format!("Invalid path op: {op}"))),
+            _ => return Err(PdfError::Other(format!("Invalid path op: {op}").into())),
         }
         Ok(())
     }

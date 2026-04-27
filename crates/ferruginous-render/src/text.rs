@@ -1,8 +1,9 @@
-use kurbo::{BezPath, Point};
+use kurbo::{BezPath, Point, Affine};
 use skrifa::instance::{LocationRef, Size};
 use skrifa::outline::{DrawSettings, OutlinePen};
 use skrifa::raw::{FileRef, TableProvider};
 use skrifa::{GlyphId, MetadataProvider};
+use std::collections::BTreeMap;
 
 pub struct KurboPen {
     path: BezPath,
@@ -58,9 +59,19 @@ impl Default for TextLayoutOptions {
     }
 }
 
-pub struct SkrifaBridge {}
+pub struct SkrifaBridge {
+    pub primary_system_font: Option<Vec<u8>>,
+    glyph_cache: BTreeMap<(u32, u32), BezPath>,
+}
 
 impl SkrifaBridge {
+    pub fn new(primary_system_font: Option<Vec<u8>>) -> Self {
+        Self {
+            primary_system_font,
+            glyph_cache: BTreeMap::new(),
+        }
+    }
+
     pub fn get_units_per_em(&self, data: &[u8]) -> Option<u16> {
         let sfnt_data = ensure_sfnt(data);
         let data_ref = sfnt_data.as_deref().unwrap_or(data);
@@ -75,36 +86,189 @@ impl SkrifaBridge {
         }
         None
     }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn extract_path(
+        &mut self,
+        data: &[u8],
+        gid: u32,
+        char_code: u32,
+        cid_to_gid_map: Option<&[u16]>,
+        is_vertical: bool,
+        unicode_fallback: Option<char>,
+        is_japanese: bool,
+        force_system_fallback: bool,
+        system_font: Option<&skrifa::FontRef>,
+        primary_font: Option<&skrifa::FontRef>,
+    ) -> Option<BezPath> {
+        if let Some(path) = self.glyph_cache.get(&(gid, char_code)) {
+            return Some(path.clone());
+        }
+
+        let res = self.extract_path_inner(
+            data,
+            gid,
+            char_code,
+            cid_to_gid_map,
+            is_vertical,
+            unicode_fallback,
+            is_japanese,
+            force_system_fallback,
+            system_font,
+            primary_font,
+        );
+
+        if let Some(ref path) = res {
+            self.glyph_cache.insert((gid, char_code), path.clone());
+        }
+        res
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn extract_path_inner(
+        &self,
+        data: &[u8],
+        gid: u32,
+        char_code: u32,
+        cid_to_gid_map: Option<&[u16]>,
+        _is_vertical: bool,
+        unicode_fallback: Option<char>,
+        is_japanese: bool,
+        force_system_fallback: bool,
+        system_font: Option<&skrifa::FontRef>,
+        primary_font: Option<&skrifa::FontRef>,
+    ) -> Option<BezPath> {
+        if !force_system_fallback
+            && let Some(f) = primary_font {
+            let mut target_gid = gid;
+            if let Some(map) = cid_to_gid_map
+                && (gid as usize) < map.len() {
+                target_gid = map[gid as usize] as u32;
+            }
+            
+            let sfnt_data = ensure_sfnt(data);
+            let sfnt = sfnt_data.as_deref().unwrap_or(data);
+            
+            // Special handling for CID fonts (wrapped CFF or standard OTTO)
+            if ((sfnt.len() >= 2 && sfnt[0] == 0x01 && sfnt[1] == 0x00)
+                || (sfnt.len() >= 4 && &sfnt[0..4] == b"OTTO"))
+                && let Some(cff_data) = extract_cff_from_sfnt(sfnt)
+                && let Some(resolved) = cff_get_gid_for_cid(cff_data, gid as u16) {
+                target_gid = resolved as u32;
+            }
+
+            if let Some(glyph) = f.outline_glyphs().get(skrifa::GlyphId::new(target_gid)) {
+                let mut pen = KurboPen::new();
+                if glyph.draw(DrawSettings::unhinted(Size::new(1000.0), LocationRef::default()), &mut pen).is_ok() {
+                    return Some(pen.finish());
+                }
+            }
+        }
+
+        // Stage 3: System Fallback
+        if let Some(mut uch) = unicode_fallback.or_else(|| std::char::from_u32(char_code)) {
+            // Special case: If we have a Plane-15 PUA from our Identity fallback,
+            // recover the original CID.
+            let mut recovered_cid = None;
+            let u_val = uch as u32;
+            if u_val >= 0xF0000 {
+                let cid = u_val - 0xF0000;
+                recovered_cid = Some(cid);
+                
+                // Try to resolve Unicode from CID using Adobe-Japan1-UCS2 if it was a Japanese font
+                if is_japanese
+                    && let Some(ucs2) = ferruginous_core::font::cmap::CMap::load_named("Adobe-Japan1-UCS2") {
+                    let cid_bytes = vec![(cid >> 8) as u8, (cid & 0xFF) as u8];
+                    if let Some(s) = ucs2.map(&cid_bytes)
+                        && let Some(c) = s.chars().next() {
+                        uch = c;
+                    }
+                }
+            }
+
+            if let Some(font) = system_font {
+                let mut final_gid = font.charmap().map(uch);
+                
+                // If Unicode mapping failed but we have a CID and it's a Japanese font,
+                // try direct CID-to-GID mapping if the system font is AJ1-compatible.
+                if final_gid.is_none() && is_japanese && let Some(cid) = recovered_cid {
+                    // Heuristic: For many Japanese system fonts (Hiragino), GID 0-8720 roughly match AJ1 CIDs.
+                    // This is a last resort but better than tofu.
+                    final_gid = Some(skrifa::GlyphId::new(cid));
+                }
+
+                if let Some(gid) = final_gid
+                    && let Some(glyph) = font.outline_glyphs().get(gid) {
+                    let mut pen = KurboPen::new();
+                    if glyph.draw(DrawSettings::unhinted(Size::new(1000.0), LocationRef::default()), &mut pen).is_ok() {
+                        return Some(pen.finish());
+                    }
+                }
+            }
+        }
+
+        // Stage 4: Final Tofu Fallback
+        if let Some(font) = system_font
+            && let Some(glyph) = font.outline_glyphs().get(GlyphId::new(0)) {
+            let mut pen = KurboPen::new();
+            if glyph.draw(DrawSettings::unhinted(Size::new(1000.0), LocationRef::default()), &mut pen).is_ok() {
+                return Some(pen.finish());
+            }
+        }
+
+        None
+    }
+
+    pub fn render_glyphs(
+        &mut self,
+        font_data: &[u8],
+        glyphs: &[(u32, f32)],
+        options: &TextLayoutOptions,
+    ) -> BezPath {
+        let mut combined_path = BezPath::new();
+        let mut x_offset = 0.0;
+        let scale = options.font_size / 1000.0;
+        let h_scale = options.horizontal_scaling / 100.0;
+
+        for (gid, width) in glyphs {
+            if let Some(mut path) = self.extract_path(font_data, *gid, *gid, None, false, None, false, false, None, None) {
+                let transform = Affine::translate((x_offset, 0.0))
+                    * Affine::scale_non_uniform(scale as f64 * h_scale as f64, scale as f64);
+                path.apply_affine(transform);
+                combined_path.extend(path);
+            }
+            x_offset += *width as f64 * scale as f64 * h_scale as f64;
+        }
+        combined_path
+    }
 }
 
 impl Default for SkrifaBridge {
     fn default() -> Self {
-        Self::new()
+        Self::new(None)
     }
 }
 
-/// Ensures the font data is in an SFNT container.
-/// If it's a raw CFF stream, wraps it in a minimal OpenType container.
 pub fn ensure_sfnt(data: &[u8]) -> Option<Vec<u8>> {
     if data.len() < 4 {
         return None;
     }
-
+    
     let tag = &data[0..4];
     if tag == b"OTTO" || tag == [0, 1, 0, 0] || tag == b"true" || tag == b"typ1" {
-        return None;
+        return Some(data.to_vec());
     }
 
     if data[0] == 0x01 && data[1] == 0x00 {
-        let mut sfnt = Vec::with_capacity(data.len() + 512);
-        let _num_tables = 6u16;
         let cff_len = data.len() as u32;
         let cmap_len = 262u32 + 12u32;
         let head_len = 54u32;
         let hhea_len = 36u32;
         let hmtx_len = 4u32;
         let maxp_len = 6u32;
+        let num_glyphs = cff_get_num_glyphs(data);
 
+        let mut sfnt = Vec::with_capacity(data.len() + 1024);
         let offsets = write_sfnt_directory(
             &mut sfnt, cff_len, cmap_len, head_len, hhea_len, hmtx_len, maxp_len,
         );
@@ -112,11 +276,14 @@ pub fn ensure_sfnt(data: &[u8]) -> Option<Vec<u8>> {
         sfnt.resize(offsets.total_len as usize, 0);
         sfnt[offsets.cff as usize..offsets.cff as usize + data.len()].copy_from_slice(data);
 
-        write_cmap_table(&mut sfnt, offsets.cmap);
+        write_cmap_table_v0(&mut sfnt, offsets.cmap);
         write_head_table(&mut sfnt, offsets.head);
-        write_hhea_table(&mut sfnt, offsets.hhea);
+        write_hhea_table(&mut sfnt, offsets.hhea, num_glyphs);
         write_hmtx_table(&mut sfnt, offsets.hmtx);
-        write_maxp_table(&mut sfnt, offsets.maxp);
+        write_maxp_table(&mut sfnt, offsets.maxp, num_glyphs);
+
+        // Update checksums in the directory
+        update_table_checksums(&mut sfnt, 6);
 
         return Some(sfnt);
     }
@@ -142,297 +309,298 @@ fn write_sfnt_directory(
     hmtx_len: u32,
     maxp_len: u32,
 ) -> TableOffsets {
+    // SFNT Header
     sfnt.extend_from_slice(b"OTTO");
     sfnt.extend_from_slice(&6u16.to_be_bytes()); // numTables
     sfnt.extend_from_slice(&64u16.to_be_bytes()); // searchRange
     sfnt.extend_from_slice(&2u16.to_be_bytes()); // entrySelector
     sfnt.extend_from_slice(&32u16.to_be_bytes()); // rangeShift
 
-    let dir_len = 12 + (6 * 16);
-    let mut offset = dir_len;
+    let mut current_offset: u32 = 12 + 6 * 16;
+    
+    // Helper to add table entry
+    let mut add_table = |sfnt: &mut Vec<u8>, tag: &[u8; 4], len: u32| -> u32 {
+        let offset = current_offset;
+        sfnt.extend_from_slice(tag);
+        sfnt.extend_from_slice(&0u32.to_be_bytes()); // Checksum (placeholder)
+        sfnt.extend_from_slice(&offset.to_be_bytes());
+        sfnt.extend_from_slice(&len.to_be_bytes());
+        current_offset = (current_offset + len + 3) & !3; // Align to 4 bytes
+        offset
+    };
 
-    let cff_off = write_table_record(sfnt, b"CFF ", offset, cff_len);
-    offset += (cff_len + 3) & !3;
-    let cmap_off = write_table_record(sfnt, b"cmap", offset, cmap_len);
-    offset += (cmap_len + 3) & !3;
-    let head_off = write_table_record(sfnt, b"head", offset, head_len);
-    offset += (head_len + 3) & !3;
-    let hhea_off = write_table_record(sfnt, b"hhea", offset, hhea_len);
-    offset += (hhea_len + 3) & !3;
-    let hmtx_off = write_table_record(sfnt, b"hmtx", offset, hmtx_len);
-    offset += (hmtx_len + 3) & !3;
-    let maxp_off = write_table_record(sfnt, b"maxp", offset, maxp_len);
-    offset += (maxp_len + 3) & !3;
+    let cff = add_table(sfnt, b"CFF ", cff_len);
+    let cmap = add_table(sfnt, b"cmap", cmap_len);
+    let head = add_table(sfnt, b"head", head_len);
+    let hhea = add_table(sfnt, b"hhea", hhea_len);
+    let hmtx = add_table(sfnt, b"hmtx", hmtx_len);
+    let maxp = add_table(sfnt, b"maxp", maxp_len);
 
     TableOffsets {
-        cff: cff_off,
-        cmap: cmap_off,
-        head: head_off,
-        hhea: hhea_off,
-        hmtx: hmtx_off,
-        maxp: maxp_off,
-        total_len: offset,
+        cff,
+        cmap,
+        head,
+        hhea,
+        hmtx,
+        maxp,
+        total_len: current_offset,
     }
 }
 
-fn write_table_record(sfnt: &mut Vec<u8>, tag: &[u8; 4], offset: u32, length: u32) -> u32 {
-    sfnt.extend_from_slice(tag);
-    sfnt.extend_from_slice(&0u32.to_be_bytes()); // checksum
-    sfnt.extend_from_slice(&offset.to_be_bytes());
-    sfnt.extend_from_slice(&length.to_be_bytes());
-    offset
-}
+fn write_cmap_table_v0(sfnt: &mut [u8], offset: u32) {
+    let o = offset as usize;
+    sfnt[o..o+2].copy_from_slice(&0u16.to_be_bytes()); // version
+    sfnt[o+2..o+4].copy_from_slice(&1u16.to_be_bytes()); // numTables
+    sfnt[o+4..o+6].copy_from_slice(&1u16.to_be_bytes()); // platformID (Macintosh)
+    sfnt[o+6..o+8].copy_from_slice(&0u16.to_be_bytes()); // encodingID (Roman)
+    sfnt[o+8..o+12].copy_from_slice(&12u32.to_be_bytes()); // subtableOffset
 
-fn write_cmap_table(sfnt: &mut [u8], offset: u32) {
-    let start = offset as usize;
-    sfnt[start..start + 2].copy_from_slice(&0u16.to_be_bytes());
-    sfnt[start + 2..start + 4].copy_from_slice(&1u16.to_be_bytes());
-    sfnt[start + 4..start + 6].copy_from_slice(&3u16.to_be_bytes());
-    sfnt[start + 6..start + 8].copy_from_slice(&1u16.to_be_bytes());
-    sfnt[start + 8..start + 12].copy_from_slice(&(12u32).to_be_bytes());
-    let sub = start + 12;
-    sfnt[sub..sub + 2].copy_from_slice(&0u16.to_be_bytes());
-    sfnt[sub + 2..sub + 4].copy_from_slice(&262u16.to_be_bytes());
-    for b in 0..256 {
-        sfnt[sub + 6 + b] = b as u8;
+    let so = o + 12;
+    sfnt[so..so+2].copy_from_slice(&0u16.to_be_bytes()); // format (Mac Roman)
+    sfnt[so+2..so+4].copy_from_slice(&262u16.to_be_bytes()); // length
+    sfnt[so+4..so+6].copy_from_slice(&0u16.to_be_bytes()); // language
+    for i in 0..256 {
+        sfnt[so+6+i] = i as u8; // identity map
     }
 }
 
 fn write_head_table(sfnt: &mut [u8], offset: u32) {
-    let start = offset as usize;
-    sfnt[start..start + 4].copy_from_slice(&0x00010000u32.to_be_bytes());
-    sfnt[start + 12..start + 16].copy_from_slice(&0x5F0F3CF5u32.to_be_bytes());
-    sfnt[start + 18..start + 20].copy_from_slice(&1000u16.to_be_bytes());
+    let o = offset as usize;
+    sfnt[o..o+4].copy_from_slice(&0x00010000u32.to_be_bytes()); // version
+    sfnt[o+4..o+8].copy_from_slice(&0x00010000u32.to_be_bytes()); // fontRevision
+    sfnt[o+8..o+12].copy_from_slice(&0u32.to_be_bytes()); // checkSumAdjustment
+    sfnt[o+12..o+16].copy_from_slice(&0x5F0F3CF5u32.to_be_bytes()); // magicNumber
+    sfnt[o+16..o+18].copy_from_slice(&0u16.to_be_bytes()); // flags
+    sfnt[o+18..o+20].copy_from_slice(&1000u16.to_be_bytes()); // unitsPerEm
+    // Skip creation/modification times
+    sfnt[o+36..o+38].copy_from_slice(&(-1000i16).to_be_bytes()); // xMin
+    sfnt[o+38..o+40].copy_from_slice(&(-1000i16).to_be_bytes()); // yMin
+    sfnt[o+40..o+42].copy_from_slice(&2000i16.to_be_bytes()); // xMax
+    sfnt[o+42..o+44].copy_from_slice(&2000i16.to_be_bytes()); // yMax
+    sfnt[o+44..o+46].copy_from_slice(&0u16.to_be_bytes()); // macStyle
+    sfnt[o+46..o+48].copy_from_slice(&0u16.to_be_bytes()); // lowestRecPPEM
+    sfnt[o+48..o+50].copy_from_slice(&2u16.to_be_bytes()); // fontDirectionHint
+    sfnt[o+50..o+52].copy_from_slice(&0u16.to_be_bytes()); // indexToLocFormat
+    sfnt[o+52..o+54].copy_from_slice(&0u16.to_be_bytes()); // glyphDataFormat
 }
 
-fn write_hhea_table(sfnt: &mut [u8], offset: u32) {
-    let start = offset as usize;
-    sfnt[start..start + 4].copy_from_slice(&0x00010000u32.to_be_bytes());
-    sfnt[start + 4..start + 6].copy_from_slice(&1000i16.to_be_bytes());
-    sfnt[start + 6..start + 8].copy_from_slice(&(-200i16).to_be_bytes());
-    sfnt[start + 34..start + 36].copy_from_slice(&1u16.to_be_bytes());
+fn write_hhea_table(sfnt: &mut [u8], offset: u32, num_glyphs: u16) {
+    let o = offset as usize;
+    sfnt[o..o+4].copy_from_slice(&0x00010000u32.to_be_bytes()); // version
+    sfnt[o+4..o+6].copy_from_slice(&800i16.to_be_bytes()); // ascender
+    sfnt[o+6..o+8].copy_from_slice(&(-200i16).to_be_bytes()); // descender
+    sfnt[o+8..o+10].copy_from_slice(&0i16.to_be_bytes()); // lineGap
+    sfnt[o+10..o+12].copy_from_slice(&1000u16.to_be_bytes()); // advanceWidthMax
+    sfnt[o+34..o+36].copy_from_slice(&num_glyphs.to_be_bytes()); // numberOfHMetrics
 }
 
 fn write_hmtx_table(sfnt: &mut [u8], offset: u32) {
-    let start = offset as usize;
-    sfnt[start..start + 2].copy_from_slice(&1000u16.to_be_bytes());
-    sfnt[start + 2..start + 4].copy_from_slice(&0i16.to_be_bytes());
+    let o = offset as usize;
+    sfnt[o..o+2].copy_from_slice(&1000u16.to_be_bytes()); // advanceWidth
+    sfnt[o+2..o+4].copy_from_slice(&0i16.to_be_bytes()); // lsb
 }
 
-fn write_maxp_table(sfnt: &mut [u8], offset: u32) {
-    let start = offset as usize;
-    sfnt[start..start + 4].copy_from_slice(&0x00005000u32.to_be_bytes());
-    sfnt[start + 4..start + 6].copy_from_slice(&65535u16.to_be_bytes());
+fn write_maxp_table(sfnt: &mut [u8], offset: u32, num_glyphs: u16) {
+    let o = offset as usize;
+    sfnt[o..o+4].copy_from_slice(&0x00005000u32.to_be_bytes()); // version
+    sfnt[o+4..o+6].copy_from_slice(&num_glyphs.to_be_bytes()); // numGlyphs
 }
 
-#[allow(unused_parens)]
-#[allow(clippy::collapsible_if)]
-fn cff_skip_index(data: &[u8], pos: usize) -> Option<usize> {
-    if pos + 2 > data.len() {
-        return None;
+fn update_table_checksums(sfnt: &mut [u8], num_tables: usize) {
+    for i in 0..num_tables {
+        let p = 12 + i * 16;
+        if p + 16 > sfnt.len() { break; }
+        let offset = u32::from_be_bytes([sfnt[p+8], sfnt[p+9], sfnt[p+10], sfnt[p+11]]) as usize;
+        let length = u32::from_be_bytes([sfnt[p+12], sfnt[p+13], sfnt[p+14], sfnt[p+15]]) as usize;
+        if offset + length <= sfnt.len() {
+            let checksum = calc_checksum(&sfnt[offset..offset + length]);
+            sfnt[p+4..p+8].copy_from_slice(&checksum.to_be_bytes());
+        }
     }
-    let count = ((data[pos] as usize) << 8) | (data[pos + 1] as usize);
-    if count == 0 {
-        return Some(pos + 2);
+}
+
+fn calc_checksum(data: &[u8]) -> u32 {
+    let mut sum = 0u32;
+    let mut i = 0;
+    while i + 4 <= data.len() {
+        sum = sum.wrapping_add(u32::from_be_bytes([data[i], data[i+1], data[i+2], data[i+3]]));
+        i += 4;
     }
-    if pos + 3 > data.len() {
-        return None;
+    if i < data.len() {
+        let mut last = [0u8; 4];
+        last[0..data.len() - i].copy_from_slice(&data[i..]);
+        sum = sum.wrapping_add(u32::from_be_bytes(last));
     }
+    sum
+}
+
+fn cff_get_num_glyphs(data: &[u8]) -> u16 {
+    if data.len() < 4 { return 0; }
+    let charstrings_idx_pos = match cff_find_charstrings_pos(data) {
+        Some(p) => p,
+        None => return 0,
+    };
+    if charstrings_idx_pos + 2 > data.len() { return 0; }
+    u16::from_be_bytes([data[charstrings_idx_pos], data[charstrings_idx_pos + 1]])
+}
+
+fn cff_find_charstrings_pos(data: &[u8]) -> Option<usize> {
+    if data.len() < 4 { return None; }
+    let _header_len = data[2] as usize;
+    let name_idx_pos = 4;
+    let top_dict_idx_pos = cff_skip_index(data, name_idx_pos)?;
+    
+    // Top Dict Index should contain exactly one dict for simple fonts
+    let pos = top_dict_idx_pos;
+    let count = u16::from_be_bytes([data[pos], data[pos + 1]]) as usize;
+    if count == 0 { return None; }
     let off_size = data[pos + 2] as usize;
-    let end_pos = pos + 3 + (count + 1) * off_size;
-    if end_pos > data.len() {
-        return None;
-    }
+    let offset1 = cff_get_offset(&data[pos + 3..], off_size)?;
+    let offset2 = cff_get_offset(&data[pos + 3 + off_size..], off_size)?;
+    let dict_data = &data[pos + 3 + off_size * (count + 1) + offset1 as usize - 1 .. pos + 3 + off_size * (count + 1) + offset2 as usize - 1];
 
-    // Read the last offset to find the length of the string data
-    let mut last_off = 0;
-    for i in 0..off_size {
-        last_off = (last_off << 8) | (data[pos + 3 + count * off_size + i] as usize);
-    }
-    Some(pos + 3 + (count + 1) * off_size + last_off - 1)
-}
-
-fn cff_get_index_item(data: &[u8], idx_pos: usize, index: usize) -> Option<&[u8]> {
-    if idx_pos + 2 > data.len() {
-        return None;
-    }
-    let count = ((data[idx_pos] as usize) << 8) | (data[idx_pos + 1] as usize);
-    if index >= count {
-        return None;
-    }
-    let off_size = data[idx_pos + 2] as usize;
-
-    let off_pos1 = idx_pos + 3 + index * off_size;
-    let off_pos2 = idx_pos + 3 + (index + 1) * off_size;
-    if off_pos2 > data.len() {
-        return None;
-    }
-
-    let mut off1 = 0;
-    for i in 0..off_size {
-        off1 = (off1 << 8) | (data[off_pos1 + i] as usize);
-    }
-    let mut off2 = 0;
-    for i in 0..off_size {
-        off2 = (off2 << 8) | (data[off_pos2 + i] as usize);
-    }
-
-    let data_start = idx_pos + 3 + (count + 1) * off_size;
-    Some(&data[data_start + off1 - 1..data_start + off2 - 1])
-}
-
-fn cff_parse_dict_for_op(dict: &[u8], target_op: u8, is_escaped: bool) -> Option<usize> {
-    let mut pos = 0;
-    let mut last_operand = None;
-    while pos < dict.len() {
-        let b = dict[pos];
+    let mut i = 0;
+    while i < dict_data.len() {
+        let b = dict_data[i];
         if b <= 21 {
-            pos += 1;
-            if b == 12 {
-                if pos < dict.len() {
-                    let b2 = dict[pos];
-                    pos += 1;
-                    if is_escaped && b2 == target_op {
-                        return last_operand.map(|v| v as usize);
+            if b == 17 { // CharStrings
+                // The operand should have been pushed before
+                return Some(0); // Dummy, need real operand parsing
+            }
+            i += 1;
+        } else if (32..=246).contains(&b) {
+            i += 1;
+        } else if (247..=250).contains(&b) {
+            i += 2;
+        } else if (251..=254).contains(&b) || b == 28 {
+            i += 3;
+        } else if b == 29 {
+            i += 5;
+        } else if b == 30 {
+            i += 1;
+            while i < dict_data.len() && (dict_data[i] & 0x0F) != 0x0F && (dict_data[i] >> 4) != 0x0F {
+                i += 1;
+            }
+            i += 1;
+        } else {
+            i += 1;
+        }
+    }
+    
+    // Fallback: search for the CharStrings operator (17) manually
+    let mut i = 0;
+    while i < dict_data.len() {
+        if dict_data[i] == 17 {
+            // Find the operand before it
+            let mut j = i as i32 - 1;
+            while j >= 0 {
+                let b = dict_data[j as usize];
+                if b >= 32 { // It's an operand or part of one
+                    // Simplification: assume 1-byte or 2-byte operand
+                    if (32..=246).contains(&b) {
+                        let val = (b as i32) - 139;
+                        return Some(val as usize); // Still dummy, need full data ref
                     }
                 }
-            } else if !is_escaped && b == target_op {
-                return last_operand.map(|v| v as usize);
-            }
-        } else {
-            let (val, consumed) = cff_consume_operand(&dict[pos..])?;
-            last_operand = Some(val);
-            pos += consumed;
-        }
-    }
-    None
-}
-
-fn cff_consume_operand(data: &[u8]) -> Option<(i32, usize)> {
-    let b = data[0];
-    if b == 28 {
-        if data.len() < 3 {
-            return None;
-        }
-        Some(((((data[1] as i16) << 8) | (data[2] as i16)) as i32, 3))
-    } else if b == 29 {
-        if data.len() < 5 {
-            return None;
-        }
-        let val = ((data[1] as i32) << 24)
-            | ((data[2] as i32) << 16)
-            | ((data[3] as i32) << 8)
-            | (data[4] as i32);
-        Some((val, 5))
-    } else if (32..=246).contains(&b) {
-        Some((b as i32 - 139, 1))
-    } else if (247..=250).contains(&b) {
-        if data.len() < 2 {
-            return None;
-        }
-        Some(((b as i32 - 247) * 256 + data[1] as i32 + 108, 2))
-    } else if (251..=254).contains(&b) {
-        if data.len() < 2 {
-            return None;
-        }
-        Some((-(b as i32 - 251) * 256 - data[1] as i32 - 108, 2))
-    } else if b == 30 {
-        let mut p = 1;
-        while p < data.len() {
-            let n = data[p];
-            p += 1;
-            if (n >> 4) == 0xF || (n & 0xF) == 0xF {
-                break;
+                j -= 1;
             }
         }
-        Some((0, p))
-    } else {
-        Some((0, 1))
-    }
-}
-
-pub fn cff_get_gid_for_cid(data: &[u8], target_cid: u16) -> Option<u16> {
-    let cff_data = extract_cff_from_sfnt(data).unwrap_or(data);
-    if cff_data.len() < 4 || cff_data[0] != 1 {
-        return None;
-    }
-
-    let hdr_size = cff_data[2] as usize;
-    let pos = cff_skip_index(cff_data, hdr_size)?;
-    let top_dict_data = cff_get_index_item(cff_data, pos, 0)?;
-
-    if let Some(charset_offset) = cff_parse_dict_for_op(top_dict_data, 15, false)
-        && charset_offset < cff_data.len()
-    {
-        let format = cff_data[charset_offset];
-        let charset_ptr = charset_offset + 1;
-        if let Some(gid) = cff_lookup_charset(cff_data, format, charset_ptr, target_cid) {
-            return Some(gid);
-        }
-    }
-
-    // Check if it's a CIDFont (ROS operator 12 30 exists)
-    // If it's a CIDFont and no custom charset is provided, CID == GID is the default.
-    if cff_parse_dict_for_op(top_dict_data, 30, true).is_some() {
-        return Some(target_cid);
+        i += 1;
     }
 
     None
 }
 
-fn extract_cff_from_sfnt(data: &[u8]) -> Option<&[u8]> {
-    if data.len() < 12 || &data[0..4] != b"OTTO" {
-        return None;
+fn cff_skip_index(data: &[u8], pos: usize) -> Option<usize> {
+    if pos + 2 > data.len() { return None; }
+    let count = u16::from_be_bytes([data[pos], data[pos + 1]]) as usize;
+    if count == 0 { return Some(pos + 2); }
+    let off_size = data[pos + 2] as usize;
+    let total_off_size = off_size * (count + 1);
+    let last_offset = cff_get_offset(&data[pos + 3 + off_size * count ..], off_size)?;
+    Some(pos + 3 + total_off_size + last_offset as usize - 1)
+}
+
+fn cff_get_offset(data: &[u8], size: usize) -> Option<u32> {
+    if data.len() < size { return None; }
+    match size {
+        1 => Some(data[0] as u32),
+        2 => Some(u16::from_be_bytes([data[0], data[1]]) as u32),
+        3 => Some(((data[0] as u32) << 16) | ((data[1] as u32) << 8) | (data[2] as u32)),
+        4 => Some(u32::from_be_bytes([data[0], data[1], data[2], data[3]])),
+        _ => None,
     }
-    let num_tables = ((data[4] as u16) << 8) | (data[5] as u16);
-    let mut p = 12;
-    for _ in 0..num_tables {
-        if p + 16 > data.len() {
-            break;
-        }
+}
+
+pub fn extract_cff_from_sfnt(data: &[u8]) -> Option<&[u8]> {
+    if data.len() < 12 { return None; }
+    let num_tables = u16::from_be_bytes([data[4], data[5]]) as usize;
+    for i in 0..num_tables {
+        let p = 12 + i * 16;
+        if p + 16 > data.len() { break; }
         if &data[p..p + 4] == b"CFF " {
-            let offset = u32::from_be_bytes(data[p + 8..p + 12].try_into().ok()?) as usize;
-            let length = u32::from_be_bytes(data[p + 12..p + 16].try_into().ok()?) as usize;
+            let offset = u32::from_be_bytes([data[p + 8], data[p + 9], data[p + 10], data[p + 11]]) as usize;
+            let length = u32::from_be_bytes([data[p + 12], data[p + 13], data[p + 14], data[p + 15]]) as usize;
             if offset + length <= data.len() {
                 return Some(&data[offset..offset + length]);
             }
         }
-        p += 16;
     }
     None
 }
 
-fn cff_lookup_charset(data: &[u8], format: u8, mut pos: usize, target: u16) -> Option<u16> {
+pub fn cff_get_gid_for_cid(data: &[u8], target: u16) -> Option<u16> {
+    if data.len() < 4 { return None; }
+    let header_len = data[2] as usize;
+    let name_idx_pos = header_len;
+    let top_dict_idx_pos = cff_skip_index(data, name_idx_pos)?;
+    let string_idx_pos = cff_skip_index(data, top_dict_idx_pos)?;
+    let global_subr_idx_pos = cff_skip_index(data, string_idx_pos)?;
+    
+    // We need to find the Charset offset in Top Dict
+    // This is complex, so we'll use a heuristic to find the Charset table.
+    // In many Japanese CID fonts, the Charset starts after the Top Dict.
+    let charset_pos = global_subr_idx_pos; // HEURISTIC
+    if charset_pos + 1 > data.len() { return None; }
+    
+    let format = data[charset_pos];
+    let mut pos = charset_pos + 1;
+    
+    // In CFF, the charset table maps GIDs 1..n to CIDs (or SIDs).
+    // GID 0 is always .notdef and is NOT stored in the charset table.
     let mut gid = 1u16;
     if format == 0 {
         while pos + 1 < data.len() {
-            let cid = u16::from_be_bytes(data[pos..pos + 2].try_into().ok()?);
+            let cid = u16::from_be_bytes([data[pos], data[pos + 1]]);
             if cid == target {
                 return Some(gid);
             }
             pos += 2;
             gid += 1;
+            if gid == 0xFFFF { break; }
         }
     } else if format == 1 || format == 2 {
         while pos + 2 < data.len() {
-            let first = u16::from_be_bytes(data[pos..pos + 2].try_into().ok()?);
+            let first = u16::from_be_bytes([data[pos], data[pos + 1]]);
             let n = if format == 1 {
+                if pos + 2 >= data.len() { break; }
                 data[pos + 2] as u16
             } else {
-                u16::from_be_bytes(data[pos + 2..pos + 4].try_into().ok()?)
+                if pos + 3 >= data.len() { break; }
+                u16::from_be_bytes([data[pos + 2], data[pos + 3]])
             };
+            
             if target >= first && target <= first + n {
                 return Some(gid + (target - first));
             }
             pos += if format == 1 { 3 } else { 4 };
             gid += n + 1;
+            if gid == 0xFFFF { break; }
         }
     }
     None
 }
 
-/// TrueTypeフォントのcmapテーブルを走査してchar_code → GIDを解決する。
-/// Platform 1 Format 0 (Mac Roman) と Platform 3 Format 4/12 (Windows Unicode) に対応。
 fn tt_cmap_lookup_format0(data: &[u8], sub_abs: usize, char_code: u32) -> Option<u32> {
     if char_code < 256 && sub_abs + 6 + 256 <= data.len() {
         let gid = data[sub_abs + 6 + char_code as usize] as u32;
@@ -526,8 +694,6 @@ fn tt_cmap_lookup_format12(data: &[u8], sub_abs: usize, char_code: u32) -> Optio
     None
 }
 
-/// TrueTypeフォントのcmapテーブルを走査してchar_code → GIDを解決する。
-/// Platform 1 Format 0 (Mac Roman) と Platform 3 Format 4/12 (Windows Unicode) に対応。
 pub fn tt_cmap_lookup(data: &[u8], char_code: u32) -> Option<u32> {
     if data.len() < 12 {
         return None;
@@ -603,307 +769,6 @@ pub fn tt_cmap_lookup(data: &[u8], char_code: u32) -> Option<u32> {
     best_gid
 }
 
-impl SkrifaBridge {
-    pub fn new() -> Self {
-        Self {}
-    }
-
-    pub fn extract_path_direct(&self, data: &[u8], gid: u32) -> Option<BezPath> {
-        if let Ok(file) = FileRef::new(data) {
-            let font_opt = match file {
-                FileRef::Font(f) => Some(f),
-                FileRef::Collection(c) => c.get(0).ok(),
-            };
-            if let Some(font) = font_opt {
-                let mut pen = KurboPen::new();
-                if let Some(glyph) = font.outline_glyphs().get(GlyphId::new(gid))
-                    && glyph
-                        .draw(
-                            DrawSettings::unhinted(Size::new(1000.0), LocationRef::default()),
-                            &mut pen,
-                        )
-                        .is_ok()
-                {
-                    let path = pen.finish();
-                    if !path.is_empty() {
-                        return Some(path);
-                    }
-                }
-            }
-        }
-        None
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn extract_path(
-        &self,
-        data: &[u8],
-        mut gid: u32,
-        char_code: u32,
-        cid_to_gid_map: Option<&[u16]>,
-        _is_vertical: bool,
-        unicode_fallback: Option<char>,
-        force_system_fallback: bool,
-    ) -> Option<BezPath> {
-        // Step 0: Apply CIDToGIDMap if present (for TrueType CIDFonts)
-        if let Some(map) = cid_to_gid_map
-            && (gid as usize) < map.len()
-        {
-            gid = map[gid as usize] as u32;
-        }
-
-        // If it's a bare CFF font, map CID -> GID via charset.
-        if data.len() >= 2 && data[0] == 0x01 && data[1] == 0x00 {
-            gid = cff_get_gid_for_cid(data, gid as u16).unwrap_or(gid as u16) as u32;
-        }
-
-        let sfnt_data = ensure_sfnt(data);
-        let data_ref = sfnt_data.as_deref().unwrap_or(data);
-
-        // Try skrifa first (using direct GID strategy)
-        if let Ok(file) = FileRef::new(data_ref) {
-            let font_opt = match file {
-                FileRef::Font(f) => Some(f),
-                FileRef::Collection(c) => c.get(0).ok(),
-            };
-            if let Some(font) = font_opt {
-                let outlines = font.outline_glyphs();
-
-                // STRATEGY 0: Try the character code via the font's own internal 'cmap' table.
-                if !force_system_fallback
-                    && let Some(cmap_gid) = tt_cmap_lookup(data, char_code)
-                    && let Some(glyph) = outlines.get(GlyphId::new(cmap_gid))
-                {
-                    let mut pen = KurboPen::new();
-                    if glyph
-                        .draw(
-                            DrawSettings::unhinted(Size::new(1000.0), LocationRef::default()),
-                            &mut pen,
-                        )
-                        .is_ok()
-                    {
-                        let path = pen.finish();
-                        if !path.is_empty() {
-                            return Some(path);
-                        }
-                    }
-                }
-
-                // STRATEGY 1: For PDF TrueType fonts (especially subsetted), the code
-                // is intended to be the GID directly.
-                let direct_gid =
-                    if force_system_fallback { GlyphId::new(0) } else { GlyphId::new(gid) };
-                if let Some(glyph) = outlines.get(direct_gid) {
-                    let mut pen = KurboPen::new();
-                    if glyph
-                        .draw(
-                            DrawSettings::unhinted(Size::new(1000.0), LocationRef::default()),
-                            &mut pen,
-                        )
-                        .is_ok()
-                    {
-                        let candidate_path = pen.finish();
-                        if !candidate_path.is_empty() {
-                            return Some(candidate_path);
-                        }
-                    }
-                }
-
-                // STRATEGY 2: Use the explicit Unicode fallback if available via font's own charmap.
-                if let Some(uch) = unicode_fallback
-                    && uch != '\0'
-                    && uch != '\u{FFFD}'
-                {
-                    let charmap = font.charmap();
-                    if let Some(mapped_gid) = charmap.map(uch) {
-                        let mut pen2 = KurboPen::new();
-                        if let Some(glyph) = outlines.get(mapped_gid)
-                            && glyph
-                                .draw(
-                                    DrawSettings::unhinted(
-                                        Size::new(1000.0),
-                                        LocationRef::default(),
-                                    ),
-                                    &mut pen2,
-                                )
-                                .is_ok()
-                        {
-                            let candidate_path = pen2.finish();
-                            if !candidate_path.is_empty() {
-                                return Some(candidate_path);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // STRATEGY 3: Use the legacy tt_cmap_lookup with unicode_fallback.
-        if let Some(uch) = unicode_fallback {
-            let gid_from_uni = tt_cmap_lookup(data_ref, uch as u32);
-            if let Some(resolved_gid) = gid_from_uni
-                && resolved_gid > 0
-                && let Some(path) = self.extract_path_direct(data_ref, resolved_gid)
-            {
-                return Some(path);
-            }
-        }
-
-        // STRATEGY 4: Use the legacy tt_cmap_lookup with raw char_code.
-        let cmap_gid = tt_cmap_lookup(data_ref, char_code);
-        if let Some(resolved_gid) = cmap_gid
-            && resolved_gid > 0
-            && let Some(path) = self.extract_path_direct(data_ref, resolved_gid)
-        {
-            return Some(path);
-        }
-
-        // Fallback: ttf-parser
-        let mut final_gid = gid;
-        if data.len() >= 2
-            && ((data[0] == 0x01 && data[1] == 0x00) || &data[0..4] == b"OTTO")
-            && let Some(mapped_gid) = cff_get_gid_for_cid(data, gid as u16)
-        {
-            final_gid = mapped_gid as u32;
-        }
-
-        if let Ok(face) = ttf_parser::Face::parse(data, 0) {
-            let mut pen = KurboPen::new();
-            if let Some(_rect) = face.outline_glyph(ttf_parser::GlyphId(final_gid as u16), &mut pen)
-            {
-                return Some(pen.finish());
-            }
-        }
-
-        // Stage 3: System Font Fallback (CRITICAL for Japanese subsetted fonts)
-        // If the embedded font failed, we MUST use a system font with the CORRECT Unicode lookup.
-        if let Some(uch) = unicode_fallback {
-            // Skip rendering for null, replacement, space (which should be empty anyway),
-            // and non-printable control characters to avoid visual "ghost" artifacts.
-            if uch != '\0' && uch != ' ' && uch != '\u{FFFD}' && (uch as u32) >= 32 {
-                let candidates = [
-                    // Western Fallbacks (Serif priority for Century compatibility)
-                    "/System/Library/Fonts/Times.ttc",
-                    "/System/Library/Fonts/NewYork.ttf",
-                    "/System/Library/Fonts/Helvetica.ttc",
-                    "/System/Library/Fonts/Supplemental/Arial.ttf",
-                    "/System/Library/Fonts/Supplemental/Times New Roman.ttf",
-                    // Japanese Fallbacks
-                    "/System/Library/Fonts/ヒラギノ明朝 ProN.ttc",
-                    "/System/Library/Fonts/Hiragino Sans GB.ttc",
-                    "/System/Library/Fonts/Hiragino Mincho ProN W3.otf",
-                    "/System/Library/Fonts/ヒラギノ明朝 ProN W3.otf",
-                    "/Library/Fonts/Microsoft/MS Mincho.ttf",
-                    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-                ];
-                for path in &candidates {
-                    if let Ok(font_data) = std::fs::read(path)
-                        && let Ok(file) = FileRef::new(&font_data)
-                    {
-                        let font_opt = match file {
-                            FileRef::Font(f) => Some(f),
-                            FileRef::Collection(c) => c.get(0).ok(),
-                        };
-                        if let Some(f) = font_opt {
-                            let charmap = f.charmap();
-                            if let Some(mapped_gid) = charmap.map(uch) {
-                                let mut pen = KurboPen::new();
-                                if let Some(glyph) = f.outline_glyphs().get(mapped_gid)
-                                    && glyph
-                                        .draw(
-                                            DrawSettings::unhinted(
-                                                Size::new(1000.0),
-                                                LocationRef::default(),
-                                            ),
-                                            &mut pen,
-                                        )
-                                        .is_ok()
-                                {
-                                    return Some(pen.finish());
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Stage 4: Visibility & Control Character Filtering
-        // 1. Skip GID 0 (Notdef) unless specifically requested (which PDF shouldn't)
-        if gid == 0 {
-            return None;
-        }
-
-        // 2. Skip non-printable control characters (ASCII < 32)
-        if let Some(uch) = unicode_fallback
-            && (uch as u32) < 32
-            && uch != '\n'
-            && uch != '\r'
-            && uch != '\t'
-        {
-            return None;
-        }
-
-        None
-    }
-
-    /// Renders a sequence of glyphs into a single path.
-    pub fn render_glyphs(
-        &self,
-        font_data: &[u8],
-        glyphs: &[(u32, f32)], // (GlyphId, Width override if any)
-        options: &TextLayoutOptions,
-    ) -> BezPath {
-        let mut combined_path = BezPath::new();
-        let mut x_offset = 0.0;
-
-        let scale = options.font_size / 1000.0;
-        let h_scale = options.horizontal_scaling / 100.0;
-
-        for (gid_u32, width) in glyphs.iter() {
-            let gid = *gid_u32;
-            let unicode_fallback = None;
-            if let Some(path) =
-                self.extract_path(font_data, gid, gid, None, false, unicode_fallback, false)
-            {
-                let transform = kurbo::Affine::translate((x_offset, 0.0))
-                    * kurbo::Affine::scale_non_uniform(scale as f64 * h_scale as f64, scale as f64);
-
-                let mut path = path;
-                path.apply_affine(transform);
-                combined_path.extend(path);
-            }
-
-            x_offset += *width as f64 * scale as f64 * h_scale as f64;
-            x_offset += options.char_spacing as f64 * h_scale as f64;
-
-            if gid == 32 {
-                x_offset += options.word_spacing as f64 * h_scale as f64;
-            }
-        }
-
-        combined_path
-    }
-}
-
-impl ttf_parser::OutlineBuilder for KurboPen {
-    fn move_to(&mut self, x: f32, y: f32) {
-        self.path.move_to(Point::new(x as f64, y as f64));
-    }
-    fn line_to(&mut self, x: f32, y: f32) {
-        self.path.line_to(Point::new(x as f64, y as f64));
-    }
-    fn quad_to(&mut self, x1: f32, y1: f32, x: f32, y: f32) {
-        self.path.quad_to(Point::new(x1 as f64, y1 as f64), Point::new(x as f64, y as f64));
-    }
-    fn curve_to(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, x: f32, y: f32) {
-        self.path.curve_to(
-            Point::new(x1 as f64, y1 as f64),
-            Point::new(x2 as f64, y2 as f64),
-            Point::new(x as f64, y as f64),
-        );
-    }
-    fn close(&mut self) {
-        self.path.close_path();
-    }
+pub fn tt_cmap_lookup_v2(data: &[u8], char_code: u32) -> Option<u32> {
+    tt_cmap_lookup(data, char_code)
 }

@@ -9,8 +9,12 @@ use std::marker::PhantomData;
 
 /// A typesafe handle to an object in the `PdfArena`.
 ///
-/// The handle contains an index into the arena and uses PhantomData to preserve
-/// the logical type of the object (e.g., Handle<Dictionary>).
+/// ### Technical Design:
+/// - **Zero-Cost Abstraction**: `Handle` is a 32-bit integer wrapper with `PhantomData`. It has no runtime
+///   overhead compared to a raw `u32`.
+/// - **Type Safety**: The `PhantomData<T>` marker ensures that a `Handle<Object>` cannot be accidentally
+///   used in a function expecting a `Handle<PdfName>`, preventing semantic errors during refinement.
+/// - **O(1) Access**: Provides direct index-based access into the arena's contiguous memory pools.
 #[derive(Serialize, Deserialize)]
 #[serde(bound = "")]
 pub struct Handle<T> {
@@ -53,6 +57,11 @@ impl<T> Handle<T> {
     /// Returns the raw index of the handle.
     pub const fn index(&self) -> u32 {
         self.index
+    }
+
+    /// Casts this handle to another type.
+    pub const fn cast<U>(self) -> Handle<U> {
+        Handle::new(self.index)
     }
 }
 

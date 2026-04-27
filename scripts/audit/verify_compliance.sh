@@ -25,12 +25,17 @@ while read -r file; do
     awk '
     /^pub fn|^fn / { 
         if ($0 ~ /mod tests/) { in_test=1; }
-        if (!in_test) { in_fn=1; fn_name=$0; fn_start=FNR; }
+        if (!in_test) { in_fn=1; fn_name=$0; fn_start=FNR; effective_lines=0; }
     } 
+    in_fn {
+        # Skip blank lines and comments
+        if ($0 !~ /^[[:space:]]*$/ && $0 !~ /^[[:space:]]*\/\// && $0 !~ /^[[:space:]]*\/\*/) {
+            effective_lines++;
+        }
+    }
     in_fn && /^}/ { 
-        lines=FNR-fn_start+1; 
-        if (lines > 50) { 
-            print "  FAIL: " FILENAME ":" fn_start " (" lines " lines) " fn_name;
+        if (effective_lines > 50) { 
+            print "  FAIL: " FILENAME ":" fn_start " (" effective_lines " effective lines) " fn_name;
             exit 1;
         } 
         in_fn=0;

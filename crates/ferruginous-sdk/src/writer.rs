@@ -3,7 +3,7 @@
 //! This module serializes the refined PdfArena back into a physical PDF byte stream.
 
 use ferruginous_core::{Handle, Object, PdfArena, PdfError, PdfName, PdfResult};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::io::Write;
 
@@ -18,6 +18,9 @@ pub struct PdfWriter<'a, W: Write> {
     linearize: bool,
     sig_handle: Option<Handle<Object>>,
     string_encoding: crate::StringEncoding,
+    security_handler: Option<ferruginous_core::security::SecurityHandler>,
+    current_obj_id: u32,
+    current_obj_gen: u16,
 }
 
 impl<'a, W: Write> PdfWriter<'a, W> {
@@ -33,7 +36,15 @@ impl<'a, W: Write> PdfWriter<'a, W> {
             linearize: false,
             sig_handle: None,
             string_encoding: crate::StringEncoding::default(),
+            security_handler: None,
+            current_obj_id: 0,
+            current_obj_gen: 0,
         }
+    }
+
+    /// Sets the security handler for encryption.
+    pub fn set_security_handler(&mut self, handler: ferruginous_core::security::SecurityHandler) {
+        self.security_handler = Some(handler);
     }
 
     /// Sets the encoding for string literals (Standard or Unicode).
@@ -85,8 +96,20 @@ impl<'a, W: Write> PdfWriter<'a, W> {
             Object::Boolean(b) => self.write_all(if *b { b"true" } else { b"false" }),
             Object::Integer(i) => self.write_all(i.to_string().as_bytes()),
             Object::Real(f) => self.write_all(format!("{f:.4}").as_bytes()),
-            Object::String(s) => self.write_string_literal(s),
-            Object::Hex(s) => self.write_string_hex(s),
+            Object::String(s) => {
+                let mut data = s.to_vec();
+                if let Some(sh) = &self.security_handler {
+                    data = sh.encrypt_stream(&data, self.current_obj_id, self.current_obj_gen)?;
+                }
+                self.write_string_literal(&data)
+            }
+            Object::Hex(s) => {
+                let mut data = s.to_vec();
+                if let Some(sh) = &self.security_handler {
+                    data = sh.encrypt_stream(&data, self.current_obj_id, self.current_obj_gen)?;
+                }
+                self.write_string_hex(&data)
+            }
             Object::Name(n) => self.write_name(n),
             Object::Array(h) => {
                 let a = self
@@ -118,20 +141,37 @@ impl<'a, W: Write> PdfWriter<'a, W> {
                 let length_key = self.arena.get_name_by_str("Length");
 
                 let mut stream_data = data.clone();
-                let mut use_compression = false;
+                let mut already_filtered = false;
 
-                if let Some(level) = self.compression_level {
-                    use_compression = true;
+                // Check if the stream is already compressed/filtered
+                if let Some(fk) = filter_key && d.contains_key(&fk) {
+                    if let Ok(decompressed) = self.arena.process_filters(data, &d) {
+                        // Successfully decompressed, we can now treat it as raw data
+                        stream_data = decompressed;
+                    } else {
+                        // Decompression failed or unsupported. 
+                        already_filtered = true;
+                    }
+                }
+
+                let applied_new_compression = if !already_filtered && let Some(level) = self.compression_level {
                     use flate2::Compression;
                     use flate2::write::ZlibEncoder;
                     let mut encoder = ZlibEncoder::new(Vec::new(), Compression::new(level));
-                    encoder.write_all(data).map_err(PdfError::Io)?;
-                    stream_data = bytes::Bytes::from(encoder.finish().map_err(PdfError::Io)?);
-                }
+                    std::io::Write::write_all(&mut encoder, &stream_data).map_err(|e| PdfError::Other(e.to_string().into()))?;
+                    stream_data = bytes::Bytes::from(encoder.finish().map_err(|e| PdfError::Other(e.to_string().into()))?);
+                    true
+                } else {
+                    false
+                };
 
                 self.write_all(b"<<")?;
                 for (k, v) in d {
-                    if Some(k) == filter_key || Some(k) == length_key {
+                    // Skip Length (always re-calculated) and Filter (only if we are applying a new one)
+                    if Some(k) == length_key {
+                        continue;
+                    }
+                    if Some(k) == filter_key && (applied_new_compression || !already_filtered) {
                         continue;
                     }
                     self.write_all(b"\r\n")?;
@@ -139,13 +179,19 @@ impl<'a, W: Write> PdfWriter<'a, W> {
                     self.write_all(b" ")?;
                     self.write_object(&v)?;
                 }
-                if use_compression {
+                if applied_new_compression {
                     self.write_all(b"\r\n/Filter /FlateDecode")?;
                 }
-                self.write_all(format!("\r\n/Length {}", stream_data.len()).as_bytes())?;
+                
+                let mut final_data = stream_data.to_vec();
+                if let Some(sh) = &self.security_handler {
+                    final_data = sh.encrypt_stream(&final_data, self.current_obj_id, self.current_obj_gen)?;
+                }
+
+                self.write_all(format!("\r\n/Length {}", final_data.len()).as_bytes())?;
                 self.write_all(b"\r\n>>")?;
                 self.write_all(b"\r\nstream\r\n")?;
-                self.write_all(&stream_data)?;
+                self.write_all(&final_data)?;
                 self.write_all(b"\r\nendstream")
             }
             Object::Null => self.write_all(b"null"),
@@ -176,7 +222,7 @@ impl<'a, W: Write> PdfWriter<'a, W> {
             self.arena.get_name(*n).ok_or_else(|| PdfError::Other("Name not found".into()))?;
         self.write_all(b"/")?;
         for &b in name.as_ref() {
-            if b == b'#' || b <= 32 || b >= 127 {
+            if b == b'#' || b <= 32 || b >= 127 || b == b'(' || b == b')' || b == b'<' || b == b'>' || b == b'[' || b == b']' || b == b'{' || b == b'}' || b == b'/' || b == b'%' {
                 self.write_all(format!("#{b:02X}").as_bytes())?;
             } else {
                 self.write_all(&[b])?;
@@ -186,15 +232,6 @@ impl<'a, W: Write> PdfWriter<'a, W> {
     }
 
     fn write_string_literal(&mut self, s: &[u8]) -> PdfResult<()> {
-        if let Ok(utf8_str) = std::str::from_utf8(s)
-            && !utf8_str.is_ascii()
-        {
-            self.write_all(b"<FEFF")?;
-            for c in utf8_str.encode_utf16() {
-                self.write_all(format!("{c:04X}").as_bytes())?;
-            }
-            return self.write_all(b">");
-        }
         self.write_all(b"(")?;
         for &b in s {
             match b {
@@ -215,15 +252,59 @@ impl<'a, W: Write> PdfWriter<'a, W> {
         self.write_all(b">")
     }
 
+    fn write_indirect_object(&mut self, id: u32, generation: u16, handle: Handle<Object>) -> PdfResult<()> {
+        self.xref.insert(id, self.current_offset());
+        self.current_obj_id = id;
+        self.current_obj_gen = generation;
+        self.write_all(format!("{id} {generation} obj\r\n").as_bytes())?;
+        let obj = self.arena.get_object(handle).ok_or_else(|| PdfError::Other(format!("Object {id} missing").into()))?;
+        self.write_object(&obj)?;
+        self.write_all(b"\r\nendobj\r\n")?;
+        Ok(())
+    }
+
     /// Finalizes the PDF by writing trailers and cross-reference tables.
-    pub fn finish(&mut self, root_handle: Handle<Object>) -> PdfResult<()> {
+    pub fn finish(
+        &mut self,
+        root_handle: Handle<Object>,
+        info_handle: Option<Handle<Object>>,
+    ) -> PdfResult<()> {
         if self.linearize {
-            self.finish_linearized(root_handle)?;
+            self.finish_linearized(root_handle, info_handle)?;
         } else {
-            self.finish_standard(root_handle)?;
+            self.finish_standard(root_handle, info_handle)?;
         }
         self.patch_signatures()?;
         self.inner.write_all(&self.buffer).map_err(PdfError::Io)?;
+        self.inner.flush().map_err(PdfError::Io)?;
+        Ok(())
+    }
+
+    /// Appends an incremental update to the output.
+    pub fn write_incremental_update(
+        &mut self,
+        _root_handle: Handle<Object>,
+        prev_xref: usize,
+        total_objects: u32,
+        changed_handles: &[(u32, Handle<Object>)],
+    ) -> PdfResult<()> {
+        let update_start = self.current_offset();
+        for (id, handle) in changed_handles {
+            self.write_indirect_object(*id, 0, *handle)?;
+        }
+
+        let xref_offset = self.current_offset();
+        self.write_all(b"xref\r\n")?;
+        for (id, _) in changed_handles {
+            self.write_all(format!("{id} 1\r\n").as_bytes())?;
+            let off = self.xref.get(id).copied().unwrap_or(0);
+            self.write_all(format!("{off:010} 00000 n\r\n").as_bytes())?;
+        }
+
+        let id_hex = "f00baa42f00baa42f00baa42f00baa42";
+        self.write_all(format!("trailer\r\n<< /Size {total_objects} /Prev {prev_xref} /Root 2 0 R /ID [<{id_hex}> <{id_hex}>] >>\r\nstartxref\r\n{xref_offset}\r\n%%EOF\r\n").as_bytes())?;
+        
+        self.inner.write_all(&self.buffer[update_start..]).map_err(PdfError::Io)?;
         self.inner.flush().map_err(PdfError::Io)?;
         Ok(())
     }
@@ -283,15 +364,19 @@ impl<'a, W: Write> PdfWriter<'a, W> {
         Ok(())
     }
 
-    // --- Standard Export (Non-linearized) ---
-
-    fn finish_standard(&mut self, root_handle: Handle<Object>) -> PdfResult<()> {
-        let mut reachable = std::collections::HashSet::new();
+    fn finish_standard(
+        &mut self,
+        root_handle: Handle<Object>,
+        info_handle: Option<Handle<Object>>,
+    ) -> PdfResult<()> {
+        let mut reachable = BTreeSet::new();
         self.trace_reachable(Object::Reference(root_handle), &mut reachable);
+        if let Some(ih) = info_handle {
+            self.trace_reachable(Object::Reference(ih), &mut reachable);
+        }
+
         let mut sorted_handles: Vec<_> = reachable.into_iter().collect();
         sorted_handles.sort_by_key(|h| h.index());
-
-        self.write_all(b"%PDF-2.0\r\n%\xe2\xe3\xcf\xd3\r\n")?;
 
         let mut next_id = 1;
         for &handle in &sorted_handles {
@@ -299,15 +384,10 @@ impl<'a, W: Write> PdfWriter<'a, W> {
             next_id += 1;
         }
 
+        let mut current_id = 1;
         for &handle in &sorted_handles {
-            if let Some(obj) = self.arena.get_object(handle) {
-                let id = self.id_map[&handle];
-                let offset = self.current_offset();
-                self.xref.insert(id, offset);
-                self.write_all(format!("{id} 0 obj\r\n").as_bytes())?;
-                self.write_object(&obj)?;
-                self.write_all(b"\r\nendobj\r\n")?;
-            }
+            self.write_indirect_object(current_id, 0, handle)?;
+            current_id += 1;
         }
 
         let total_size = next_id;
@@ -318,21 +398,33 @@ impl<'a, W: Write> PdfWriter<'a, W> {
             self.write_all(format!("{offset:010} 00000 n\r\n").as_bytes())?;
         }
 
+        let id_hex = "f00baa42f00baa42f00baa42f00baa42";
         self.write_all(b"trailer\r\n<<\r\n")?;
         self.write_all(format!("/Size {total_size}\r\n").as_bytes())?;
         self.write_all(format!("/Root {} 0 R\r\n", self.id_map[&root_handle]).as_bytes())?;
+        if let Some(ih) = info_handle
+            && let Some(&id) = self.id_map.get(&ih)
+        {
+            self.write_all(format!("/Info {id} 0 R\r\n").as_bytes())?;
+        }
+        self.write_all(format!("/ID [<{id_hex}> <{id_hex}>]\r\n").as_bytes())?;
         self.write_all(b">>\r\nstartxref\r\n")?;
         self.write_all(start_xref.to_string().as_bytes())?;
         self.write_all(b"\r\n%%EOF\r\n")?;
         Ok(())
     }
 
-    // --- Linearized Export (Fast Web View) ---
-
     #[allow(clippy::cast_possible_truncation)]
-    fn finish_linearized(&mut self, root_handle: Handle<Object>) -> PdfResult<()> {
-        let mut all_reachable = std::collections::HashSet::new();
+    fn finish_linearized(
+        &mut self,
+        root_handle: Handle<Object>,
+        info_handle: Option<Handle<Object>>,
+    ) -> PdfResult<()> {
+        let mut all_reachable = BTreeSet::new();
         self.trace_reachable(Object::Reference(root_handle), &mut all_reachable);
+        if let Some(ih) = info_handle {
+            self.trace_reachable(Object::Reference(ih), &mut all_reachable);
+        }
 
         let mut page_handles = Vec::new();
         if let Some(Object::Dictionary(dh)) = self.arena.get_object(root_handle)
@@ -346,12 +438,9 @@ impl<'a, W: Write> PdfWriter<'a, W> {
         }
         let page_count = page_handles.len() as u32;
 
-        // Build deterministic object order and ID mapping
-        // 1: Dict, 2: Catalog, 3: Hint, 4: Page 1, 5..N: Resources/Others
-        // 2. Identify shared objects (reachable from multiple pages)
         let mut ref_counts: BTreeMap<Handle<Object>, usize> = BTreeMap::new();
         for &page_h in &page_handles {
-            let mut page_reachable = std::collections::HashSet::new();
+            let mut page_reachable = BTreeSet::new();
             self.trace_page_resources(page_h, &mut page_reachable);
             for &h in &page_reachable {
                 *ref_counts.entry(h).or_default() += 1;
@@ -363,8 +452,7 @@ impl<'a, W: Write> PdfWriter<'a, W> {
             .map(|(&h, _)| h)
             .collect();
 
-        // 3. Assign IDs and write objects
-        let mut next_id = 3; // 1=Linearization, 2=Root
+        let mut next_id = 3;
         let mut page_ids = Vec::new();
         for &h in &page_handles {
             self.id_map.insert(h, next_id);
@@ -379,7 +467,7 @@ impl<'a, W: Write> PdfWriter<'a, W> {
             next_id += 1;
         }
 
-        let mut assigned = std::collections::HashSet::new();
+        let mut assigned = BTreeSet::new();
         assigned.insert(root_handle);
         
         let mut ordered_objects = Vec::new();
@@ -403,67 +491,48 @@ impl<'a, W: Write> PdfWriter<'a, W> {
             next_id += 1;
         }
         let total_size = next_id;
-        let primary_count = 5 + page_ids.len() as u32 + shared_ids.len() as u32; // Rough estimate for P1 section
+        let primary_count = 5 + page_ids.len() as u32 + shared_ids.len() as u32;
         
-        // Track object counts per page for hint table
         let mut obj_counts = Vec::new();
         for &page_h in &page_handles {
-            let mut page_reachable = std::collections::HashSet::new();
+            let mut page_reachable = BTreeSet::new();
             self.trace_page_resources(page_h, &mut page_reachable);
             obj_counts.push((1 + page_reachable.len()) as u32);
         }
 
-        // --- Physical Stream Construction ---
-
-        // 1. Header & Placeholder for Primary Segment
-        self.write_all(b"%PDF-2.0\r\n%\xe2\xe3\xcf\xd3\r\n")?;
+        self.write_all(b"%PDF-2.0\r\n%\xe2\xe3\xcf\xD3\r\n")?;
         let dict_pos = self.current_offset();
-        self.write_all(&vec![b' '; 256])?; // /Linearized Dict Placeholder
+        self.write_all(&vec![b' '; 256])?;
         let primary_xref_pos = self.current_offset();
         let primary_xref_size = 256 + (primary_count as usize * 20);
-        self.write_all(&vec![b' '; primary_xref_size])?; // Primary XRef Placeholder
+        self.write_all(&vec![b' '; primary_xref_size])?;
 
-        // 2. 2 0 obj (Catalog)
-        self.xref.insert(2, self.current_offset());
-        self.write_all(b"2 0 obj\r\n")?;
-        let root_obj = self.arena.get_object(root_handle).ok_or_else(|| PdfError::Other("Root missing".into()))?;
-        self.write_object(&root_obj)?;
-        self.write_all(b"\r\nendobj\r\n")?;
+        self.write_indirect_object(2, 0, root_handle)?;
 
-        // 3. 3 0 obj (Hint Stream Placeholder)
         let hint_table_pos = self.current_offset();
         self.xref.insert(3, hint_table_pos);
+        self.current_obj_id = 3;
+        self.current_obj_gen = 0;
         let page_hint_len = 36 + (page_count as usize * 6);
         let shared_hint_len = 20;
         let hint_data_len = page_hint_len + shared_hint_len;
         let hint_footer = "\r\nendstream\r\nendobj\r\n";
-        self.write_all(&vec![b' '; 64 + hint_data_len + hint_footer.len()])?; // Oversized placeholder
+        self.write_all(&vec![b' '; 64 + hint_data_len + hint_footer.len()])?;
 
-        // 4. 4 0 obj (Page 1)
         let page1_start = self.current_offset();
         if !page_handles.is_empty() {
-            self.xref.insert(4, page1_start);
-            self.write_all(b"4 0 obj\r\n")?;
-            let p1_obj = self.arena.get_object(page_handles[0]).ok_or_else(|| PdfError::Other("Page 1 missing".into()))?;
-            self.write_object(&p1_obj)?;
-            self.write_all(b"\r\nendobj\r\n")?;
+            self.write_indirect_object(4, 0, page_handles[0])?;
         }
 
-        // 5. 5..N 0 obj (Resources and Other Objects)
         for h in ordered_objects {
             let id = self.id_map[&h];
-            self.xref.insert(id, self.current_offset());
-            self.write_all(format!("{id} 0 obj\r\n").as_bytes())?;
-            let obj = self.arena.get_object(h).ok_or_else(|| PdfError::Other("Object missing".into()))?;
-            self.write_object(&obj)?;
-            self.write_all(b"\r\nendobj\r\n")?;
+            self.write_indirect_object(id, 0, h)?;
         }
-        let page1_end = *self.xref.get(&(primary_count - 1)).unwrap_or(&self.current_offset());
+        let page1_end = *self.xref.get(&(primary_count - 1)).unwrap_or(&self.buffer.len());
 
-        // 6. Main XRef & Trailer
         let main_xref_offset = self.current_offset();
         let xref_header = format!("xref\r\n0 {total_size}\r\n");
-        let t_offset = main_xref_offset + xref_header.len(); // Precise /T points post-keyword
+        let t_offset = main_xref_offset + xref_header.len();
         self.write_all(xref_header.as_bytes())?;
         self.write_all(b"0000000000 65535 f\r\n")?;
         for id in 1..total_size {
@@ -472,12 +541,8 @@ impl<'a, W: Write> PdfWriter<'a, W> {
         }
 
         let id_hex = "f00baa42f00baa42f00baa42f00baa42";
-        // Main trailer SHALL NOT contain /Prev in linearized files (Annex F.2.5)
         self.write_all(format!("trailer\r\n<< /Size {total_size} /Root 2 0 R /ID [<{id_hex}> <{id_hex}>] >>\r\nstartxref\r\n{main_xref_offset}\r\n%%EOF\r\n").as_bytes())?;
 
-        // --- Patching and Finalization ---
-
-        // A. Patch Hint Stream
         let hint_dict = format!("3 0 obj\r\n<< /Length {hint_data_len} /S {page_hint_len} >>\r\nstream\r\n");
         let h_stream_start = hint_table_pos + hint_dict.len();
         let hint_data =
@@ -487,7 +552,6 @@ impl<'a, W: Write> PdfWriter<'a, W> {
         self.buffer[hint_table_pos..hint_table_pos + hint_full.len()]
             .copy_from_slice(hint_full.as_bytes());
 
-        // B. Patch /Linearized Dictionary
         let dict_str = format!(
             "1 0 obj\r\n<< /Linearized 1 /L {} /P 0 /O 4 /E {} /N {} /T {} /H [{} {} {} {}] >>\r\nendobj\r\n",
             self.buffer.len(),
@@ -504,7 +568,6 @@ impl<'a, W: Write> PdfWriter<'a, W> {
         }
         self.buffer[dict_pos..dict_pos + dict_str.len()].copy_from_slice(dict_str.as_bytes());
 
-        // C. Patch Primary XRef (One-way Link to Main XRef)
         let mut p_xref = format!("xref\r\n0 {primary_count}\r\n0000000000 65535 f\r\n");
         for id in 1..primary_count {
             let _ = write!(
@@ -527,8 +590,6 @@ impl<'a, W: Write> PdfWriter<'a, W> {
         Ok(())
     }
 
-    // --- Helpers ---
-
     #[allow(clippy::cast_possible_truncation)]
     fn generate_hint_tables(
         &self,
@@ -539,15 +600,14 @@ impl<'a, W: Write> PdfWriter<'a, W> {
         obj_counts: &[u32],
     ) -> Vec<u8> {
         let mut writer = BitWriter::new();
-        // Page Offset Hint Table (ISO 32000-2 Clause 7.5.7.2)
-        writer.write_u32(1); // Least objects
+        writer.write_u32(1);
         writer.write_u32(p1_offset as u32);
-        writer.write_u16(16); // Bits for objects
-        writer.write_u32(0); // Least length
-        writer.write_u16(32); // Bits for length
+        writer.write_u16(16);
+        writer.write_u32(0);
+        writer.write_u16(32);
         for _ in 0..11 {
             writer.write_u16(0);
-        } // Rest of 36-byte header
+        }
 
         for i in 0..page_handles.len() {
             let offset = self.xref.get(&self.id_map[&page_handles[i]]).unwrap_or(&0);
@@ -564,16 +624,15 @@ impl<'a, W: Write> PdfWriter<'a, W> {
             writer.write_bits(length as u32, 32);
         }
 
-        // Shared Object Hint Table (ISO 32000-2 Clause 7.5.7.4)
         let shared_count = shared_ids.len() as u32;
-        writer.write_u32(shared_ids.first().copied().unwrap_or(0)); // First shared obj ID
-        writer.write_u32(0); // Offset (relative to start of shared objects section)
-        writer.write_u16(shared_count as u16); // Shared count in P1
-        writer.write_u16(shared_count as u16); // Total shared count
-        writer.write_u16(16); // Bits for object count
-        writer.write_u16(32); // Bits for length
-        writer.write_u16(0); // No signature
-        writer.write_u16(0); // Padding
+        writer.write_u32(shared_ids.first().copied().unwrap_or(0));
+        writer.write_u32(0);
+        writer.write_u16(shared_count as u16);
+        writer.write_u16(shared_count as u16);
+        writer.write_u16(16);
+        writer.write_u16(32);
+        writer.write_u16(0);
+        writer.write_u16(0);
         
         for &id in shared_ids {
             let offset = self.xref.get(&id).unwrap_or(&0);
@@ -586,16 +645,15 @@ impl<'a, W: Write> PdfWriter<'a, W> {
     fn trace_reachable(
         &self,
         initial_obj: Object,
-        reachable: &mut std::collections::HashSet<Handle<Object>>,
+        reachable: &mut BTreeSet<Handle<Object>>,
     ) {
         let mut stack = vec![initial_obj];
         while let Some(obj) = stack.pop() {
             match obj {
                 Object::Reference(h) => {
-                    if reachable.insert(h) {
-                        if let Some(inner) = self.arena.get_object(h) {
-                            stack.push(inner.clone());
-                        }
+                    if reachable.insert(h)
+                        && let Some(inner) = self.arena.get_object(h) {
+                        stack.push(inner.clone());
                     }
                 }
                 Object::Array(h) => {
@@ -629,14 +687,15 @@ impl<'a, W: Write> PdfWriter<'a, W> {
         let kids_k = self.arena.name("Kids");
 
         while let Some(dh) = stack.pop() {
-            let dict = self.arena.get_dict(dh).ok_or_else(|| PdfError::Other("Pages dict missing".into()))?;
-            let kids_obj = dict.get(&kids_k).ok_or_else(|| PdfError::Other("Kids missing".into()))?;
-            let kids_handle = kids_obj.as_array().ok_or_else(|| PdfError::Other("Kids not an array".into()))?;
-            let kids = self.arena.get_array(kids_handle).ok_or_else(|| PdfError::Other("Kids array missing".into()))?;
+            let Some(dict) = self.arena.get_dict(dh) else { continue };
+            
+            let Some(kids_obj) = dict.get(&kids_k) else { continue };
+            let Some(kids_handle) = kids_obj.as_array() else { continue };
+            let Some(kids) = self.arena.get_array(kids_handle) else { continue };
 
             for kid_obj in kids.iter().rev() {
-                if let Object::Reference(h) = kid_obj {
-                    if let Some(Object::Dictionary(kdh)) = self.arena.get_object(*h) {
+                if let Object::Reference(h) = kid_obj
+                    && let Some(Object::Dictionary(kdh)) = self.arena.get_object(*h) {
                         let kdict = self.arena.get_dict(kdh).ok_or_else(|| PdfError::Other("Kid dict missing".into()))?;
                         let ktype = kdict.get(&type_key).and_then(|o| o.as_name());
                         
@@ -646,27 +705,23 @@ impl<'a, W: Write> PdfWriter<'a, W> {
                             pages.push(*h);
                         }
                     }
-                }
             }
         }
-        // Since we pushed in reverse and use pop, the order should be correct.
-        // If not, we might need to reverse the whole list if we pushed in normal order.
         Ok(())
     }
 
     fn trace_page_resources(
         &self,
         initial_h: Handle<Object>,
-        visited: &mut std::collections::HashSet<Handle<Object>>,
+        visited: &mut BTreeSet<Handle<Object>>,
     ) {
         let mut stack = vec![Object::Reference(initial_h)];
         while let Some(obj) = stack.pop() {
             match obj {
                 Object::Reference(h) => {
-                    if visited.insert(h) {
-                        if let Some(inner) = self.arena.get_object(h) {
-                            stack.push(inner.clone());
-                        }
+                    if visited.insert(h)
+                        && let Some(inner) = self.arena.get_object(h) {
+                        stack.push(inner.clone());
                     }
                 }
                 Object::Array(ah) => {

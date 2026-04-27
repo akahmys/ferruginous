@@ -5,8 +5,13 @@
 //! This crate provides the high-performance Arena-based object model
 //! and the Ingestion Gateway for the Ferruginous toolkit.
 
+extern crate self as ferruginous_core;
+
+pub mod audit;
+pub mod error;
 pub mod arena;
 pub mod color;
+pub mod content;
 pub mod document;
 pub mod filters;
 pub mod font;
@@ -18,6 +23,9 @@ pub mod metadata;
 pub mod object;
 pub mod parser;
 pub mod refine;
+pub mod security;
+#[cfg(test)]
+mod schema_tests;
 
 extern crate chardetng;
 
@@ -30,31 +38,8 @@ pub use graphics::{
     BlendMode, Color, LineCap, LineJoin, Matrix, PixelFormat, StrokeStyle, WindingRule,
 };
 pub use handle::Handle;
-pub use ingest::LopdfIngestor;
-pub use object::{Object, PdfName, Reference};
+pub use ingest::Ingestor;
+pub use object::{FromPdfObject, Object, PdfName, PdfSchema, Reference};
+pub use ferruginous_macros::FromPdfObject;
 
-pub use error::PdfError;
-/// Standard Result type for Ferruginous Core operations.
-pub type PdfResult<T> = Result<T, PdfError>;
-
-pub mod error {
-    use thiserror::Error;
-
-    #[derive(Error, Debug)]
-    pub enum PdfError {
-        #[error("IO error: {0}")]
-        Io(#[from] std::io::Error),
-        #[error("Parse error: {0}")]
-        Parse(String),
-        #[error("Ingestion error: {0}")]
-        Ingestion(String),
-        #[error("Arena error: {0}")]
-        Arena(String),
-        #[error("Filter error: {0}")]
-        Filter(String),
-        #[error("Lopdf error: {0}")]
-        Lopdf(#[from] lopdf::Error),
-        #[error("Other error: {0}")]
-        Other(String),
-    }
-}
+pub use error::{PdfError, PdfResult};

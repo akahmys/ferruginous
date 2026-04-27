@@ -126,6 +126,8 @@ pub use ferruginous_core::metadata::MetadataInfo;
 pub struct ComplianceSummary {
     /// List of compliance issues found.
     pub issues: Vec<ComplianceIssue>,
+    /// List of ISO 32000-2 clauses validated in the document.
+    pub iso_clauses: Vec<String>,
 }
 
 /// A specific compliance violation or observation.
@@ -177,6 +179,34 @@ impl PdfDocument {
         &self.inner
     }
 
+    /// Adds Document Security Store (DSS) for PAdES LTV support.
+    pub fn add_ltv_info(&mut self, certificates: Vec<Vec<u8>>) -> PdfResult<()> {
+        let arena = self.inner.arena();
+        let mut dss_dict = std::collections::BTreeMap::new();
+        
+        let mut cert_refs = Vec::new();
+        for cert_data in certificates {
+            let mut stream_dict = std::collections::BTreeMap::new();
+            #[allow(clippy::cast_possible_wrap)]
+            stream_dict.insert(arena.name("Length"), Object::Integer(cert_data.len() as i64));
+            let stream_h = arena.alloc_dict(stream_dict);
+            let stream_ref = arena.alloc_object(Object::Stream(stream_h, bytes::Bytes::from(cert_data)));
+            cert_refs.push(Object::Reference(stream_ref));
+        }
+
+        if !cert_refs.is_empty() {
+            dss_dict.insert(arena.name("Certs"), Object::Array(arena.alloc_array(cert_refs)));
+        }
+
+        if let Some(cah) = self.inner.catalog_handle() {
+            let mut catalog = arena.get_dict(cah).unwrap_or_default();
+            catalog.insert(arena.name("DSS"), Object::Dictionary(arena.alloc_dict(dss_dict)));
+            arena.set_dict(cah, catalog);
+        }
+
+        Ok(())
+    }
+
     /// Returns the total number of pages.
     pub fn page_count(&self) -> PdfResult<usize> {
         self.inner.page_count()
@@ -211,7 +241,11 @@ impl PdfDocument {
         let pages_root_dict_handle = target_arena.alloc_dict(std::collections::BTreeMap::new());
         let pages_root_handle = target_arena.alloc_object(Object::Dictionary(pages_root_dict_handle));
 
-        // 2. Clone pages from all sources
+        let mut merged_fields = Vec::new();
+        let mut merged_outlines = Vec::new();
+        let mut source_idx = 1;
+
+        // 2. Clone pages and global structures from all sources
         for source_doc in sources {
             let mut cloner = cloning::ObjectCloner::new(source_doc.inner.arena(), &target_arena);
             let count = source_doc.page_count()?;
@@ -233,6 +267,38 @@ impl PdfDocument {
                     target_pages.push(Object::Reference(target_page_handle));
                 }
             }
+
+            // 2b. Merge AcroForm Fields
+            if let Some(cah) = source_doc.inner.catalog_handle()
+                && let Some(acro_form_obj) = source_doc.inner.arena().get_dict(cah).and_then(|c| c.get(&target_arena.name("AcroForm")).cloned())
+                && let Some(afh) = acro_form_obj.resolve(source_doc.inner.arena()).as_dict_handle()
+                && let Some(af_dict) = source_doc.inner.arena().get_dict(afh)
+                && let Some(fields_obj) = af_dict.get(&target_arena.name("Fields"))
+                && let Some(fah) = fields_obj.resolve(source_doc.inner.arena()).as_array()
+                && let Some(fields) = source_doc.inner.arena().get_array(fah)
+            {
+                for field in fields {
+                    if let Ok(cloned_field) = cloner.clone_object(&field) {
+                        merged_fields.push(cloned_field);
+                    }
+                }
+            }
+
+            // 2c. Merge Outlines (nest them under a source root)
+            if let Some(cah) = source_doc.inner.catalog_handle()
+                && let Some(outlines_obj) = source_doc.inner.arena().get_dict(cah).and_then(|c| c.get(&target_arena.name("Outlines")).cloned())
+                && let Some(oh) = outlines_obj.resolve(source_doc.inner.arena()).as_dict_handle()
+                && let Some(o_dict) = source_doc.inner.arena().get_dict(oh)
+                && let Some(first_obj) = o_dict.get(&target_arena.name("First"))
+                && let Ok(cloned_first) = cloner.clone_object(first_obj)
+            {
+                let mut source_outline_dict = std::collections::BTreeMap::new();
+                source_outline_dict.insert(target_arena.name("Title"), Object::String(format!("Source {source_idx}").into()));
+                source_outline_dict.insert(target_arena.name("First"), cloned_first);
+                let source_outline_h = target_arena.alloc_dict(source_outline_dict);
+                merged_outlines.push(Object::Reference(target_arena.alloc_object(Object::Dictionary(source_outline_h))));
+            }
+            source_idx += 1;
         }
 
         // 3. Finalize Pages root
@@ -247,6 +313,48 @@ impl PdfDocument {
         let mut catalog_dict = std::collections::BTreeMap::new();
         catalog_dict.insert(type_key, Object::Name(catalog_key));
         catalog_dict.insert(pages_root_key, Object::Reference(pages_root_handle));
+
+        if !merged_fields.is_empty() {
+            let mut af_dict = std::collections::BTreeMap::new();
+            af_dict.insert(target_arena.name("Fields"), Object::Array(target_arena.alloc_array(merged_fields)));
+            catalog_dict.insert(target_arena.name("AcroForm"), Object::Dictionary(target_arena.alloc_dict(af_dict)));
+        }
+
+        if !merged_outlines.is_empty() {
+            // Link merged outlines together
+            let mut outline_handles = Vec::new();
+            for item in merged_outlines {
+                if let Object::Reference(h) = item {
+                    outline_handles.push(h);
+                }
+            }
+
+            for (i, &current_h) in outline_handles.iter().enumerate() {
+                if let Object::Dictionary(dh) = target_arena.get_object(current_h).unwrap_or(Object::Null) {
+                    let mut dict = target_arena.get_dict(dh).unwrap_or_default();
+                    if i > 0 {
+                        dict.insert(target_arena.name("Prev"), Object::Reference(outline_handles[i - 1]));
+                    }
+                    if i + 1 < outline_handles.len() {
+                        dict.insert(target_arena.name("Next"), Object::Reference(outline_handles[i + 1]));
+                    }
+                    target_arena.set_dict(dh, dict);
+                }
+            }
+
+            let mut outlines_root = std::collections::BTreeMap::new();
+            outlines_root.insert(type_key, Object::Name(target_arena.name("Outlines")));
+            if let Some(first_h) = outline_handles.first() {
+                outlines_root.insert(target_arena.name("First"), Object::Reference(*first_h));
+            }
+            if let Some(last_h) = outline_handles.last() {
+                outlines_root.insert(target_arena.name("Last"), Object::Reference(*last_h));
+            }
+            #[allow(clippy::cast_possible_wrap)]
+            outlines_root.insert(target_arena.name("Count"), Object::Integer(outline_handles.len() as i64));
+            catalog_dict.insert(target_arena.name("Outlines"), Object::Dictionary(target_arena.alloc_dict(outlines_root)));
+        }
+
         let catalog_handle = target_arena.alloc_object(Object::Dictionary(target_arena.alloc_dict(catalog_dict)));
 
         Ok(Self {
@@ -377,7 +485,7 @@ impl PdfDocument {
             writer.set_compression(options.compression_level);
         }
         writer.write_header(version)?;
-        writer.finish(*self.inner.root_handle())?;
+        writer.finish(*self.inner.root_handle(), self.inner.info_handle())?;
         Ok(())
     }
 
@@ -416,7 +524,7 @@ impl PdfDocument {
         }
 
         writer.write_header(version)?;
-        writer.finish(*self.inner.root_handle())?;
+        writer.finish(*self.inner.root_handle(), self.inner.info_handle())?;
         Ok(())
     }
 
@@ -451,7 +559,8 @@ impl PdfDocument {
         }
 
         // Use a 2.0 compliant date format (D:YYYYMMDDHHmmSSOHH'mm')
-        let now = "D:20260424235959+00'00'";
+        let now_dt = chrono::Local::now();
+        let now = now_dt.format("D:%Y%m%d%H%M%S%:z").to_string().replace(':', "'") + "'";
         sig_dict.insert(arena.name("M"), Object::String(Bytes::from(now)));
 
         // Placeholder for Contents (hex string) - 16KB reserved for PKCS#7
@@ -547,7 +656,7 @@ impl PdfDocument {
         }
 
         writer.write_header(version)?;
-        writer.finish(root_handle)?;
+        writer.finish(root_handle, self.inner.info_handle())?;
         Ok(())
     }
 
@@ -595,17 +704,21 @@ impl PdfDocument {
 
             match contents_obj {
                 Object::Reference(h) => {
+                    let start = std::time::Instant::now();
                     let stream = self.inner.resolve(&h)?;
                     let data = self.inner.decode_stream(&stream)?;
+                    eprintln!("fepdf: decoded single stream in {:?}", start.elapsed());
 
                     interpreter.execute(&data)?;
                 }
                 Object::Array(h) => {
                     if let Some(arr) = arena.get_array(h) {
-                        for obj in &arr {
+                        for (i, obj) in arr.iter().enumerate() {
                             if let Object::Reference(rh) = obj {
+                                let start = std::time::Instant::now();
                                 let stream = self.inner.resolve(rh)?;
                                 let data = self.inner.decode_stream(&stream)?;
+                                eprintln!("fepdf: decoded stream {}/{} in {:?}", i+1, arr.len(), start.elapsed());
 
                                 interpreter.execute(&data)?;
                             }
@@ -613,7 +726,9 @@ impl PdfDocument {
                     }
                 }
                 Object::Stream(_, _) => {
+                    let start = std::time::Instant::now();
                     let data = self.inner.decode_stream(&contents_obj)?;
+                    eprintln!("fepdf: decoded stream obj in {:?}", start.elapsed());
                     interpreter.execute(&data)?;
                 }
                 _ => return Err(PdfError::Other("Invalid Contents type".into())),
@@ -708,12 +823,26 @@ impl PdfDocument {
             });
         }
 
+        // Run structural ISO compliance audit
+        let auditor = ferruginous_core::audit::compliance::ComplianceAuditor::new(&self.inner);
+        let report = auditor.audit();
+        let mut iso_clauses: Vec<String> = report.clauses_encountered.iter().map(|&s| s.to_string()).collect();
+        iso_clauses.sort();
+
+        for issue in report.issues {
+            issues.push(ComplianceIssue {
+                standard: "ISO 32000-2".into(),
+                severity: IssueSeverity::Warning,
+                message: issue,
+            });
+        }
+
         Ok(DocumentSummary {
             version: if pdf_20 { "2.0".into() } else { "1.7".into() },
             page_count: self.page_count()?,
             metadata: self.inner.metadata(),
             fonts: self.inner.fonts(),
-            compliance: ComplianceSummary { issues },
+            compliance: ComplianceSummary { issues, iso_clauses },
         })
     }
 
@@ -733,6 +862,20 @@ impl PdfDocument {
         let height = (height_pts * 1.33).round() as u32;
 
         let mut backend = VelloBackend::new();
+        
+        // Load primary system font for fallback visibility (macOS specific)
+        let font_paths = [
+            "/System/Library/Fonts/ヒラギノ明朝 ProN.ttc",
+            "/System/Library/Fonts/Hiragino Mincho ProN.ttc",
+            "/System/Library/Fonts/ヒラギノ明朝 ProN W3.otf",
+        ];
+        for path in font_paths {
+            if let Ok(data) = std::fs::read(path) {
+                backend.system_fonts.insert("ヒラギノ明朝 ProN".to_string(), data);
+                break;
+            }
+        }
+
         let scale = 1.33; // 96 DPI
 
         // Transform:
@@ -755,7 +898,7 @@ impl PdfDocument {
             Some("jpg" | "jpeg") => image::ImageFormat::Jpeg,
             _ => return Err(PdfError::Other(
                 "Unsupported image format. Only PNG and JPEG (.png, .jpg, .jpeg) are supported."
-                    .to_string(),
+                    .to_string().into(),
             )),
         };
 
@@ -768,7 +911,7 @@ impl PdfDocument {
             output_path,
             format,
         ))
-        .map_err(|e: Box<dyn std::error::Error>| PdfError::Other(e.to_string()))?;
+        .map_err(|e: Box<dyn std::error::Error>| PdfError::Other(e.to_string().into()))?;
 
         Ok(())
     }

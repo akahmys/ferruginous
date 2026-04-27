@@ -1,10 +1,27 @@
 pub mod conformance;
 pub mod page;
+pub mod structure;
 
 use self::page::Page;
 use crate::error::PdfError;
-use crate::{Handle, Object, PdfArena, PdfName, PdfResult};
+use crate::{FromPdfObject, Handle, Object, PdfArena, PdfName, PdfResult};
 use std::collections::BTreeMap;
+
+/// Refined PDF Catalog (Root) Dictionary (ISO 32000-2:2020 Clause 7.7.2)
+#[derive(Debug, Clone, FromPdfObject)]
+#[pdf_dict(clause = "7.7.2")]
+pub struct PdfCatalog {
+    #[pdf_key("Pages")]
+    pub pages: Handle<BTreeMap<Handle<PdfName>, Object>>,
+    #[pdf_key("StructTreeRoot")]
+    pub struct_tree_root: Option<Handle<BTreeMap<Handle<PdfName>, Object>>>,
+    #[pdf_key("MarkInfo")]
+    pub mark_info: Option<Object>,
+    #[pdf_key("Metadata")]
+    pub metadata: Option<Object>,
+    #[pdf_key("Version")]
+    pub version: Option<Handle<PdfName>>,
+}
 
 /// Type alias for a dictionary handle to satisfy clippy complexity rules.
 pub type DictHandle = Handle<BTreeMap<Handle<PdfName>, Object>>;
@@ -14,20 +31,38 @@ pub struct Document {
     arena: PdfArena,
     root: Handle<Object>,
     info: Option<Handle<Object>>,
+    pub ingestion_issues: Vec<String>,
 }
 
 impl Document {
     /// Creates a new document wrapper.
     pub fn new(arena: PdfArena, root: Handle<Object>, info: Option<Handle<Object>>) -> Self {
-        Self { arena, root, info }
+        Self { arena, root, info, ingestion_issues: Vec::new() }
+    }
+
+    /// Creates a new document wrapper with issues.
+    pub fn with_issues(arena: PdfArena, root: Handle<Object>, info: Option<Handle<Object>>, issues: Vec<String>) -> Self {
+        Self { arena, root, info, ingestion_issues: issues }
     }
 
     /// Opens a PDF document from bytes with specific options.
     pub fn open(data: bytes::Bytes, options: &crate::ingest::IngestionOptions) -> PdfResult<Self> {
-        let lopdf_doc =
-            lopdf::Document::load_mem(&data).map_err(|e| PdfError::Parse(e.to_string()))?;
-        let (arena, root, info) = crate::ingest::LopdfIngestor::ingest(&lopdf_doc, options)?;
-        Ok(Self::new(arena, root, info))
+        let mut lopdf_doc =
+            lopdf::Document::load_mem(&data).map_err(|e| PdfError::Parse {
+                pos: 0,
+                message: e.to_string().into()
+            })?;
+        
+        // Attempt to decrypt with empty password if encrypted
+        if lopdf_doc.is_encrypted() {
+            match lopdf_doc.decrypt("") {
+                Ok(_) => println!("DEBUG: Document decrypted with empty password."),
+                Err(e) => println!("DEBUG: Decryption failed: {:?}", e),
+            }
+        }
+
+        let ingested = crate::ingest::Ingestor::ingest(&mut lopdf_doc, options)?;
+        Ok(Self::with_issues(ingested.arena, ingested.root, ingested.info, ingested.issues))
     }
 
     /// Attempts to open and repair a PDF document with specific options.
@@ -46,6 +81,11 @@ impl Document {
     /// Returns the handle to the document root (Catalog).
     pub fn root_handle(&self) -> &Handle<Object> {
         &self.root
+    }
+
+    /// Returns the catalog dictionary handle.
+    pub fn catalog_handle(&self) -> Option<Handle<BTreeMap<Handle<PdfName>, Object>>> {
+        self.arena.get_object(self.root).and_then(|obj| obj.as_dict_handle())
     }
 
     /// Returns the handle to the document info dictionary, if it exists.
@@ -67,10 +107,16 @@ impl Document {
                 let dict = self
                     .arena
                     .get_dict(*dict_handle)
-                    .ok_or_else(|| PdfError::Filter("Missing stream dictionary".into()))?;
+                    .ok_or_else(|| PdfError::Filter {
+                        filter: "None".into(),
+                        message: "Missing stream dictionary".into()
+                    })?;
                 self.arena.process_filters(data, &dict)
             }
-            _ => Err(PdfError::Filter("Object is not a stream".into())),
+            _ => Err(PdfError::Filter {
+                filter: "None".into(),
+                message: "Object is not a stream".into()
+            }),
         }
     }
 
@@ -100,25 +146,10 @@ impl Document {
     }
 
     fn get_pages_root(&self) -> PdfResult<Handle<BTreeMap<Handle<PdfName>, Object>>> {
-        let catalog = self
-            .arena
-            .get_object(self.root)
+        let catalog_obj = self.arena.get_object(self.root)
             .ok_or_else(|| PdfError::Other("Missing document catalog".into()))?;
-
-        let catalog_dict_handle = catalog
-            .as_dict_handle()
-            .ok_or_else(|| PdfError::Other("Catalog is not a dictionary".into()))?;
-
-        let catalog_dict = self
-            .arena
-            .get_dict(catalog_dict_handle)
-            .ok_or_else(|| PdfError::Other("Invalid catalog handle".into()))?;
-        let pages_key = self.arena.name("Pages");
-
-        catalog_dict
-            .get(&pages_key)
-            .and_then(|o| o.resolve(&self.arena).as_dict_handle())
-            .ok_or_else(|| PdfError::Other("Missing or invalid Pages in catalog".into()))
+        let catalog = PdfCatalog::from_pdf_object(catalog_obj, &self.arena)?;
+        Ok(catalog.pages)
     }
 
     fn find_page_recursive(
@@ -127,6 +158,10 @@ impl Document {
         mut target_index: usize,
         mut path: Vec<Handle<BTreeMap<Handle<PdfName>, Object>>>,
     ) -> PdfResult<Page<'_>> {
+        // Hardening: Recursion depth limit for page tree (ISO 32000-2 Clause 7.7.3.3)
+        if path.len() > 32 {
+            return Err(PdfError::Other("Page tree recursion depth limit exceeded".into()));
+        }
         let dict = self
             .arena
             .get_dict(node_handle)
@@ -204,43 +239,31 @@ impl Document {
     pub fn compliance_info(&self) -> PdfResult<conformance::ComplianceInfo> {
         let mut info = conformance::ComplianceInfo::default();
 
-        let catalog_handle = self.root;
-        let catalog_dict = self
-            .arena
-            .get_object(catalog_handle)
-            .and_then(|o| o.as_dict_handle())
-            .and_then(|h| self.arena.get_dict(h))
-            .ok_or_else(|| PdfError::Other("Invalid catalog".into()))?;
+        let catalog_obj = self.arena.get_object(self.root)
+            .ok_or_else(|| PdfError::Other("Missing document catalog".into()))?;
+        let catalog = PdfCatalog::from_pdf_object(catalog_obj, &self.arena)?;
 
         // 1. Check for /StructTreeRoot
-        let struct_tree_key = self.arena.name("StructTreeRoot");
-        info.has_struct_tree = catalog_dict.contains_key(&struct_tree_key);
+        info.has_struct_tree = catalog.struct_tree_root.is_some();
 
         // 2. Check for /MarkInfo -> /Marked true
-        let mark_info_key = self.arena.name("MarkInfo");
-        let marked_key = self.arena.name("Marked");
-        if let Some(mark_info) = catalog_dict.get(&mark_info_key)
-            && let Some(mark_dict) =
-                mark_info.resolve(&self.arena).as_dict_handle().and_then(|h| self.arena.get_dict(h))
-            && let Some(marked) =
-                mark_dict.get(&marked_key).and_then(|o| o.resolve(&self.arena).as_bool())
-        {
-            info.is_marked = marked;
+        if let Some(mark_info_obj) = catalog.mark_info {
+            let marked_key = self.arena.name("Marked");
+            if let Some(mark_dict) = mark_info_obj.resolve(&self.arena).as_dict_handle().and_then(|h| self.arena.get_dict(h))
+                && let Some(marked) = mark_dict.get(&marked_key).and_then(|o| o.resolve(&self.arena).as_bool())
+            {
+                info.is_marked = marked;
+            }
         }
 
-        // 3. Extract Metadata Conformance (Simplified for now)
-        // In a real implementation, we would parse the Metadata stream for PDF/UA-2 etc.
-        // For M66, we stub this based on the Version and Presence of tags.
-        let version_key = self.arena.name("Version");
-        let pdf_20 = catalog_dict
-            .get(&version_key)
-            .and_then(|o| o.resolve(&self.arena).as_name())
+        // 3. Extract Metadata Conformance
+        let pdf_20 = catalog.version
             .and_then(|n| self.arena.get_name(n))
             .map(|n| n.as_str() == "2.0")
             .unwrap_or(false);
 
         if info.has_struct_tree && pdf_20 {
-            info.metadata.pdf_ua_part = Some(2); // Assume UA-2 for 2.0 documents with structure
+            info.metadata.pdf_ua_part = Some(2); 
         }
 
         Ok(info)
@@ -248,16 +271,10 @@ impl Document {
 
     /// Returns the handle to the Structure Tree Root dictionary, if it exists.
     pub fn get_structure_root(&self) -> PdfResult<Option<DictHandle>> {
-        let catalog_handle = self.root;
-        let catalog_dict = self
-            .arena
-            .get_object(catalog_handle)
-            .and_then(|o| o.as_dict_handle())
-            .and_then(|h| self.arena.get_dict(h))
-            .ok_or_else(|| PdfError::Other("Invalid catalog".into()))?;
-
-        let struct_tree_key = self.arena.name("StructTreeRoot");
-        Ok(catalog_dict.get(&struct_tree_key).and_then(|o| o.resolve(&self.arena).as_dict_handle()))
+        let catalog_obj = self.arena.get_object(self.root)
+            .ok_or_else(|| PdfError::Other("Missing document catalog".into()))?;
+        let catalog = PdfCatalog::from_pdf_object(catalog_obj, &self.arena)?;
+        Ok(catalog.struct_tree_root)
     }
 
     /// Returns the document metadata.

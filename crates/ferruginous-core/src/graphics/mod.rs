@@ -1,7 +1,11 @@
 //! PDF Graphics State Constants & Types (ISO 32000-2:2020 Clause 8)
 
+pub mod schema;
+
 use kurbo::Affine;
 use serde::{Deserialize, Serialize};
+use crate::object::{FromPdfObject, Object};
+use crate::{PdfArena, PdfResult, PdfError};
 
 /// PDF Color representation.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -220,4 +224,133 @@ impl From<i64> for TextRenderingMode {
 pub struct TextMatrices {
     pub tm: Matrix,
     pub tlm: Matrix,
+}
+
+impl FromPdfObject for BlendMode {
+    fn from_pdf_object(obj: Object, arena: &PdfArena) -> PdfResult<Self> {
+        let name = obj.resolve(arena).as_name()
+            .ok_or_else(|| PdfError::Parse {
+                pos: 0,
+                message: "Expected name for BlendMode".into()
+            })?;
+        let name_owned = arena.get_name(name).map(|n| n.as_str().to_string()).unwrap_or_else(|| "Normal".to_string());
+        match name_owned.as_str() {
+            "Normal" | "Compatible" => Ok(Self::Normal),
+            "Multiply" => Ok(Self::Multiply),
+            "Screen" => Ok(Self::Screen),
+            "Overlay" => Ok(Self::Overlay),
+            "Darken" => Ok(Self::Darken),
+            "Lighten" => Ok(Self::Lighten),
+            "ColorDodge" => Ok(Self::ColorDodge),
+            "ColorBurn" => Ok(Self::ColorBurn),
+            "HardLight" => Ok(Self::HardLight),
+            "SoftLight" => Ok(Self::SoftLight),
+            "Difference" => Ok(Self::Difference),
+            "Exclusion" => Ok(Self::Exclusion),
+            "Hue" => Ok(Self::Hue),
+            "Saturation" => Ok(Self::Saturation),
+            "Color" => Ok(Self::Color),
+            "Luminosity" => Ok(Self::Luminosity),
+            _ => Ok(Self::Normal),
+        }
+    }
+}
+
+impl FromPdfObject for LineCap {
+    fn from_pdf_object(obj: Object, arena: &PdfArena) -> PdfResult<Self> {
+        let val = obj.resolve(arena).as_integer()
+            .ok_or_else(|| PdfError::Parse {
+                pos: 0,
+                message: "Expected integer for LineCap".into()
+            })?;
+        match val {
+            0 => Ok(Self::Butt),
+            1 => Ok(Self::Round),
+            2 => Ok(Self::Square),
+            _ => Ok(Self::Butt),
+        }
+    }
+}
+
+impl FromPdfObject for LineJoin {
+    fn from_pdf_object(obj: Object, arena: &PdfArena) -> PdfResult<Self> {
+        let val = obj.resolve(arena).as_integer()
+            .ok_or_else(|| PdfError::Parse {
+                pos: 0,
+                message: "Expected integer for LineJoin".into()
+            })?;
+        match val {
+            0 => Ok(Self::Miter),
+            1 => Ok(Self::Round),
+            2 => Ok(Self::Bevel),
+            _ => Ok(Self::Miter),
+        }
+    }
+}
+
+impl FromPdfObject for TextRenderingMode {
+    fn from_pdf_object(obj: Object, arena: &PdfArena) -> PdfResult<Self> {
+        let val = obj.resolve(arena).as_integer()
+            .ok_or_else(|| PdfError::Parse {
+                pos: 0,
+                message: "Expected integer for TextRenderingMode".into()
+            })?;
+        Ok(Self::from(val))
+    }
+}
+
+impl FromPdfObject for Matrix {
+    fn from_pdf_object(obj: Object, arena: &PdfArena) -> PdfResult<Self> {
+        let handle = obj.resolve(arena).as_array()
+            .ok_or_else(|| PdfError::Parse {
+                pos: 0,
+                message: "Expected array for Matrix".into()
+            })?;
+        let arr = arena.get_array(handle)
+            .ok_or_else(|| PdfError::Arena("Missing array in arena".into()))?;
+        if arr.len() != 6 {
+            return Err(PdfError::Parse {
+                pos: 0,
+                message: format!("Expected 6 elements for Matrix, got {}", arr.len()).into()
+            });
+        }
+        let mut coeffs = [0.0; 6];
+        for (i, item) in arr.iter().enumerate() {
+            coeffs[i] = item.resolve(arena).as_f64().ok_or_else(|| {
+                PdfError::Parse {
+                    pos: 0,
+                    message: "Matrix element must be a number".into()
+                }
+            })?;
+        }
+        Ok(Self(coeffs))
+    }
+}
+
+impl FromPdfObject for Rect {
+    fn from_pdf_object(obj: Object, arena: &PdfArena) -> PdfResult<Self> {
+        let handle = obj.resolve(arena).as_array()
+            .ok_or_else(|| PdfError::Parse {
+                pos: 0,
+                message: "Expected array for Rect".into()
+            })?;
+        let arr = arena.get_array(handle)
+            .ok_or_else(|| PdfError::Arena("Missing array in arena".into()))?;
+        if arr.len() != 4 {
+            return Err(PdfError::Parse {
+                pos: 0,
+                message: format!("Expected 4 elements for Rect, got {}", arr.len()).into()
+            });
+        }
+        let mut coords = [0.0; 4];
+        for (i, item) in arr.iter().enumerate() {
+            coords[i] = item.resolve(arena).as_f64().ok_or_else(|| {
+                PdfError::Parse {
+                    pos: 0,
+                    message: "Rect element must be a number".into()
+                }
+            })?;
+        }
+        Ok(Self::new(coords[0], coords[1], coords[2], coords[3]))
+    }
 }

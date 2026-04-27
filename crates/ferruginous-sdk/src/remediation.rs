@@ -20,6 +20,8 @@ pub struct TextSpan {
     pub y: f64,
     /// The width of the text span.
     pub width: f64,
+    /// The index of the PDF operator that generated this span.
+    pub op_index: usize,
 }
 
 /// A backend that extracts text content from a page.
@@ -79,6 +81,7 @@ impl RenderBackend for TextExtractionBackend {
         _tc: f64,
         _tw: f64,
         _vertical: bool,
+        _op_index: usize,
     ) {
         let coeffs = transform.as_coeffs();
         let y = coeffs[5];
@@ -141,6 +144,7 @@ impl RenderBackend for CollectorBackend {
         _tc: f64,
         _tw: f64,
         _vertical: bool,
+        op_index: usize,
     ) {
         let coeffs = transform.as_coeffs();
         let mut is_bold = false;
@@ -168,6 +172,7 @@ impl RenderBackend for CollectorBackend {
             x: coeffs[4],
             y: coeffs[5],
             width,
+            op_index,
         });
     }
 
@@ -205,16 +210,22 @@ pub enum RemediationActionType {
         text: String,
         /// Inferred heading level (1-6).
         level: u8,
+        /// Indices of the spans that compose this heading.
+        span_indices: Vec<usize>,
     },
     /// Organize a set of spans into a table.
     CreateTable {
         /// Number of inferred rows.
         rows: usize,
+        /// Indices of the spans that compose this table.
+        span_indices: Vec<usize>,
     },
     /// Cluster a set of spans into a paragraph.
     ClusterParagraphs {
         /// Number of spans in the cluster.
         count: usize,
+        /// Indices of the spans that compose this paragraph.
+        span_indices: Vec<usize>,
     },
 }
 
@@ -286,7 +297,8 @@ impl<'a> HeuristicEngine<'a> {
         let mut heading_sizes: Vec<i32> = size_counts.keys().filter(|&&s| s > body_size + 15).copied().collect();
         heading_sizes.sort_by(|a, b| b.cmp(a)); // Descending order: largest first
 
-        for span in spans {
+        for (i, span) in spans.iter().enumerate() {
+
             let s = (span.font_size * 10.0) as i32;
             if let Some(rank) = heading_sizes.iter().position(|&hs| hs == s) {
                 let level = (rank + 1).min(6) as u8;
@@ -302,6 +314,7 @@ impl<'a> HeuristicEngine<'a> {
                     action_type: RemediationActionType::SetHeading {
                         text: span.text.clone(),
                         level,
+                        span_indices: vec![i],
                     },
                 });
             } else if span.is_bold && s >= body_size - 5 {
@@ -315,6 +328,7 @@ impl<'a> HeuristicEngine<'a> {
                     action_type: RemediationActionType::SetHeading {
                         text: span.text.clone(),
                         level: 6,
+                        span_indices: vec![i],
                     },
                 });
             }
@@ -335,20 +349,21 @@ impl<'a> HeuristicEngine<'a> {
         }
 
         // 1. Group spans into "Lines" (near-identical Y)
-        let mut lines: BTreeMap<i32, Vec<&TextSpan>> = BTreeMap::new();
-        for span in spans {
+        let mut lines: BTreeMap<i32, Vec<usize>> = BTreeMap::new();
+        for (i, span) in spans.iter().enumerate() {
             let y = (span.y * 10.0) as i32;
-            lines.entry(y).or_default().push(span);
+            lines.entry(y).or_default().push(i);
         }
 
         // 2. Look for "Columnar Consistency"
         // If multiple lines have similar X-offsets, it's likely a table.
         let mut potential_table_rows = 0;
         let mut prev_cols = Vec::new();
+        let mut all_span_indices = Vec::new();
 
         for (_y, line_spans) in lines {
             let mut current_cols: Vec<i32> =
-                line_spans.iter().map(|s| (s.x * 10.0) as i32).collect();
+                line_spans.iter().map(|&idx| (spans[idx].x * 10.0) as i32).collect();
             current_cols.sort_unstable();
 
             if current_cols.len() > 1 && !prev_cols.is_empty() {
@@ -365,6 +380,7 @@ impl<'a> HeuristicEngine<'a> {
                 }
                 if matches > 1 {
                     potential_table_rows += 1;
+                    all_span_indices.extend(line_spans);
                 }
             }
             prev_cols = current_cols;
@@ -376,6 +392,7 @@ impl<'a> HeuristicEngine<'a> {
                 page_index,
                 action_type: RemediationActionType::CreateTable {
                     rows: usize::try_from(potential_table_rows).unwrap_or(0),
+                    span_indices: all_span_indices,
                 },
             });
         }
@@ -390,28 +407,136 @@ impl<'a> HeuristicEngine<'a> {
         spans: &[TextSpan],
     ) -> PdfResult<Vec<RemediationCandidate>> {
         let mut candidates = Vec::new();
-        // Group spans with small Y-diff and similar X-start
+        let mut current_indices = Vec::new();
         let mut paragraphs = 0;
         let mut last_y = 0.0;
 
-        for span in spans {
-            if (span.y - last_y).abs() > 20.0 {
-                // New paragraph gap
+        for (i, span) in spans.iter().enumerate() {
+            if (span.y - last_y).abs() > 20.0 && !current_indices.is_empty() {
                 paragraphs += 1;
+                candidates.push(RemediationCandidate {
+                    description: format!("Cluster paragraph {} with {} spans", paragraphs, current_indices.len()),
+                    page_index,
+                    action_type: RemediationActionType::ClusterParagraphs {
+                        count: current_indices.len(),
+                        span_indices: current_indices.clone(),
+                    },
+                });
+                current_indices.clear();
             }
+            current_indices.push(i);
             last_y = span.y;
         }
 
-        if paragraphs > 0 {
-            candidates.push(RemediationCandidate {
-                description: format!("Cluster {paragraphs} text blocks into paragraphs"),
-                page_index,
-                action_type: RemediationActionType::ClusterParagraphs {
-                    count: usize::try_from(paragraphs).unwrap_or(0),
-                },
-            });
-        }
         Ok(candidates)
+    }
+
+    /// Applies the inferred structural remediations to the document by inserting
+    /// structural tags (StructTree) and marked content (MCIDs).
+    pub fn apply_remediations(
+        &self,
+        doc: &mut Document,
+        candidates: Vec<RemediationCandidate>,
+    ) -> PdfResult<()> {
+        let mut page_groups: BTreeMap<usize, Vec<RemediationCandidate>> = BTreeMap::new();
+        for c in candidates {
+            page_groups.entry(c.page_index).or_default().push(c);
+        }
+
+        let arena = doc.arena();
+        let mut struct_elements = Vec::new();
+
+        for (page_idx, page_candidates) in page_groups {
+            let page = doc.get_page(page_idx)?;
+            let mut collector = CollectorBackend::new();
+            
+            // Re-run interpreter to get op_index mapping
+            let res_handle = page.resolve_attribute("Resources").and_then(|o| o.as_dict_handle()).unwrap_or_else(|| arena.alloc_dict(BTreeMap::new()));
+            let mut interpreter = Interpreter::new(&mut collector, doc, res_handle, kurbo::Affine::IDENTITY);
+            if let Some(contents) = page.resolve_attribute("Contents") {
+                let data = doc.decode_stream(&contents)?;
+                let _ = interpreter.execute(&data);
+            }
+
+            let mut op_to_mcid = BTreeMap::new();
+            let mut page_struct_elements = Vec::new();
+
+            for (mcid, cand) in page_candidates.into_iter().enumerate() {
+                let tag = match &cand.action_type {
+                    RemediationActionType::SetHeading { level, .. } => format!("H{level}"),
+                    RemediationActionType::CreateTable { .. } => "Table".to_string(),
+                    RemediationActionType::ClusterParagraphs { .. } => "P".to_string(),
+                };
+
+                let (RemediationActionType::SetHeading { span_indices, .. } |
+                    RemediationActionType::CreateTable { span_indices, .. } |
+                    RemediationActionType::ClusterParagraphs { span_indices, .. }) = &cand.action_type;
+                for &idx in span_indices {
+                    if let Some(span) = collector.spans.get(idx) {
+                        #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+                        op_to_mcid.insert(span.op_index, (tag.clone(), mcid as i32));
+                    }
+                }
+
+                let page_obj = Object::Dictionary(page.dict_handle());
+                let page_ref_handle = arena.find_indirect_handle(&page_obj).unwrap_or_else(|| {
+                    arena.alloc_object(page_obj)
+                });
+
+                let mut elem_dict = BTreeMap::new();
+                elem_dict.insert(arena.name("Type"), Object::Name(arena.name("StructElem")));
+                elem_dict.insert(arena.name("S"), Object::Name(arena.name(&tag)));
+                elem_dict.insert(arena.name("Pg"), Object::Reference(page_ref_handle));
+                #[allow(clippy::cast_possible_wrap)]
+                elem_dict.insert(arena.name("K"), Object::Integer(mcid as i64));
+                
+                let elem_h = arena.alloc_dict(elem_dict);
+                page_struct_elements.push(Object::Reference(arena.alloc_object(Object::Dictionary(elem_h))));
+            }
+
+            if let Some(contents) = page.resolve_attribute("Contents") {
+                let data = doc.decode_stream(&contents)?;
+                let rewriter = ferruginous_core::content::ContentRewriter::new(arena, data);
+                
+                let mut mapping_refs = BTreeMap::new();
+                for (k, (v1, v2)) in &op_to_mcid {
+                    mapping_refs.insert(*k, (v1.as_str(), *v2));
+                }
+                
+                let new_data = rewriter.insert_mcids(mapping_refs)?;
+                let mut new_stream_dict = BTreeMap::new();
+                #[allow(clippy::cast_possible_wrap)]
+                new_stream_dict.insert(arena.name("Length"), Object::Integer(new_data.len() as i64));
+                let new_stream_h = arena.alloc_dict(new_stream_dict);
+                let new_contents = arena.alloc_object(Object::Stream(new_stream_h, bytes::Bytes::from(new_data)));
+                
+                let mut page_dict = arena.get_dict(page.dict_handle()).unwrap_or_default();
+                page_dict.insert(arena.name("Contents"), Object::Reference(new_contents));
+                page_dict.insert(arena.name("Tabs"), Object::Name(arena.name("S")));
+                arena.set_dict(page.dict_handle(), page_dict);
+            }
+            
+            struct_elements.extend(page_struct_elements);
+        }
+
+        let mut root_dict = BTreeMap::new();
+        root_dict.insert(arena.name("Type"), Object::Name(arena.name("StructTreeRoot")));
+        root_dict.insert(arena.name("K"), Object::Array(arena.alloc_array(struct_elements)));
+        let root_h = arena.alloc_dict(root_dict);
+        let root_ref = arena.alloc_object(Object::Dictionary(root_h));
+
+        if let Some(cah) = doc.catalog_handle() {
+            let mut catalog = arena.get_dict(cah).unwrap_or_default();
+            catalog.insert(arena.name("StructTreeRoot"), Object::Reference(root_ref));
+            
+            let mut mark_info = BTreeMap::new();
+            mark_info.insert(arena.name("Marked"), Object::Boolean(true));
+            catalog.insert(arena.name("MarkInfo"), Object::Dictionary(arena.alloc_dict(mark_info)));
+            
+            arena.set_dict(cah, catalog);
+        }
+
+        Ok(())
     }
 }
 

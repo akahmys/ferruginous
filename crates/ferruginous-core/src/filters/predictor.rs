@@ -12,7 +12,10 @@ pub fn apply_predictor(data: &[u8], params: &Object, arena: &PdfArena) -> PdfRes
     let dict = params
         .as_dict_handle()
         .and_then(|h| arena.get_dict(h))
-        .ok_or_else(|| PdfError::Filter("Predictor params must be a dictionary".into()))?;
+        .ok_or_else(|| PdfError::Filter {
+            filter: "Predictor".into(),
+            message: "Predictor params must be a dictionary".into()
+        })?;
 
     let predictor = get_int_param(&dict, arena, "Predictor", 1);
 
@@ -24,7 +27,10 @@ pub fn apply_predictor(data: &[u8], params: &Object, arena: &PdfArena) -> PdfRes
         return decode_png_predictor(data, &dict, arena);
     }
 
-    Err(PdfError::Filter(format!("Unsupported predictor: {}", predictor)))
+    Err(PdfError::Filter {
+        filter: "Predictor".into(),
+        message: format!("Unsupported predictor: {}", predictor).into(),
+    })
 }
 
 fn get_int_param(
@@ -54,7 +60,10 @@ fn decode_png_predictor(
     let stride = row_size + 1;
 
     if !data.len().is_multiple_of(stride) {
-        return Err(PdfError::Filter("Invalid PNG predictor data length".into()));
+        return Err(PdfError::Filter {
+            filter: "PNGPredictor".into(),
+            message: "Invalid PNG predictor data length".into(),
+        });
     }
 
     let rows = data.len() / stride;
@@ -86,7 +95,10 @@ fn decode_row(tag: u8, input: &[u8], prev: &[u8], bpp: usize, out: &mut [u8]) ->
             2 => input[j].wrapping_add(up),                                    // Up
             3 => input[j].wrapping_add(((left as u16 + up as u16) / 2) as u8), // Average
             4 => input[j].wrapping_add(paeth(left, up, up_left)),              // Paeth
-            _ => return Err(PdfError::Filter(format!("Invalid PNG predictor tag: {}", tag))),
+            _ => return Err(PdfError::Filter {
+                filter: "PNGPredictor".into(),
+                message: format!("Invalid PNG predictor tag: {}", tag).into(),
+            }),
         };
     }
     Ok(())

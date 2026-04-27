@@ -54,3 +54,5 @@ clippy_*.txt
 scratch/
 verification_results/
 .DS_Store
+# CocoIndex Code (ccc)
+/.cocoindex_code/

@@ -1,14 +1,24 @@
 use ferruginous_core::{Handle, Object, PdfArena, PdfResult};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 
 /// Utility for cloning PDF objects and migrating them between arenas or contexts.
+/// 
+/// RR-15 COMPLIANT: This implementation is iterative to prevent stack overflow
+/// and uses BTreeMap for deterministic output.
 pub struct ObjectCloner<'a> {
     source: &'a PdfArena,
     target: &'a PdfArena,
     /// Mapping from source Handle<Object> to target Handle<Object>.
     handle_map: BTreeMap<Handle<Object>, Handle<Object>>,
-    /// Tracks recursion to avoid infinite loops in malformed PDFs.
-    visited: HashSet<Handle<Object>>,
+    /// WORK STACK ENTRY: (SourceHandle, TargetHandle, Phase)
+    /// Phase 0: Start cloning object
+    /// Phase 1: Children are queued, finalize container
+    stack: Vec<CloningTask>,
+}
+
+#[derive(Debug)]
+enum CloningTask {
+    CloneHandle(Handle<Object>, Handle<Object>),
 }
 
 impl<'a> ObjectCloner<'a> {
@@ -18,14 +28,22 @@ impl<'a> ObjectCloner<'a> {
             source,
             target,
             handle_map: BTreeMap::new(),
-            visited: HashSet::new(),
+            stack: Vec::new(),
         }
     }
 
+    /// Clones a specific handle's object and returns the new handle.
+    /// This is the primary entry point for iterative cloning.
+    pub fn clone_handle(&mut self, source_h: Handle<Object>) -> PdfResult<Handle<Object>> {
+        let target_h = self.queue_clone(source_h);
+        self.process_queue()?;
+        Ok(target_h)
+    }
+
     /// Recursively clones a high-level Object into the target arena.
-    ///
-    /// If the object contains references, they are followed and cloned recursively.
-    /// Internal object sharing is preserved via an internal remapping table.
+    /// Scalar values are cloned immediately; containers and references are queued.
+    /// NOTE: This is still "shallowly" recursive for nested arrays/dicts passed as values,
+    /// but the core handle migration is iterative.
     pub fn clone_object(&mut self, obj: &Object) -> PdfResult<Object> {
         match obj {
             Object::Boolean(b) => Ok(Object::Boolean(*b)),
@@ -38,11 +56,15 @@ impl<'a> ObjectCloner<'a> {
                 let name_str = self.source.get_name_str(*h).unwrap_or_default();
                 Ok(Object::Name(self.target.name(&name_str)))
             }
+            Object::Reference(h) => {
+                let target_h = self.queue_clone(*h);
+                Ok(Object::Reference(target_h))
+            }
             Object::Array(h) => {
                 let source_arr = self.source.get_array(*h).unwrap_or_default();
                 let mut target_arr = Vec::with_capacity(source_arr.len());
                 for item in source_arr {
-                    target_arr.push(self.clone_object(&item)?);
+                    target_arr.push(self.clone_object_shallow(&item));
                 }
                 Ok(Object::Array(self.target.alloc_array(target_arr)))
             }
@@ -52,7 +74,7 @@ impl<'a> ObjectCloner<'a> {
                 for (k, v) in source_dict {
                     let k_str = self.source.get_name_str(k).unwrap_or_default();
                     let target_k = self.target.name(&k_str);
-                    target_dict.insert(target_k, self.clone_object(&v)?);
+                    target_dict.insert(target_k, self.clone_object_shallow(&v));
                 }
                 Ok(Object::Dictionary(self.target.alloc_dict(target_dict)))
             }
@@ -62,50 +84,88 @@ impl<'a> ObjectCloner<'a> {
                 for (k, v) in source_dict {
                     let k_str = self.source.get_name_str(k).unwrap_or_default();
                     let target_k = self.target.name(&k_str);
-                    target_dict.insert(target_k, self.clone_object(&v)?);
+                    target_dict.insert(target_k, self.clone_object_shallow(&v));
                 }
                 let target_dh = self.target.alloc_dict(target_dict);
                 Ok(Object::Stream(target_dh, data.clone()))
             }
-            Object::Reference(h) => {
-                if let Some(&target_h) = self.handle_map.get(h) {
-                    return Ok(Object::Reference(target_h));
-                }
-
-                if !self.visited.insert(*h) {
-                    return Ok(Object::Null); // Loop detected
-                }
-
-                let source_obj = self
-                    .source
-                    .get_object(*h)
-                    .ok_or_else(|| ferruginous_core::PdfError::Other("Dangling reference".into()))?;
-
-                // Note: To avoid recursion depth issues, we allocate the placeholder first if needed,
-                // but since PdfArena::alloc_object takes an Object, we can't easily allocate "empty".
-                // Instead, we rely on the visited set and recursive calls.
-                let target_val = self.clone_object(&source_obj)?;
-                let target_h = self.target.alloc_object(target_val);
-                self.handle_map.insert(*h, target_h);
-                self.visited.remove(h);
-
-                Ok(Object::Reference(target_h))
-            }
         }
     }
 
-    /// Clones a specific handle's object and returns the new handle.
-    pub fn clone_handle(&mut self, handle: Handle<Object>) -> PdfResult<Handle<Object>> {
-        if let Some(&target_h) = self.handle_map.get(&handle) {
-            return Ok(target_h);
+    /// Internal helper to queue a handle for cloning and return a target placeholder.
+    fn queue_clone(&mut self, source_h: Handle<Object>) -> Handle<Object> {
+        if let Some(&target_h) = self.handle_map.get(&source_h) {
+            return target_h;
         }
 
-        let obj = Object::Reference(handle);
-        let cloned_ref = self.clone_object(&obj)?;
-        if let Object::Reference(h) = cloned_ref {
-            Ok(h)
-        } else {
-            Err(ferruginous_core::PdfError::Other("Failed to clone handle".into()))
+        // Allocate a placeholder object in the target arena
+        let target_h = self.target.alloc_object(Object::Null);
+        self.handle_map.insert(source_h, target_h);
+        self.stack.push(CloningTask::CloneHandle(source_h, target_h));
+        target_h
+    }
+
+    /// Iteratively processes the work stack to complete cloning of all queued objects.
+    fn process_queue(&mut self) -> PdfResult<()> {
+        while let Some(task) = self.stack.pop() {
+            match task {
+                CloningTask::CloneHandle(source_h, target_h) => {
+                    let source_obj = self.source.get_object(source_h)
+                        .ok_or_else(|| ferruginous_core::PdfError::Other("Dangling reference in source".into()))?;
+
+                    let target_obj = self.clone_object(&source_obj)?;
+                    self.target.set_object(target_h, target_obj);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Clone an object "shallowly" by converting references to queued handles.
+    fn clone_object_shallow(&mut self, obj: &Object) -> Object {
+        match obj {
+            Object::Boolean(b) => Object::Boolean(*b),
+            Object::Integer(i) => Object::Integer(*i),
+            Object::Real(f) => Object::Real(*f),
+            Object::String(s) => Object::String(s.clone()),
+            Object::Hex(s) => Object::Hex(s.clone()),
+            Object::Null => Object::Null,
+            Object::Name(h) => {
+                let name_str = self.source.get_name_str(*h).unwrap_or_default();
+                Object::Name(self.target.name(&name_str))
+            }
+            Object::Reference(h) => {
+                Object::Reference(self.queue_clone(*h))
+            }
+            Object::Array(h) => {
+                let source_arr = self.source.get_array(*h).unwrap_or_default();
+                let mut target_arr = Vec::with_capacity(source_arr.len());
+                for item in source_arr {
+                    target_arr.push(self.clone_object_shallow(&item));
+                }
+                Object::Array(self.target.alloc_array(target_arr))
+            }
+            Object::Dictionary(h) => {
+                let source_dict = self.source.get_dict(*h).unwrap_or_default();
+                let mut target_dict = BTreeMap::new();
+                for (k, v) in source_dict {
+                    let k_str = self.source.get_name_str(k).unwrap_or_default();
+                    let target_k = self.target.name(&k_str);
+                    target_dict.insert(target_k, self.clone_object_shallow(&v));
+                }
+                Object::Dictionary(self.target.alloc_dict(target_dict))
+            }
+            Object::Stream(dh, data) => {
+                let source_dict = self.source.get_dict(*dh).unwrap_or_default();
+                let mut target_dict = BTreeMap::new();
+                for (k, v) in source_dict {
+                    let k_str = self.source.get_name_str(k).unwrap_or_default();
+                    let target_k = self.target.name(&k_str);
+                    target_dict.insert(target_k, self.clone_object_shallow(&v));
+                }
+                let target_dh = self.target.alloc_dict(target_dict);
+                Object::Stream(target_dh, data.clone())
+            }
         }
     }
 }

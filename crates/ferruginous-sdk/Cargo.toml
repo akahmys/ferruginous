@@ -19,6 +19,7 @@ image = "0.25"
 tokio = { workspace = true }
 pollster = "0.3"
 flate2 = { workspace = true }
+chrono = { workspace = true }
 
 [dev-dependencies]
 

@@ -18,6 +18,7 @@ Leverage the AI's contextual understanding to identify violations that are diffi
 - **Rule 6 (Recursion)**: Are there any recursive calls (including indirect ones)? Can they be converted to loops with an explicit stack (`Vec`)?
 - **Rule 8 (Invalid State)**: Can the logic be expressed using type-safe Enums (State machine) instead of `Option` or `Result`?
 - **Rule 15 (Cloning)**: Is that `.clone()` truly necessary? Can it be resolved through sharing with `Arc` or by redesigning to use ownership transfer?
+- **Rule 18 (Normalization)**: Does the ingestion pipeline call `perform_pass_0_normalization` before any structural work? Is the normalization iterative and non-destructive?
 
 ## 3. Reporting Audit Results
 

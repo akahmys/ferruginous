@@ -43,3 +43,12 @@ These rules capture the architectural hardening requirements identified during t
     - **Predicate Purity**: Arlington predicates MUST be parsed and evaluated against the document state without side effects.
     - **Heuristic Labeling**: Tagged PDF repair should favor "conservative labeling" (e.g., defaulting to `P` tags) to avoid mischaracterizing structural hierarchy.
     - **Encoding Fidelity**: Always prioritize `/Differences` and `/CMap` over heuristic character mapping during structural inference.
+
+## 8. Reliability & Error Recovery (RR-15 v2.1)
+- **Rule**: All core failures MUST be programmatically distinguishable and contextually enriched.
+- **Implementation**:
+    - **Structured Variants**: Use struct-style enum variants for all `PdfError` types that require context (e.g., `Parse { pos, message }`).
+    - **Zero-Copy Payloads**: Use `Cow<'static, str>` for error messages to avoid heap allocations for static strings while allowing dynamic formatting when needed.
+- **Recursion Safety**:
+    - **Iterative First**: Prefer `Vec`-based iterative stacks for traversing object graphs (Rule 6).
+    - **Depth Counters**: For logic that remains recursive (e.g., CMap nested includes), a `depth: usize` parameter MUST be used with a hard limit of 32 (Rule 19).

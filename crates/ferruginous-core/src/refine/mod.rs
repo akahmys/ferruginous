@@ -1,34 +1,32 @@
 //! Refinery 2.1 Concurrent Normalization Pipeline.
 //!
-//! This module implements the "Option B" parallel refinement strategy,
+//! This module implements the parallel refinement strategy,
 //! where objects are refined using `rayon` before being sequentially
 //! integrated into the `PdfArena`.
 
 use crate::arena::{PdfArena, RemappingTable};
 use crate::handle::Handle;
 use crate::object::{Object, PdfName};
+use crate::font::FontResource;
 
 use bytes::Bytes;
 use rayon::prelude::*;
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 pub mod color;
 pub mod font;
 pub mod metadata;
 pub mod text;
 
-use crate::font::FontResource;
-use std::sync::Arc;
-
 /// A thread-safe intermediate representation of a refined PDF object.
-/// This representation handles recursive structures (Arrays, Dicts) inline
-/// before they are pooled in the Arena.
 #[derive(Debug, Clone)]
 pub enum RefinedObject {
     Boolean(bool),
     Integer(i64),
     Real(f64),
     String(Bytes),
+    Hex(Bytes),
     Name(PdfName),
     Array(Vec<RefinedObject>),
     Dictionary(BTreeMap<PdfName, RefinedObject>),
@@ -38,121 +36,103 @@ pub enum RefinedObject {
 }
 
 impl RefinedObject {
-    /// Performs a shallow conversion from a lopdf object.
+    pub fn as_name(&self) -> Option<&PdfName> {
+        match self {
+            Self::Name(n) => Some(n),
+            _ => None,
+        }
+    }
+    
+    pub fn as_str(&self) -> Option<&str> {
+        self.as_name().map(|n| n.as_str())
+    }
+
     pub fn from_lopdf(obj: &lopdf::Object, table: &RemappingTable) -> Self {
         match obj {
-            lopdf::Object::Boolean(b) => RefinedObject::Boolean(*b),
-            lopdf::Object::Integer(i) => RefinedObject::Integer(*i),
-            lopdf::Object::Real(f) => RefinedObject::Real(*f as f64),
-            lopdf::Object::String(s, _) => RefinedObject::String(Bytes::copy_from_slice(s)),
-            lopdf::Object::Name(n) => RefinedObject::Name(PdfName(Bytes::copy_from_slice(n))),
-            lopdf::Object::Reference(id) => {
-                let handle = table.get(&(id.0, id.1)).cloned().unwrap_or(Handle::new(0));
-                RefinedObject::Reference(handle)
+            lopdf::Object::Boolean(b) => Self::Boolean(*b),
+            lopdf::Object::Integer(i) => Self::Integer(*i),
+            lopdf::Object::Real(f) => Self::Real(*f as f64),
+            lopdf::Object::String(s, fmt) => {
+                if matches!(fmt, lopdf::StringFormat::Hexadecimal) {
+                    Self::Hex(Bytes::copy_from_slice(s))
+                } else {
+                    Self::String(Bytes::copy_from_slice(s))
+                }
             }
+            lopdf::Object::Name(n) => Self::Name(PdfName(Bytes::copy_from_slice(n))),
+            lopdf::Object::Reference(id) => Self::Reference(
+                table.get(&(id.0, id.1)).cloned().unwrap_or(Handle::new(0)),
+            ),
             lopdf::Object::Array(arr) => {
-                RefinedObject::Array(arr.iter().map(|item| Self::from_lopdf(item, table)).collect())
+                Self::Array(arr.iter().map(|item| Self::from_lopdf(item, table)).collect())
             }
             lopdf::Object::Dictionary(dict) => {
-                let mut refined_dict = BTreeMap::new();
+                let mut refined = BTreeMap::new();
                 for (k, v) in dict {
-                    refined_dict
-                        .insert(PdfName(Bytes::copy_from_slice(k)), Self::from_lopdf(v, table));
+                    refined.insert(PdfName(Bytes::copy_from_slice(k)), Self::from_lopdf(v, table));
                 }
-                RefinedObject::Dictionary(refined_dict)
+                Self::Dictionary(refined)
             }
-            lopdf::Object::Stream(stream) => {
-                let mut refined_dict = BTreeMap::new();
-                for (k, v) in &stream.dict {
-                    refined_dict
-                        .insert(PdfName(Bytes::copy_from_slice(k)), Self::from_lopdf(v, table));
+            lopdf::Object::Stream(s) => {
+                let mut refined = BTreeMap::new();
+                for (k, v) in &s.dict {
+                    refined.insert(PdfName(Bytes::copy_from_slice(k)), Self::from_lopdf(v, table));
                 }
-                RefinedObject::Stream(refined_dict, Bytes::copy_from_slice(&stream.content))
+                Self::Stream(refined, Bytes::copy_from_slice(&s.content))
             }
-            lopdf::Object::Null => RefinedObject::Null,
+            lopdf::Object::Null => Self::Null,
         }
     }
 }
 
-const MAX_RECURSION_DEPTH: u32 = 64;
-
 pub struct ParallelRefinery;
 
 impl ParallelRefinery {
-    /// Refines a collection of lopdf objects in parallel.
     pub fn refine_all(
-        objects: &BTreeMap<(u32, u16), lopdf::Object>,
+        doc: &lopdf::Document,
         table: &RemappingTable,
-        fonts: &BTreeMap<String, Arc<FontResource>>,
-    ) -> Vec<((u32, u16), RefinedObject)> {
-        objects
+        handle_fonts: &BTreeMap<u32, Arc<FontResource>>,
+        stream_contexts: &BTreeMap<u32, BTreeMap<String, Arc<FontResource>>>,
+    ) -> Vec<((u32, u16), RefinedObject, Vec<String>)> {
+        doc.objects
             .par_iter()
             .map(|(&id, obj)| {
-                let refined = Self::refine_recursive_depth(obj, table, fonts, 0);
-                (id, refined)
+                let mut issues = Vec::new();
+                let refined = Self::refine_recursive(id, obj, table, handle_fonts, stream_contexts, 0, &mut issues);
+                (id, refined, issues)
             })
             .collect()
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn refine_recursive(
+    fn refine_recursive(
+        id: (u32, u16),
         obj: &lopdf::Object,
         table: &RemappingTable,
-        fonts: &BTreeMap<String, Arc<FontResource>>,
+        handle_fonts: &BTreeMap<u32, Arc<FontResource>>,
+        stream_contexts: &BTreeMap<u32, BTreeMap<String, Arc<FontResource>>>,
+        depth: usize,
+        issues: &mut Vec<String>,
     ) -> RefinedObject {
-        Self::refine_recursive_depth(obj, table, fonts, 0)
-    }
-
-    fn refine_recursive_depth(
-        obj: &lopdf::Object,
-        table: &RemappingTable,
-        fonts: &BTreeMap<String, Arc<FontResource>>,
-        depth: u32,
-    ) -> RefinedObject {
-        if depth > MAX_RECURSION_DEPTH {
-            return RefinedObject::Null;
+        // Hardening: Recursion depth limit (ISO 32000-2 Clause 7.1)
+        if depth > 128 {
+            issues.push(format!("Recursion depth limit exceeded for object {:?}", id));
+            return RefinedObject::from_lopdf(obj, table);
         }
-
         match obj {
-            lopdf::Object::Boolean(b) => RefinedObject::Boolean(*b),
-            lopdf::Object::Integer(i) => RefinedObject::Integer(*i),
-            lopdf::Object::Real(f) => RefinedObject::Real(*f as f64),
-            lopdf::Object::String(s, _) => RefinedObject::String(text::refine_string(s)),
-            lopdf::Object::Name(n) => {
-                let name = PdfName(Bytes::copy_from_slice(n));
-                if let Some(refined) = color::normalize_colorspace(&name) {
-                    refined
-                } else {
-                    RefinedObject::Name(name)
-                }
-            }
-            lopdf::Object::Reference(id) => {
-                let handle = table.get(&(id.0, id.1)).cloned().unwrap_or(Handle::new(0)); // Should not happen with valid table
-                RefinedObject::Reference(handle)
-            }
-            lopdf::Object::Array(arr) => {
-                let refined_arr = arr
-                    .iter()
-                    .map(|item| Self::refine_recursive_depth(item, table, fonts, depth + 1))
-                    .collect();
-                RefinedObject::Array(refined_arr)
-            }
             lopdf::Object::Dictionary(dict) => {
                 let mut refined_dict = BTreeMap::new();
                 for (k, v) in dict {
                     refined_dict.insert(
                         PdfName(Bytes::copy_from_slice(k)),
-                        Self::refine_recursive_depth(v, table, fonts, depth + 1),
+                        Self::refine_recursive(id, v, table, handle_fonts, stream_contexts, depth + 1, issues),
                     );
                 }
 
-                // Apply Font normalization if it's a font dictionary
-                let type_key = PdfName(Bytes::from_static(b"Type"));
-                let font_name = PdfName(Bytes::from_static(b"Font"));
-                if let Some(RefinedObject::Name(t)) = refined_dict.get(&type_key)
-                    && t == &font_name
-                {
-                    return font::normalize_font(refined_dict);
+                // Font Normalization
+                if let Some("Font") = refined_dict.get(&PdfName::new("Type")).and_then(|o| o.as_str())
+                    && let Some(handle) = table.get(&id) {
+                    let resource = handle_fonts.get(&handle.index()).map(|arc| arc.as_ref());
+                    return font::normalize_font(refined_dict, resource);
                 }
 
                 RefinedObject::Dictionary(refined_dict)
@@ -162,65 +142,74 @@ impl ParallelRefinery {
                 for (k, v) in &s.dict {
                     refined_dict.insert(
                         PdfName(Bytes::copy_from_slice(k)),
-                        Self::refine_recursive_depth(v, table, fonts, depth + 1),
+                        Self::refine_recursive(id, v, table, handle_fonts, stream_contexts, depth + 1, issues),
                     );
                 }
 
-                // Active Refinement: Restructure Content Stream if it's likely a Page or XObject content.
-                // Hardening: Skip if it contains font-specific (Length1/2/3) or image-specific keys.
-                let length_key = PdfName::new("Length");
-                let subtype_key = PdfName::new("Subtype");
-                let l1 = PdfName::new("Length1");
-                let l2 = PdfName::new("Length2");
+                // Content Stream Restructuring
+                let subtype = refined_dict.get(&PdfName::new("Subtype")).and_then(|o| o.as_str());
+                let is_form = subtype == Some("Form");
+                let is_likely_content = subtype.is_none() || is_form;
+                let is_font_data = refined_dict.contains_key(&PdfName::new("Length1")) || refined_dict.contains_key(&PdfName::new("Length2"));
 
-                let is_likely_content = refined_dict.contains_key(&length_key)
-                    && !refined_dict.contains_key(&subtype_key)
-                    && !refined_dict.contains_key(&l1)
-                    && !refined_dict.contains_key(&l2);
-
-                let content = if is_likely_content {
-                    text::restructure_content_stream(&s.content, fonts)
+                let mut is_restructured = false;
+                let content = if is_likely_content && !is_font_data {
+                    if let Some(handle) = table.get(&id) {
+                        if let Some(resource_fonts) = stream_contexts.get(&handle.index()) {
+                            match s.decompressed_content() {
+                                Ok(data) => {
+                                    is_restructured = true;
+                                    text::restructure_content_stream(&data, resource_fonts)
+                                }
+                                Err(e) => {
+                                    issues.push(format!("Content stream decompression failed for {:?}: {:?}", id, e));
+                                    Bytes::copy_from_slice(&s.content)
+                                }
+                            }
+                        } else {
+                            Bytes::copy_from_slice(&s.content)
+                        }
+                    } else {
+                        Bytes::copy_from_slice(&s.content)
+                    }
                 } else {
                     Bytes::copy_from_slice(&s.content)
                 };
 
+                if is_restructured {
+                    refined_dict.remove(&PdfName::new("Filter"));
+                    refined_dict.remove(&PdfName::new("DecodeParms"));
+                    refined_dict.insert(PdfName::new("Length"), RefinedObject::Integer(content.len() as i64));
+                }
+
                 RefinedObject::Stream(refined_dict, content)
             }
-            lopdf::Object::Null => RefinedObject::Null,
+            _ => RefinedObject::from_lopdf(obj, table),
         }
     }
 }
 
-/// Helper to convert RefinedObject back to Arena-backed Object.
-/// This happens sequentially.
-pub fn commit_to_arena(arena: &mut PdfArena, refined: RefinedObject) -> Object {
+pub fn commit_to_arena(arena: &PdfArena, refined: RefinedObject) -> Object {
     match refined {
         RefinedObject::Boolean(b) => Object::Boolean(b),
         RefinedObject::Integer(i) => Object::Integer(i),
         RefinedObject::Real(f) => Object::Real(f),
         RefinedObject::String(s) => Object::String(s),
+        RefinedObject::Hex(s) => Object::Hex(s),
         RefinedObject::Name(n) => Object::Name(arena.intern_name(n)),
+        RefinedObject::Reference(h) => Object::Reference(h),
         RefinedObject::Array(arr) => {
-            let items = arr.into_iter().map(|i| commit_to_arena(arena, i)).collect();
-            Object::Array(arena.alloc_array(items))
+            let committed = arr.into_iter().map(|item| commit_to_arena(arena, item)).collect();
+            Object::Array(arena.alloc_array(committed))
         }
         RefinedObject::Dictionary(dict) => {
-            let mut items = BTreeMap::new();
-            for (k, v) in dict {
-                let kh = arena.intern_name(k);
-                items.insert(kh, commit_to_arena(arena, v));
-            }
-            Object::Dictionary(arena.alloc_dict(items))
+            let committed = dict.into_iter().map(|(k, v)| (arena.intern_name(k), commit_to_arena(arena, v))).collect();
+            Object::Dictionary(arena.alloc_dict(committed))
         }
         RefinedObject::Stream(dict, bytes) => {
-            let mut items = BTreeMap::new();
-            for (k, v) in dict {
-                let kh = arena.intern_name(k);
-                items.insert(kh, commit_to_arena(arena, v));
-            }
-            Object::Stream(arena.alloc_dict(items), bytes)
+            let committed_dict = dict.into_iter().map(|(k, v)| (arena.intern_name(k), commit_to_arena(arena, v))).collect();
+            Object::Stream(arena.alloc_dict(committed_dict), bytes)
         }
         RefinedObject::Null => Object::Null,
-        RefinedObject::Reference(h) => Object::Reference(h),
     }
 }

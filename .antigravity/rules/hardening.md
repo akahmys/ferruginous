@@ -8,7 +8,7 @@
 ## 1. Function Size Limit
 - **Rule**: Limit effective logic to 50 lines.
 - **Purpose**: Maintain precision of the borrow checker and reduce mental load.
-- **Compliance Criterion**: All functions (excluding test code) must stay within 50 lines.
+- **Compliance Criterion**: All functions (excluding test code) must stay within 50 effective logic lines. Blank lines, doc-comments, and single-line attribute macros (like `#[test]`) are excluded from this count.
 
 ## 2. No-Panic Principle
 - **Rule**: Prohibit `unwrap()`, `expect()`, and `panic!()`.
@@ -58,7 +58,7 @@
 ## 11. Explicit Error Handling
 - **Rule**: Prohibit `String` errors. Use concrete Enum types and the `thiserror` crate.
 - **Purpose**: Ensure error traceability and programmatic recoverability.
-- **Compliance Criterion**: All errors must be defined as domain-specific Enum types with mandatory contextual enrichment (e.g., lexical position, object hierarchy, or operation name). Error messages MUST capture the failing context (e.g., "resolving font in ExtGState X").
+- **Compliance Criterion**: All errors must be defined as domain-specific Enum types. Complex variants MUST use **named fields** (struct-like variants) rather than tuples. All string-based payloads MUST use `std::borrow::Cow<'static, str>` to allow zero-copy static messages and efficient dynamic context. Errors must capture mandatory contextual enrichment (e.g., `pos` for parsing, `context` for ingestion).
 
 ## 12. Bound & Invariant Enforcement
 - **Rule**: Enforce a 256MB limit on external inputs (PDF streams) and explicitly state invariants using `assert!`.
@@ -89,3 +89,15 @@
 - **Rule**: Non-textual streams (Fonts, Images, ICCProfiles) MUST be strictly excluded from text-based refinement pipelines.
 - **Purpose**: Prevent data corruption caused by misapplying UTF-8 normalization or text substitutions to binary data.
 - **Compliance Criterion**: The refinery engine must maintain an explicit "Refinement Denylist" based on PDF object types (e.g., `/FontFile`, `/XObject`).
+
+## 18. Pass 0 Physical Normalization Guard
+- **Rule**: All input PDFs MUST undergo a "Physical Normalization" phase (Pass 0) at the raw object level before semantic ingestion into the `PdfArena`.
+- **Purpose**: Ensure structural integrity, viewer compatibility (e.g., Acrobat Error 135), and uniform internal state. This phase handles decryption, repair of broken XRef tables, and mandatory UTF-8 re-encoding of Metadata.
+- **Compliance Criterion**: Any operation that maps physical offsets to semantic handles MUST be preceded by a call to `Ingestor::perform_pass_0_normalization`. This process must be iterative (stack-based) and non-destructive to the original document intent while stripping transport-level artifacts (like `/Encrypt` dictionaries).
+
+## 19. Unbounded Recursion Guard
+- **Rule**: Prohibit unbounded recursion in all structural traversals.
+- **Purpose**: Eradicate stack overflows and ensure compliance with ISO 32000-2 resource limits.
+- **Compliance Criterion**: Any function traversing tree-like structures (e.g., page trees, structure trees, or object graphs) MUST either:
+    1. Use an explicit `Vec`-based stack for iterative traversal.
+    2. Use a `depth: usize` parameter with a hard-coded safety limit (e.g., 32 or 64).

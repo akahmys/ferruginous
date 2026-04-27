@@ -27,7 +27,10 @@ pub fn decode_stream(
             let decoder = flate::FlateFilter;
             decoder.decode(input, params, arena)
         }
-        _ => Err(PdfError::Filter(format!("Unsupported filter: {}", filter_name))),
+        _ => Err(PdfError::Filter {
+            filter: filter_name.to_string().into(),
+            message: format!("Unsupported filter: {}", filter_name).into(),
+        }),
     }
 }
 

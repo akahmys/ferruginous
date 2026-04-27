@@ -2,9 +2,10 @@
 //!
 //! (ISO 14289-2 / PDF/UA-2 Compliance Bridge)
 
-use ferruginous_core::{Handle, Object, PdfArena, PdfError, PdfName, PdfResult};
+use ferruginous_core::document::structure::StructElement;
+use ferruginous_core::{Handle, Object, PdfArena, PdfError, PdfName, PdfResult, FromPdfObject};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 /// A visitor for traversing the Logical Structure Tree iteratively (RR-15 compliant).
 pub struct StructureVisitor<'a> {
@@ -12,6 +13,8 @@ pub struct StructureVisitor<'a> {
     pub arena: &'a PdfArena,
     /// Stack for iterative DFS traversal.
     pub stack: VecDeque<Handle<BTreeMap<Handle<PdfName>, Object>>>,
+    /// Set of visited nodes to prevent infinite loops in cyclic structures.
+    pub visited: BTreeSet<Handle<BTreeMap<Handle<PdfName>, Object>>>,
 }
 
 impl<'a> StructureVisitor<'a> {
@@ -19,12 +22,17 @@ impl<'a> StructureVisitor<'a> {
     pub fn new(arena: &'a PdfArena, root: Handle<BTreeMap<Handle<PdfName>, Object>>) -> Self {
         let mut stack = VecDeque::new();
         stack.push_back(root);
-        Self { arena, stack }
+        Self { arena, stack, visited: BTreeSet::new() }
     }
 
     /// Iteratively walks the tree and yields structure elements.
     pub fn next_element(&mut self) -> Option<Handle<BTreeMap<Handle<PdfName>, Object>>> {
         let current = self.stack.pop_back()?;
+
+        if !self.visited.insert(current) {
+            // Cycle detected - skip this node to prevent infinite loop
+            return self.next_element();
+        }
 
         let dict = self.arena.get_dict(current)?;
         let kids_key = self.arena.get_name_by_str("K")?;
@@ -85,55 +93,35 @@ impl<'a> MatterhornAuditor<'a> {
         let mut last_heading_level = 0;
 
         while let Some(element_handle) = visitor.next_element() {
-            let dict = self
-                .arena
-                .get_dict(element_handle)
-                .ok_or_else(|| PdfError::Other("Structure element dict not found".into()))?;
-            let s_key = self
-                .arena
-                .get_name_by_str("S")
-                .ok_or_else(|| PdfError::Other("S key not interned".into()))?; // Subtype/Tag name
+            let element = StructElement::from_pdf_object(Object::Dictionary(element_handle), self.arena)?;
+            let tag_name = self.arena.get_name(element.subtype)
+                .ok_or_else(|| PdfError::Other("Tag name not found".into()))?;
+            let tag_str = tag_name.as_str();
 
-            if let Some(tag_name_handle) =
-                dict.get(&s_key).and_then(|o: &Object| o.resolve(self.arena).as_name())
+            // 1. Heading Hierarchy Check (Matterhorn Checkpoint 14)
+            if tag_str.starts_with('H')
+                && tag_str.len() == 2
+                && let Ok(level) = tag_str[1..].parse::<i32>()
             {
-                let tag_name = self
-                    .arena
-                    .get_name(tag_name_handle)
-                    .ok_or_else(|| PdfError::Other("Tag name not found".into()))?;
-                let tag_str = tag_name.as_str();
-
-                // 1. Heading Hierarchy Check (Matterhorn Checkpoint 14)
-                if tag_str.starts_with('H')
-                    && tag_str.len() == 2
-                    && let Ok(level) = tag_str[1..].parse::<i32>()
-                {
-                    if level > last_heading_level + 1 {
-                        findings.push(AuditFinding {
-                            checkpoint: "14-001".into(),
-                            severity: "Error".into(),
-                            message: format!(
-                                "Heading level skipped: {tag_str} follows {last_heading_level}"
-                            ),
-                        });
-                    }
-                    last_heading_level = level;
+                if level > last_heading_level + 1 {
+                    findings.push(AuditFinding {
+                        checkpoint: "14-001".into(),
+                        severity: "Error".into(),
+                        message: format!(
+                            "Heading level skipped: {tag_str} follows {last_heading_level}"
+                        ),
+                    });
                 }
+                last_heading_level = level;
+            }
 
-                // 2. Alt-text Check (Matterhorn Checkpoint 13)
-                if tag_str == "Figure" {
-                    let alt_key = self
-                        .arena
-                        .get_name_by_str("Alt")
-                        .ok_or_else(|| PdfError::Other("Alt key not interned".into()))?;
-                    if !dict.contains_key(&alt_key) {
-                        findings.push(AuditFinding {
-                            checkpoint: "13-001".into(),
-                            severity: "Error".into(),
-                            message: "Figure element missing /Alt text".into(),
-                        });
-                    }
-                }
+            // 2. Alt-text Check (Matterhorn Checkpoint 13)
+            if tag_str == "Figure" && element.alt.is_none() {
+                findings.push(AuditFinding {
+                    checkpoint: "13-001".into(),
+                    severity: "Error".into(),
+                    message: "Figure element missing /Alt text".into(),
+                });
             }
         }
 
