@@ -2,6 +2,7 @@ use ferruginous_core::font::FontResource;
 use ferruginous_core::graphics::{GraphicsState, Rect, TextMatrices, WindingRule};
 use ferruginous_core::lexer::Token;
 use ferruginous_core::parser::Parser;
+use ferruginous_core::sublimation::Command;
 use ferruginous_core::{Document, Handle, Object, PdfError, PdfName, PdfResult};
 use ferruginous_render::{RenderBackend, path::PathBuilder};
 use std::collections::{BTreeMap, BTreeSet};
@@ -84,7 +85,22 @@ impl<'a> Interpreter<'a> {
     }
 
     /// Executes a content stream by parsing and processing its operators.
-    pub fn execute(&mut self, data: &[u8]) -> PdfResult<()> {
+    pub fn execute(&mut self, stream_h: Handle<Object>) -> PdfResult<()> {
+        let sublimated = self.doc.arena().get_sublimated_data(stream_h)
+            .ok_or_else(|| PdfError::Other("Not a stream object".into()))?;
+
+        match sublimated {
+            ferruginous_core::object::SublimatedData::Commands(cmds) => {
+                self.execute_commands(&cmds)
+            }
+            _ => {
+                let data = self.doc.arena().get_stream_bytes(&sublimated)?;
+                self.execute_raw(&data)
+            }
+        }
+    }
+
+    fn execute_raw(&mut self, data: &[u8]) -> PdfResult<()> {
         if data.is_empty() {
             return Ok(());
         }
@@ -101,15 +117,155 @@ impl<'a> Interpreter<'a> {
 
                     let _ = parser.next_token()?; // Consume operator
                     self.op_index += 1;
-                    if self.op_index.is_multiple_of(100) {
-                        eprintln!("fepdf: interpreter at op_index={} (op={})", self.op_index, op_str);
-                    }
                     self.execute_operator(&op_str)?;
                 }
                 _ => {
                     let obj = parser.parse_object()?;
                     self.stack.push(obj);
                 }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn execute_commands(&mut self, commands: &[Command]) -> PdfResult<()> {
+        for cmd in commands {
+            self.execute_single_command(cmd)?;
+        }
+        Ok(())
+    }
+
+    fn execute_single_command(&mut self, cmd: &Command) -> PdfResult<()> {
+        match cmd {
+            Command::PushState => self.handle_state_operator("q")?,
+            Command::PopState => self.handle_state_operator("Q")?,
+            Command::Transform(m) => {
+                self.stack.push(Object::Real(m.as_coeffs()[0]));
+                self.stack.push(Object::Real(m.as_coeffs()[1]));
+                self.stack.push(Object::Real(m.as_coeffs()[2]));
+                self.stack.push(Object::Real(m.as_coeffs()[3]));
+                self.stack.push(Object::Real(m.as_coeffs()[4]));
+                self.stack.push(Object::Real(m.as_coeffs()[5]));
+                self.handle_state_operator("cm")?;
+            }
+            Command::MoveTo(p) => {
+                self.stack.push(Object::Real(p.x));
+                self.stack.push(Object::Real(p.y));
+                self.handle_path_operator("m")?;
+            }
+            Command::LineTo(p) => {
+                self.stack.push(Object::Real(p.x));
+                self.stack.push(Object::Real(p.y));
+                self.handle_path_operator("l")?;
+            }
+            Command::CurveTo(p1, p2, p3) => {
+                self.stack.push(Object::Real(p1.x));
+                self.stack.push(Object::Real(p1.y));
+                self.stack.push(Object::Real(p2.x));
+                self.stack.push(Object::Real(p2.y));
+                self.stack.push(Object::Real(p3.x));
+                self.stack.push(Object::Real(p3.y));
+                self.handle_path_operator("c")?;
+            }
+            Command::ClosePath => self.handle_path_operator("h")?,
+            Command::Rect(r) => {
+                self.stack.push(Object::Real(r.origin().x));
+                self.stack.push(Object::Real(r.origin().y));
+                self.stack.push(Object::Real(r.width()));
+                self.stack.push(Object::Real(r.height()));
+                self.handle_path_operator("re")?;
+            }
+            Command::Fill(rule) => {
+                match rule {
+                    WindingRule::NonZero => self.handle_painting_operator("f")?,
+                    WindingRule::EvenOdd => self.handle_painting_operator("f*")?,
+                }
+            }
+            Command::Stroke(_style) => self.handle_painting_operator("S")?,
+            Command::FillStroke(rule, _style) => {
+                match rule {
+                    WindingRule::NonZero => self.handle_painting_operator("B")?,
+                    WindingRule::EvenOdd => self.handle_painting_operator("B*")?,
+                }
+            }
+            Command::Clip(rule) => {
+                match rule {
+                    WindingRule::NonZero => self.handle_path_operator("W")?,
+                    WindingRule::EvenOdd => self.handle_path_operator("W*")?,
+                }
+            }
+            Command::BeginText => self.handle_text_scope_operator("BT")?,
+            Command::EndText => self.handle_text_scope_operator("ET")?,
+            Command::ShowText(s) => {
+                let size = self.state.font_size;
+                let is_vertical = self.state.wmode == 1;
+                let tm = self.text_matrices.as_ref().map(|m| m.text_matrix).unwrap_or(kurbo::Affine::IDENTITY);
+                self.backend.show_text(s, size, tm, is_vertical);
+            }
+            Command::SetFont { font, size } => {
+                // Set the font handle and size in the stack and call Tf
+                // Note: font handle in Command IR is the *target* handle.
+                self.stack.push(Object::Reference(*font));
+                self.stack.push(Object::Real(*size));
+                self.handle_text_state_operator("Tf")?;
+            }
+            Command::MoveText(p) => {
+                self.stack.push(Object::Real(p.x));
+                self.stack.push(Object::Real(p.y));
+                self.handle_text_positioning_operator("Td")?;
+            }
+            Command::SetTextMatrix(m) => {
+                self.stack.push(Object::Real(m.as_coeffs()[0]));
+                self.stack.push(Object::Real(m.as_coeffs()[1]));
+                self.stack.push(Object::Real(m.as_coeffs()[2]));
+                self.stack.push(Object::Real(m.as_coeffs()[3]));
+                self.stack.push(Object::Real(m.as_coeffs()[4]));
+                self.stack.push(Object::Real(m.as_coeffs()[5]));
+                self.handle_text_positioning_operator("Tm")?;
+            }
+            Command::SetFillColor(color) => {
+                match color {
+                    ferruginous_core::graphics::Color::Rgb(r, g, b) => {
+                        self.stack.push(Object::Real(*r));
+                        self.stack.push(Object::Real(*g));
+                        self.stack.push(Object::Real(*b));
+                        self.handle_color_operator("rg")?;
+                    }
+                    _ => {} // Handle others
+                }
+            }
+            Command::SetTextRise(f) => {
+                self.state.text_rise = *f;
+                self.handle_text_state_operator("Ts")?;
+            }
+            Command::SetCharSpacing(s) => {
+                self.state.char_spacing = *s;
+                self.handle_text_state_operator("Tc")?;
+            }
+            Command::SetWordSpacing(s) => {
+                self.state.word_spacing = *s;
+                self.handle_text_state_operator("Tw")?;
+            }
+            Command::SetHorizontalScaling(s) => {
+                self.state.horizontal_scaling = *s;
+                self.handle_text_state_operator("Tz")?;
+            }
+            Command::SetTextRenderMode(m) => {
+                self.state.text_render_mode = *m;
+                self.handle_text_state_operator("Tr")?;
+            }
+            Command::SetWritingMode(w) => {
+                self.state.wmode = *w;
+            }
+            Command::DrawXObject(h) => {
+                // In Sublimated IR, we use strings for names.
+                // We need to resolve the name to a handle.
+                let name_h = self.doc.arena().intern_name(crate::object::PdfName(bytes::Bytes::copy_from_slice(h.as_bytes())));
+                self.stack.push(Object::Name(name_h));
+                self.handle_xobject_operator()?;
+            }
+            Command::BeginMarkedContent { .. } | Command::EndMarkedContent | Command::DrawInlineImage { .. } | Command::RawOperator { .. } => {
+                // TODO: Implement advanced IR rendering
             }
         }
         Ok(())

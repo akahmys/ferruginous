@@ -78,6 +78,7 @@ impl RenderBackend for TextExtractionBackend {
         text: &str,
         _size: f64,
         transform: Affine,
+        _th: f64,
         _tc: f64,
         _tw: f64,
         _vertical: bool,
@@ -141,9 +142,10 @@ impl RenderBackend for CollectorBackend {
         text: &str,
         size: f64,
         transform: Affine,
-        _tc: f64,
-        _tw: f64,
-        _vertical: bool,
+        th: f64,
+        tc: f64,
+        tw: f64,
+        is_vertical: bool,
         op_index: usize,
     ) {
         let coeffs = transform.as_coeffs();
@@ -279,12 +281,22 @@ impl<'a> HeuristicEngine<'a> {
         page_index: usize,
         spans: &[TextSpan],
     ) -> PdfResult<Vec<RemediationCandidate>> {
-        let mut candidates = Vec::new();
         if spans.is_empty() {
-            return Ok(candidates);
+            return Ok(Vec::new());
         }
 
-        // 1. Calculate frequency of font sizes to find "Body" text
+        let (body_size, heading_sizes) = self.calculate_font_size_stats(spans);
+        let mut candidates = Vec::new();
+        for (i, span) in spans.iter().enumerate() {
+            if let Some(cand) = self.infer_heading(page_index, i, span, body_size, &heading_sizes) {
+                candidates.push(cand);
+            }
+        }
+        Ok(candidates)
+    }
+
+    #[allow(clippy::cast_possible_truncation)]
+    fn calculate_font_size_stats(&self, spans: &[TextSpan]) -> (i32, Vec<i32>) {
         let mut size_counts: BTreeMap<i32, usize> = BTreeMap::new();
         for span in spans {
             let s = (span.font_size * 10.0) as i32;
@@ -292,48 +304,38 @@ impl<'a> HeuristicEngine<'a> {
         }
 
         let body_size = size_counts.iter().max_by_key(|&(_, count)| count).map_or(120, |(&s, _)| s);
-
-        // 2. Collect all heading sizes (larger than body)
         let mut heading_sizes: Vec<i32> = size_counts.keys().filter(|&&s| s > body_size + 15).copied().collect();
-        heading_sizes.sort_by(|a, b| b.cmp(a)); // Descending order: largest first
+        heading_sizes.sort_by(|a, b| b.cmp(a));
+        (body_size, heading_sizes)
+    }
 
-        for (i, span) in spans.iter().enumerate() {
-
-            let s = (span.font_size * 10.0) as i32;
-            if let Some(rank) = heading_sizes.iter().position(|&hs| hs == s) {
-                let level = (rank + 1).min(6) as u8;
-                candidates.push(RemediationCandidate {
-                    description: format!(
-                        "Set '{}' as Heading Level {} ({}pt{})",
-                        span.text.trim(),
-                        level,
-                        span.font_size,
-                        if span.is_bold { ", Bold" } else { "" }
-                    ),
-                    page_index,
-                    action_type: RemediationActionType::SetHeading {
-                        text: span.text.clone(),
-                        level,
-                        span_indices: vec![i],
-                    },
-                });
-            } else if span.is_bold && s >= body_size - 5 {
-                // Bold text near body size -> H6 or Strong
-                candidates.push(RemediationCandidate {
-                    description: format!(
-                        "Set '{}' as Heading Level 6 (Bold Body)",
-                        span.text.trim()
-                    ),
-                    page_index,
-                    action_type: RemediationActionType::SetHeading {
-                        text: span.text.clone(),
-                        level: 6,
-                        span_indices: vec![i],
-                    },
-                });
-            }
+    #[allow(clippy::cast_possible_truncation)]
+    fn infer_heading(
+        &self,
+        page_index: usize,
+        span_index: usize,
+        span: &TextSpan,
+        body_size: i32,
+        heading_sizes: &[i32],
+    ) -> Option<RemediationCandidate> {
+        let s = (span.font_size * 10.0) as i32;
+        if let Some(rank) = heading_sizes.iter().position(|&hs| hs == s) {
+            let level = (rank + 1).min(6) as u8;
+            return Some(RemediationCandidate {
+                description: format!("Set '{}' as Heading Level {} ({}pt{})", span.text.trim(), level, span.font_size, if span.is_bold { ", Bold" } else { "" }),
+                page_index,
+                action_type: RemediationActionType::SetHeading { text: span.text.clone(), level, span_indices: vec![span_index] },
+            });
         }
-        Ok(candidates)
+        
+        if span.is_bold && s >= body_size - 5 {
+            return Some(RemediationCandidate {
+                description: format!("Set '{}' as Heading Level 6 (Bold Body)", span.text.trim()),
+                page_index,
+                action_type: RemediationActionType::SetHeading { text: span.text.clone(), level: 6, span_indices: vec![span_index] },
+            });
+        }
+        None
     }
 
     /// Detects potential table structures based on grid alignment.
@@ -435,107 +437,116 @@ impl<'a> HeuristicEngine<'a> {
     /// structural tags (StructTree) and marked content (MCIDs).
     pub fn apply_remediations(
         &self,
-        doc: &mut Document,
+        doc: &Document,
         candidates: Vec<RemediationCandidate>,
     ) -> PdfResult<()> {
         let mut page_groups: BTreeMap<usize, Vec<RemediationCandidate>> = BTreeMap::new();
-        for c in candidates {
-            page_groups.entry(c.page_index).or_default().push(c);
-        }
+        for c in candidates { page_groups.entry(c.page_index).or_default().push(c); }
 
-        let arena = doc.arena();
         let mut struct_elements = Vec::new();
-
         for (page_idx, page_candidates) in page_groups {
-            let page = doc.get_page(page_idx)?;
-            let mut collector = CollectorBackend::new();
-            
-            // Re-run interpreter to get op_index mapping
-            let res_handle = page.resolve_attribute("Resources").and_then(|o| o.as_dict_handle()).unwrap_or_else(|| arena.alloc_dict(BTreeMap::new()));
-            let mut interpreter = Interpreter::new(&mut collector, doc, res_handle, kurbo::Affine::IDENTITY);
-            if let Some(contents) = page.resolve_attribute("Contents") {
-                let data = doc.decode_stream(&contents)?;
-                let _ = interpreter.execute(&data);
-            }
-
-            let mut op_to_mcid = BTreeMap::new();
-            let mut page_struct_elements = Vec::new();
-
-            for (mcid, cand) in page_candidates.into_iter().enumerate() {
-                let tag = match &cand.action_type {
-                    RemediationActionType::SetHeading { level, .. } => format!("H{level}"),
-                    RemediationActionType::CreateTable { .. } => "Table".to_string(),
-                    RemediationActionType::ClusterParagraphs { .. } => "P".to_string(),
-                };
-
-                let (RemediationActionType::SetHeading { span_indices, .. } |
-                    RemediationActionType::CreateTable { span_indices, .. } |
-                    RemediationActionType::ClusterParagraphs { span_indices, .. }) = &cand.action_type;
-                for &idx in span_indices {
-                    if let Some(span) = collector.spans.get(idx) {
-                        #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
-                        op_to_mcid.insert(span.op_index, (tag.clone(), mcid as i32));
-                    }
-                }
-
-                let page_obj = Object::Dictionary(page.dict_handle());
-                let page_ref_handle = arena.find_indirect_handle(&page_obj).unwrap_or_else(|| {
-                    arena.alloc_object(page_obj)
-                });
-
-                let mut elem_dict = BTreeMap::new();
-                elem_dict.insert(arena.name("Type"), Object::Name(arena.name("StructElem")));
-                elem_dict.insert(arena.name("S"), Object::Name(arena.name(&tag)));
-                elem_dict.insert(arena.name("Pg"), Object::Reference(page_ref_handle));
-                #[allow(clippy::cast_possible_wrap)]
-                elem_dict.insert(arena.name("K"), Object::Integer(mcid as i64));
-                
-                let elem_h = arena.alloc_dict(elem_dict);
-                page_struct_elements.push(Object::Reference(arena.alloc_object(Object::Dictionary(elem_h))));
-            }
-
-            if let Some(contents) = page.resolve_attribute("Contents") {
-                let data = doc.decode_stream(&contents)?;
-                let rewriter = ferruginous_core::content::ContentRewriter::new(arena, data);
-                
-                let mut mapping_refs = BTreeMap::new();
-                for (k, (v1, v2)) in &op_to_mcid {
-                    mapping_refs.insert(*k, (v1.as_str(), *v2));
-                }
-                
-                let new_data = rewriter.insert_mcids(mapping_refs)?;
-                let mut new_stream_dict = BTreeMap::new();
-                #[allow(clippy::cast_possible_wrap)]
-                new_stream_dict.insert(arena.name("Length"), Object::Integer(new_data.len() as i64));
-                let new_stream_h = arena.alloc_dict(new_stream_dict);
-                let new_contents = arena.alloc_object(Object::Stream(new_stream_h, bytes::Bytes::from(new_data)));
-                
-                let mut page_dict = arena.get_dict(page.dict_handle()).unwrap_or_default();
-                page_dict.insert(arena.name("Contents"), Object::Reference(new_contents));
-                page_dict.insert(arena.name("Tabs"), Object::Name(arena.name("S")));
-                arena.set_dict(page.dict_handle(), page_dict);
-            }
-            
-            struct_elements.extend(page_struct_elements);
+            struct_elements.extend(self.apply_page_remediations(doc, page_idx, page_candidates)?);
         }
 
+        self.finalize_struct_tree(doc, struct_elements)
+    }
+
+    fn apply_page_remediations(
+        &self,
+        doc: &Document,
+        page_idx: usize,
+        candidates: Vec<RemediationCandidate>,
+    ) -> PdfResult<Vec<Object>> {
+        let page = doc.get_page(page_idx)?;
+        let arena = doc.arena();
+        let mut collector = CollectorBackend::new();
+        
+        let res_h = page.resolve_attribute("Resources").and_then(|o| o.as_dict_handle()).unwrap_or_else(|| arena.alloc_dict(BTreeMap::new()));
+        let mut interpreter = Interpreter::new(&mut collector, doc, res_h, kurbo::Affine::IDENTITY);
+        if let Some(contents) = page.resolve_attribute("Contents") {
+            interpreter.execute(&doc.decode_stream(&contents)?)?;
+        }
+
+        let mut op_to_mcid = BTreeMap::new();
+        let mut page_struct_elements = Vec::new();
+
+        for (mcid, cand) in candidates.into_iter().enumerate() {
+            let tag = match &cand.action_type {
+                RemediationActionType::SetHeading { level, .. } => format!("H{level}"),
+                RemediationActionType::CreateTable { .. } => "Table".to_string(),
+                RemediationActionType::ClusterParagraphs { .. } => "P".to_string(),
+            };
+
+            let span_indices = match &cand.action_type {
+                RemediationActionType::SetHeading { span_indices, .. } |
+                RemediationActionType::CreateTable { span_indices, .. } |
+                RemediationActionType::ClusterParagraphs { span_indices, .. } => span_indices,
+            };
+
+            for &idx in span_indices {
+                if let Some(span) = collector.spans.get(idx) {
+                    #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+                    op_to_mcid.insert(span.op_index, (tag.clone(), mcid as i32));
+                }
+            }
+
+            let page_obj = Object::Dictionary(page.dict_handle());
+            let page_ref = arena.find_indirect_handle(&page_obj).unwrap_or_else(|| arena.alloc_object(page_obj));
+
+            let mut elem_dict = BTreeMap::new();
+            elem_dict.insert(arena.name("Type"), Object::Name(arena.name("StructElem")));
+            elem_dict.insert(arena.name("S"), Object::Name(arena.name(&tag)));
+            elem_dict.insert(arena.name("Pg"), Object::Reference(page_ref));
+            #[allow(clippy::cast_possible_wrap)]
+            elem_dict.insert(arena.name("K"), Object::Integer(mcid as i64));
+            
+            let elem_h = arena.alloc_dict(elem_dict);
+            page_struct_elements.push(Object::Reference(arena.alloc_object(Object::Dictionary(elem_h))));
+        }
+
+        self.update_page_contents(doc, page.dict_handle(), op_to_mcid)?;
+        Ok(page_struct_elements)
+    }
+
+    fn update_page_contents(&self, doc: &Document, page_h: Handle<BTreeMap<Handle<PdfName>, Object>>, op_to_mcid: BTreeMap<usize, (String, i32)>) -> PdfResult<()> {
+        let arena = doc.arena();
+        let page_dict = arena.get_dict(page_h).unwrap_or_default();
+        if let Some(contents) = page_dict.get(&arena.name("Contents")) {
+            let data = doc.decode_stream(contents)?;
+            let rewriter = ferruginous_core::content::ContentRewriter::new(arena, data);
+            
+            let mut mapping_refs = BTreeMap::new();
+            for (k, (v1, v2)) in &op_to_mcid { mapping_refs.insert(*k, (v1.as_str(), *v2)); }
+            
+            let new_data = rewriter.insert_mcids(mapping_refs)?;
+            let mut stream_dict = BTreeMap::new();
+            #[allow(clippy::cast_possible_wrap)]
+            stream_dict.insert(arena.name("Length"), Object::Integer(new_data.len() as i64));
+            let new_contents = arena.alloc_object(Object::Stream(arena.alloc_dict(stream_dict), std::sync::Arc::new(ferruginous_core::object::SublimatedData::Raw(bytes::Bytes::from(new_data)))));
+            
+            let mut updated_dict = arena.get_dict(page_h).unwrap_or_default();
+            updated_dict.insert(arena.name("Contents"), Object::Reference(new_contents));
+            updated_dict.insert(arena.name("Tabs"), Object::Name(arena.name("S")));
+            arena.set_dict(page_h, updated_dict);
+        }
+        Ok(())
+    }
+
+    fn finalize_struct_tree(&self, doc: &Document, struct_elements: Vec<Object>) -> PdfResult<()> {
+        let arena = doc.arena();
         let mut root_dict = BTreeMap::new();
         root_dict.insert(arena.name("Type"), Object::Name(arena.name("StructTreeRoot")));
         root_dict.insert(arena.name("K"), Object::Array(arena.alloc_array(struct_elements)));
-        let root_h = arena.alloc_dict(root_dict);
-        let root_ref = arena.alloc_object(Object::Dictionary(root_h));
+        let root_ref = arena.alloc_object(Object::Dictionary(arena.alloc_dict(root_dict)));
 
         if let Some(cah) = doc.catalog_handle() {
             let mut catalog = arena.get_dict(cah).unwrap_or_default();
             catalog.insert(arena.name("StructTreeRoot"), Object::Reference(root_ref));
-            
             let mut mark_info = BTreeMap::new();
             mark_info.insert(arena.name("Marked"), Object::Boolean(true));
             catalog.insert(arena.name("MarkInfo"), Object::Dictionary(arena.alloc_dict(mark_info)));
-            
             arena.set_dict(cah, catalog);
         }
-
         Ok(())
     }
 }

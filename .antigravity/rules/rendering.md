@@ -20,6 +20,11 @@ Design and implementation conventions for the Ferruginous rendering engine (Core
 - **Isolation**: Each `FontResource` must have its own independent mapping table. "Rescue" logic (using common CMaps) is permitted only for clearly identified CJK fonts and must not have side effects (cache pollution).
 - **Strict Parsing**: CMap parsing must accurately handle both literal strings (UTF-16BE) and hex notations.
 
+## 5. Context Propagation Guard
+- **Rule**: Interpretation of document data MUST enforce type-level provision of a `Resolver` and `ResourceStack`.
+- **Purpose**: Eliminate runtime "Missing Resolver" or "Missing Resource" errors.
+- **Compliance Criterion**: Public high-level interpreters MUST NOT have default constructors that omit these dependencies.
+
 ## 6. High-Fidelity CJK Decoding
 - **Boundary Precision**: Multi-byte character decoding (CMap) MUST accurately detect byte-length boundaries (1-byte vs 2-byte) based on the specific CMap's range definitions.
 - **Fail-Safe Mapping**: If a character mapping is missing, the engine MUST fallback to a diagnostic placeholder (e.g., `.notdef`) and log the incident, rather than silently guessing or shifting indices.

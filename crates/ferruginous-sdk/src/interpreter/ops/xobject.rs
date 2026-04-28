@@ -8,7 +8,7 @@ impl Interpreter<'_> {
         let entry =
             self.find_resource(&self.doc.arena().intern_name(PdfName::new("XObject")), &name)?;
         let xobj = entry.resolve(self.doc.arena());
-        if let Object::Stream(dh, data) = xobj
+        if let Object::Stream(dh, _) = xobj
             && let Some(dict) = self.doc.arena().get_dict(dh)
         {
             let subtype_key = self.doc.arena().intern_name(PdfName::new("Subtype"));
@@ -37,6 +37,7 @@ impl Interpreter<'_> {
         dict: &BTreeMap<Handle<PdfName>, Object>,
         data: &[u8],
     ) -> PdfResult<()> {
+        let decoded = self.doc.arena().process_filters(data, dict)?;
         // 1. Save state
         self.state_stack.push(self.state.clone());
         self.backend.push_state();
@@ -68,7 +69,7 @@ impl Interpreter<'_> {
         }
 
         // 4. Recursive Execute
-        self.execute(data)?;
+        self.execute(&decoded)?;
 
         // 5. Cleanup
         if pushed {

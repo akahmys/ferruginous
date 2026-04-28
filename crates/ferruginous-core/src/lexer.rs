@@ -27,36 +27,9 @@ impl Token {
             Token::Boolean(b) => output.extend_from_slice(if *b { b"true " } else { b"false " }),
             Token::Integer(i) => output.extend_from_slice(format!("{} ", i).as_bytes()),
             Token::Real(f) => output.extend_from_slice(format!("{:.4} ", f).as_bytes()),
-            Token::String(s) => {
-                output.push(b'(');
-                for &b in s {
-                    if b == b'(' || b == b')' || b == b'\\' {
-                        output.push(b'\\');
-                    }
-                    output.push(b);
-                }
-                output.push(b')');
-                output.push(b' ');
-            }
-            Token::Hex(s) => {
-                output.push(b'<');
-                for &b in s {
-                    output.extend_from_slice(format!("{:02X}", b).as_bytes());
-                }
-                output.push(b'>');
-                output.push(b' ');
-            }
-            Token::Name(n) => {
-                output.push(b'/');
-                for &b in n {
-                    if b == b'#' || b <= 32 || b >= 127 || is_delimiter(b) {
-                        output.extend_from_slice(format!("#{b:02X}").as_bytes());
-                    } else {
-                        output.push(b);
-                    }
-                }
-                output.push(b' ');
-            }
+            Token::String(s) => self.write_literal_string(s, output),
+            Token::Hex(s) => self.write_hex_string(s, output),
+            Token::Name(n) => self.write_name(n, output),
             Token::Keyword(kw) => {
                 output.extend_from_slice(kw.as_bytes());
                 output.push(b' ');
@@ -73,6 +46,39 @@ impl Token {
             Token::Null => output.extend_from_slice(b"null "),
             Token::EOF => {}
         }
+    }
+
+    fn write_literal_string(&self, s: &[u8], output: &mut Vec<u8>) {
+        output.push(b'(');
+        for &b in s {
+            if b == b'(' || b == b')' || b == b'\\' {
+                output.push(b'\\');
+            }
+            output.push(b);
+        }
+        output.push(b')');
+        output.push(b' ');
+    }
+
+    fn write_hex_string(&self, s: &[u8], output: &mut Vec<u8>) {
+        output.push(b'<');
+        for &b in s {
+            output.extend_from_slice(format!("{:02X}", b).as_bytes());
+        }
+        output.push(b'>');
+        output.push(b' ');
+    }
+
+    fn write_name(&self, n: &[u8], output: &mut Vec<u8>) {
+        output.push(b'/');
+        for &b in n {
+            if b == b'#' || b <= 32 || b >= 127 || is_delimiter(b) {
+                output.extend_from_slice(format!("#{b:02X}").as_bytes());
+            } else {
+                output.push(b);
+            }
+        }
+        output.push(b' ');
     }
 }
 
@@ -217,19 +223,9 @@ impl Lexer {
                             b')' => result.push(b')'),
                             b'\\' => result.push(b'\\'),
                             b'0'..=b'7' => {
-                                let mut octal = (b2 - b'0') as u32;
-                                let mut count = 1;
-                                while count < 3 && self.pos + 1 < self.data.len() {
-                                    let next_b = self.data[self.pos + 1];
-                                    if (b'0'..=b'7').contains(&next_b) {
-                                        octal = (octal << 3) | (next_b - b'0') as u32;
-                                        self.pos += 1;
-                                        count += 1;
-                                    } else {
-                                        break;
-                                    }
-                                }
-                                result.push(octal as u8);
+                                let (val, new_pos) = self.lex_octal(b2, self.pos);
+                                result.push(val);
+                                self.pos = new_pos;
                             }
                             _ => result.push(b2),
                         }
@@ -240,6 +236,23 @@ impl Lexer {
             self.pos += 1;
         }
         Ok(Token::String(Bytes::from(result)))
+    }
+
+    fn lex_octal(&self, first_digit: u8, start_pos: usize) -> (u8, usize) {
+        let mut octal = (first_digit - b'0') as u32;
+        let mut pos = start_pos;
+        let mut count = 1;
+        while count < 3 && pos + 1 < self.data.len() {
+            let next_b = self.data[pos + 1];
+            if (b'0'..=b'7').contains(&next_b) {
+                octal = (octal << 3) | (next_b - b'0') as u32;
+                pos += 1;
+                count += 1;
+            } else {
+                break;
+            }
+        }
+        (octal as u8, pos)
     }
 
     fn lex_hex_string(&mut self) -> PdfResult<Token> {

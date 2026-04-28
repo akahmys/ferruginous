@@ -8,7 +8,7 @@ Fixing is not development. Identify the root cause of the bug and resolve it wit
 
 ## Procedure
 
-1. **Session Initialization**: Follow the startup instructions in [.antigravity/GEMINI.md](../../.antigravity/GEMINI.md), loading handoff and regression_log.
+1. **Session Initialization**: Follow the startup instructions in [.antigravity/rules.md](../../.antigravity/rules.md), loading handoff and regression_log.
 // turbo
 2. **Describe the Phenomenon**: Observe the phenomenon and accurately record the current status in [.antigravity/session/task.md](../session/task.md).
 // turbo

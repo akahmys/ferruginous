@@ -27,10 +27,12 @@ pub enum RefinedObject {
     Real(f64),
     String(Bytes),
     Hex(Bytes),
+    Text(String),
     Name(PdfName),
     Array(Vec<RefinedObject>),
     Dictionary(BTreeMap<PdfName, RefinedObject>),
     Stream(BTreeMap<PdfName, RefinedObject>, Bytes),
+    Sublimated(BTreeMap<PdfName, RefinedObject>, crate::object::SublimatedData),
     Null,
     Reference(Handle<Object>),
 }
@@ -87,6 +89,8 @@ impl RefinedObject {
 
 pub struct ParallelRefinery;
 
+const UI_TEXT_FIELDS: &[&str] = &["Title", "Author", "Subject", "Keywords", "Creator", "Producer"];
+
 impl ParallelRefinery {
     pub fn refine_all(
         doc: &lopdf::Document,
@@ -109,7 +113,7 @@ impl ParallelRefinery {
         obj: &lopdf::Object,
         table: &RemappingTable,
         handle_fonts: &BTreeMap<u32, Arc<FontResource>>,
-        stream_contexts: &BTreeMap<u32, BTreeMap<String, Arc<FontResource>>>,
+        _stream_contexts: &BTreeMap<u32, BTreeMap<String, Arc<FontResource>>>,
         depth: usize,
         issues: &mut Vec<String>,
     ) -> RefinedObject {
@@ -120,95 +124,151 @@ impl ParallelRefinery {
         }
         match obj {
             lopdf::Object::Dictionary(dict) => {
-                let mut refined_dict = BTreeMap::new();
-                for (k, v) in dict {
-                    refined_dict.insert(
-                        PdfName(Bytes::copy_from_slice(k)),
-                        Self::refine_recursive(id, v, table, handle_fonts, stream_contexts, depth + 1, issues),
-                    );
-                }
-
-                // Font Normalization
-                if let Some("Font") = refined_dict.get(&PdfName::new("Type")).and_then(|o| o.as_str())
-                    && let Some(handle) = table.get(&id) {
-                    let resource = handle_fonts.get(&handle.index()).map(|arc| arc.as_ref());
-                    return font::normalize_font(refined_dict, resource);
-                }
-
-                RefinedObject::Dictionary(refined_dict)
+                Self::refine_dict(id, dict, table, handle_fonts, _stream_contexts, depth, issues)
             }
             lopdf::Object::Stream(s) => {
-                let mut refined_dict = BTreeMap::new();
-                for (k, v) in &s.dict {
-                    refined_dict.insert(
-                        PdfName(Bytes::copy_from_slice(k)),
-                        Self::refine_recursive(id, v, table, handle_fonts, stream_contexts, depth + 1, issues),
-                    );
-                }
-
-                // Content Stream Restructuring
-                let subtype = refined_dict.get(&PdfName::new("Subtype")).and_then(|o| o.as_str());
-                let is_form = subtype == Some("Form");
-                let is_likely_content = subtype.is_none() || is_form;
-                let is_font_data = refined_dict.contains_key(&PdfName::new("Length1")) || refined_dict.contains_key(&PdfName::new("Length2"));
-
-                let mut is_restructured = false;
-                let content = if is_likely_content && !is_font_data {
-                    if let Some(handle) = table.get(&id) {
-                        if let Some(resource_fonts) = stream_contexts.get(&handle.index()) {
-                            match s.decompressed_content() {
-                                Ok(data) => {
-                                    is_restructured = true;
-                                    text::restructure_content_stream(&data, resource_fonts)
-                                }
-                                Err(e) => {
-                                    issues.push(format!("Content stream decompression failed for {:?}: {:?}", id, e));
-                                    Bytes::copy_from_slice(&s.content)
-                                }
-                            }
-                        } else {
-                            Bytes::copy_from_slice(&s.content)
-                        }
-                    } else {
-                        Bytes::copy_from_slice(&s.content)
-                    }
-                } else {
-                    Bytes::copy_from_slice(&s.content)
-                };
-
-                if is_restructured {
-                    refined_dict.remove(&PdfName::new("Filter"));
-                    refined_dict.remove(&PdfName::new("DecodeParms"));
-                    refined_dict.insert(PdfName::new("Length"), RefinedObject::Integer(content.len() as i64));
-                }
-
-                RefinedObject::Stream(refined_dict, content)
+                Self::refine_stream(id, s, table, handle_fonts, _stream_contexts, depth, issues)
             }
             _ => RefinedObject::from_lopdf(obj, table),
         }
     }
+
+    fn refine_dict(
+        id: (u32, u16),
+        dict: &lopdf::Dictionary,
+        table: &RemappingTable,
+        handle_fonts: &BTreeMap<u32, Arc<FontResource>>,
+        _stream_contexts: &BTreeMap<u32, BTreeMap<String, Arc<FontResource>>>,
+        depth: usize,
+        issues: &mut Vec<String>,
+    ) -> RefinedObject {
+        let mut refined_dict = BTreeMap::new();
+        for (k, v) in dict {
+            let key_name = PdfName(Bytes::copy_from_slice(k));
+            
+            // Sublimation: Identify common text-bearing keys and normalize to RefinedObject::Text
+            let refined_v = if matches!(key_name.as_str(), "Title" | "Author" | "Subject" | "Creator" | "Producer" | "Keywords") {
+                match v {
+                    lopdf::Object::String(s, _) => {
+                        RefinedObject::Text(crate::refine::text::recover_string(s))
+                    }
+                    _ => Self::refine_recursive(id, v, table, handle_fonts, _stream_contexts, depth + 1, issues),
+                }
+            } else {
+                Self::refine_recursive(id, v, table, handle_fonts, _stream_contexts, depth + 1, issues)
+            };
+            
+            refined_dict.insert(key_name, refined_v);
+        }
+
+        // Font Normalization
+        if let Some("Font") = refined_dict.get(&PdfName::new("Type")).and_then(|o| o.as_str())
+            && let Some(handle) = table.get(&id) {
+            let resource = handle_fonts.get(&handle.index()).map(|arc| arc.as_ref());
+            refined_dict = match font::normalize_font(refined_dict, resource) {
+                RefinedObject::Dictionary(d) => d,
+                _ => return RefinedObject::Null,
+            };
+        }
+
+        // String Normalization for common UI fields
+        for field in UI_TEXT_FIELDS {
+            let field_key = PdfName::new(field);
+            let recovered = match refined_dict.get(&field_key) {
+                Some(RefinedObject::String(s)) => Some(text::recover_string(s)),
+                Some(RefinedObject::Hex(s)) => Some(text::recover_string(s)),
+                _ => None,
+            };
+            if let Some(val) = recovered {
+                refined_dict.insert(field_key, RefinedObject::Text(val));
+            }
+        }
+
+        RefinedObject::Dictionary(refined_dict)
+    }
+
+    fn refine_stream(
+        id: (u32, u16),
+        s: &lopdf::Stream,
+        table: &RemappingTable,
+        handle_fonts: &BTreeMap<u32, Arc<FontResource>>,
+        _stream_contexts: &BTreeMap<u32, BTreeMap<String, Arc<FontResource>>>,
+        depth: usize,
+        issues: &mut Vec<String>,
+    ) -> RefinedObject {
+        let mut refined_dict = BTreeMap::new();
+        for (k, v) in &s.dict {
+            refined_dict.insert(
+                PdfName(Bytes::copy_from_slice(k)),
+                Self::refine_recursive(id, v, table, handle_fonts, _stream_contexts, depth + 1, issues),
+            );
+        }
+
+        // Content Stream Restructuring
+        let subtype = refined_dict.get(&PdfName::new("Subtype")).and_then(|o| o.as_str());
+        let is_form = subtype == Some("Form");
+        let _is_likely_content = subtype.is_none() || is_form;
+        let _is_font_data = refined_dict.contains_key(&PdfName::new("Length1")) || refined_dict.contains_key(&PdfName::new("Length2"));
+
+        let content = Bytes::copy_from_slice(&s.content);
+        
+        if _is_likely_content && !_is_font_data {
+            // Attempt to sublimate into Command IR
+            // This requires the font context which we have in _stream_contexts
+            if let Some(font_ctx) = _stream_contexts.get(&id.0) {
+                let mut sublimator = crate::sublimation::parser::Sublimator::new(font_ctx);
+                let commands = sublimator.sublimate(&content);
+                return RefinedObject::Sublimated(refined_dict, crate::object::SublimatedData::Commands(commands));
+            }
+        }
+        
+        RefinedObject::Stream(refined_dict, content)
+    }
 }
 
-pub fn commit_to_arena(arena: &PdfArena, refined: RefinedObject) -> Object {
+fn arena_placeholder_intern(_name: &PdfName) -> Handle<crate::object::PdfName> {
+    Handle::new(0) // FIXME: Real implementation needs access to the arena being built
+}
+
+pub fn commit_to_arena(arena: &PdfArena, refined: RefinedObject, depth: usize) -> Object {
+    if depth > 64 { return Object::Null; } // Rule 6: Stack Safety
+
     match refined {
         RefinedObject::Boolean(b) => Object::Boolean(b),
         RefinedObject::Integer(i) => Object::Integer(i),
         RefinedObject::Real(f) => Object::Real(f),
         RefinedObject::String(s) => Object::String(s),
         RefinedObject::Hex(s) => Object::Hex(s),
+        RefinedObject::Text(s) => Object::Text(s),
         RefinedObject::Name(n) => Object::Name(arena.intern_name(n)),
         RefinedObject::Reference(h) => Object::Reference(h),
         RefinedObject::Array(arr) => {
-            let committed = arr.into_iter().map(|item| commit_to_arena(arena, item)).collect();
+            let committed = arr.into_iter().map(|item| commit_to_arena(arena, item, depth + 1)).collect();
             Object::Array(arena.alloc_array(committed))
         }
         RefinedObject::Dictionary(dict) => {
-            let committed = dict.into_iter().map(|(k, v)| (arena.intern_name(k), commit_to_arena(arena, v))).collect();
+            let committed = dict.into_iter().map(|(k, v)| (arena.intern_name(k), commit_to_arena(arena, v, depth + 1))).collect();
             Object::Dictionary(arena.alloc_dict(committed))
         }
         RefinedObject::Stream(dict, bytes) => {
-            let committed_dict = dict.into_iter().map(|(k, v)| (arena.intern_name(k), commit_to_arena(arena, v))).collect();
-            Object::Stream(arena.alloc_dict(committed_dict), bytes)
+            let committed_dict = dict.into_iter().map(|(k, v)| (arena.intern_name(k), commit_to_arena(arena, v, depth + 1))).collect();
+            let dh = arena.alloc_dict(committed_dict);
+            
+            // Perform basic sublimation (Zstd) for large non-content streams
+            let sublimated = if bytes.len() > 4096 {
+                let compressed = zstd::encode_all(&*bytes, 3).unwrap_or_else(|_| bytes.to_vec());
+                crate::object::SublimatedData::Compressed {
+                    original_len: bytes.len(),
+                    data: compressed,
+                }
+            } else {
+                crate::object::SublimatedData::Raw(bytes)
+            };
+            Object::Stream(dh, std::sync::Arc::new(sublimated))
+        }
+        RefinedObject::Sublimated(dict, data) => {
+            let committed_dict = dict.into_iter().map(|(k, v)| (arena.intern_name(k), commit_to_arena(arena, v, depth + 1))).collect();
+            Object::Stream(arena.alloc_dict(committed_dict), std::sync::Arc::new(data))
         }
         RefinedObject::Null => Object::Null,
     }

@@ -23,9 +23,18 @@ while read -r file; do
     # Skip tests
     if [[ $file == *"test"* ]]; then continue; fi
     awk '
-    /^pub fn|^fn / { 
+    # Handle both top-level and indented functions
+    /^[[:space:]]*(pub )?(async )?fn / { 
         if ($0 ~ /mod tests/) { in_test=1; }
-        if (!in_test) { in_fn=1; fn_name=$0; fn_start=FNR; effective_lines=0; }
+        if (!in_test) { 
+            in_fn=1; 
+            fn_name=$0; 
+            fn_start=FNR; 
+            effective_lines=0;
+            # Capture indentation level
+            match($0, /^[[:space:]]*/);
+            fn_indent = RLENGTH;
+        }
     } 
     in_fn {
         # Skip blank lines and comments
@@ -33,13 +42,16 @@ while read -r file; do
             effective_lines++;
         }
     }
-    in_fn && /^}/ { 
-        if (effective_lines > 50) { 
-            print "  FAIL: " FILENAME ":" fn_start " (" effective_lines " effective lines) " fn_name;
-            exit 1;
-        } 
-        in_fn=0;
-    }
+    in_fn && /^[[:space:]]*\}/ { 
+        match($0, /^[[:space:]]*/);
+        if (RLENGTH == fn_indent) {
+            if (effective_lines > 50) { 
+                print "  FAIL: " FILENAME ":" fn_start " (" effective_lines " effective lines) " fn_name;
+                exit 1;
+            } 
+            in_fn=0;
+        }
+    } 
     /^mod tests/ { in_test=1; }
     ' "$file" || ERROR=1
 done < <(find $TARGET_DIRS -name "*.rs" | grep -v "tests")
@@ -121,6 +133,10 @@ cargo clippy --workspace -- -D warnings || ERROR=1
 # Rule 16: License Compliance
 echo "[Rule 16] Checking for license conflicts..."
 ./scripts/audit/audit_licenses.py || ERROR=1
+
+# Rule 18: Secret & PII Protection
+echo "[Rule 18] Checking for secrets and PII..."
+./scripts/audit/verify_secrets.sh || ERROR=1
 
 if [ $ERROR -eq 1 ]; then
     echo "=== AUDIT FAILED ==="

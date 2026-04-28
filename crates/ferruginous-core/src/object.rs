@@ -8,6 +8,7 @@ use crate::handle::Handle;
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+pub mod sublimation;
 
 /// A trait for types that can be initialized from a PDF Object within an Arena.
 pub trait FromPdfObject: Sized {
@@ -202,14 +203,30 @@ pub enum Object {
     /// References an entry in the Arena that holds the BTreeMap.
     Dictionary(Handle<BTreeMap<Handle<PdfName>, Object>>),
     /// Stream objects (Clause 7.3.8)
-    /// References a dictionary handle and holds the raw/encoded data.
-    Stream(Handle<BTreeMap<Handle<PdfName>, Object>>, Bytes),
+    /// References a dictionary handle and holds the sublimated or raw data.
+    Stream(Handle<BTreeMap<Handle<PdfName>, Object>>, SublimatedData),
     /// Hexadecimal string objects (Clause 7.3.4.3)
     Hex(Bytes),
+    /// Text string objects (Refinery extension for UTF-8 internal management)
+    Text(String),
     /// Null object (Clause 7.3.9)
     Null,
     /// Reference to an indirect object (external to this object but in the same arena).
     Reference(Handle<Object>),
+}
+
+/// A container for sublimated (normalized) data in the Arena.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum SublimatedData {
+    /// Fully parsed high-level commands (for Content Streams).
+    Commands(Vec<sublimation::Command>),
+    /// Zstd-compressed raw bytes (for Images/Fonts/Thumbnails).
+    Compressed {
+        original_len: usize,
+        data: Vec<u8>,
+    },
+    /// Raw uncompressed bytes.
+    Raw(Bytes),
 }
 
 impl Object {
@@ -295,7 +312,7 @@ impl Object {
                     let v_obj = Self::from_lopdf(v, arena, table);
                     map.insert(k_handle, v_obj);
                 }
-                Self::Stream(arena.alloc_dict(map), Bytes::copy_from_slice(&s.content))
+                Self::Stream(arena.alloc_dict(map), SublimatedData::Raw(Bytes::copy_from_slice(&s.content)))
             }
             lopdf::Object::Reference(id) => {
                 let handle = table.get(&(id.0, id.1)).cloned().unwrap_or(Handle::new(0));

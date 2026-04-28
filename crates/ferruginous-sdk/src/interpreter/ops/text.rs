@@ -159,11 +159,13 @@ impl Interpreter<'_> {
         let render = m.tm.concat(&rise_mat);
 
         // Pass the richer glyph info (gid, advance, vx, vy) to the backend
+        let th = self.state.text_state.horizontal_scaling / 100.0;
         self.backend.show_text(
             &glyphs,
             &uni,
             self.state.text_state.font_size,
             render.as_affine(),
+            th,
             self.state.text_state.char_spacing,
             self.state.text_state.word_spacing,
             res.wmode() == 1,
@@ -172,13 +174,18 @@ impl Interpreter<'_> {
 
         // Update Tm based on text advancement
         let mut total_advance = 0.0;
-        for (_, w, _, _, _) in &glyphs {
-            total_advance += f64::from(*w) / 1000.0 * self.state.text_state.font_size;
+        for (_, w, _, _, char_code) in &glyphs {
+            let char_width = f64::from(*w) / 1000.0 * self.state.text_state.font_size;
+            if res.wmode() == 1 {
+                total_advance += char_width;
+            } else {
+                total_advance += char_width * th;
+            }
+            total_advance += self.state.text_state.char_spacing;
+            if *char_code == 0x20 {
+                total_advance += self.state.text_state.word_spacing;
+            }
         }
-
-        // Add character and word spacing (simplification)
-        total_advance += f64::from(u32::try_from(text.len()).unwrap_or(u32::MAX))
-            * self.state.text_state.char_spacing;
 
         let advance_mat = if res.wmode() == 1 {
             Matrix::new(1.0, 0.0, 0.0, 1.0, 0.0, -total_advance)
@@ -204,10 +211,13 @@ impl Interpreter<'_> {
             for obj in array {
                 match obj {
                     Object::String(s) => self.show_text(&s)?,
+                    Object::Hex(s) => self.show_text(&s)?,
+                    Object::Text(s) => self.show_text(s.as_bytes())?,
                     _ if obj.as_f64().is_some() => {
                         let n = obj
                             .as_f64()
                             .ok_or_else(|| PdfError::Other("Invalid displacement".into()))?;
+                        let th = self.state.text_state.horizontal_scaling / 100.0;
                         let displacement = n / 1000.0 * self.state.text_state.font_size;
                         let m = self
                             .text_matrices
@@ -216,7 +226,7 @@ impl Interpreter<'_> {
                         let shift = if wmode == 1 {
                             Matrix::new(1.0, 0.0, 0.0, 1.0, 0.0, -displacement)
                         } else {
-                            Matrix::new(1.0, 0.0, 0.0, 1.0, -displacement, 0.0)
+                            Matrix::new(1.0, 0.0, 0.0, 1.0, -displacement * th, 0.0)
                         };
                         m.tm = m.tm.concat(&shift);
                     }
@@ -275,7 +285,11 @@ impl Interpreter<'_> {
                 // If no Unicode mapping, we still render the glyph if it's a printable code
                 if char_code > 31 || char_code == 0x09 || char_code == 0x0A || char_code == 0x0D {
                     glyphs.push((font.to_gid(cid), w, vx, vy, char_code));
-                    uni.push('\u{FFFD}');
+                    if let Some(c) = std::char::from_u32(0xF0000 + cid) {
+                        uni.push(c);
+                    } else {
+                        uni.push('\u{FFFD}');
+                    }
                 }
             }
 

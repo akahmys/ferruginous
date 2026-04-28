@@ -190,7 +190,7 @@ impl PdfDocument {
             #[allow(clippy::cast_possible_wrap)]
             stream_dict.insert(arena.name("Length"), Object::Integer(cert_data.len() as i64));
             let stream_h = arena.alloc_dict(stream_dict);
-            let stream_ref = arena.alloc_object(Object::Stream(stream_h, bytes::Bytes::from(cert_data)));
+            let stream_ref = arena.alloc_object(Object::Stream(stream_h, std::sync::Arc::new(ferruginous_core::object::SublimatedData::Raw(bytes::Bytes::from(cert_data)))));
             cert_refs.push(Object::Reference(stream_ref));
         }
 
@@ -228,91 +228,114 @@ impl PdfDocument {
         }
 
         let target_arena = PdfArena::new();
+        let pages_root_dict_h = target_arena.alloc_dict(std::collections::BTreeMap::new());
+        let pages_root_h = target_arena.alloc_object(Object::Dictionary(pages_root_dict_h));
+
         let mut target_pages = Vec::new();
-
-        let pages_root_key = target_arena.name("Pages");
-        let type_key = target_arena.name("Type");
-        let parent_key = target_arena.name("Parent");
-        let kids_key = target_arena.name("Kids");
-        let count_key = target_arena.name("Count");
-        let catalog_key = target_arena.name("Catalog");
-
-        // 1. Create target Pages root (placeholder)
-        let pages_root_dict_handle = target_arena.alloc_dict(std::collections::BTreeMap::new());
-        let pages_root_handle = target_arena.alloc_object(Object::Dictionary(pages_root_dict_handle));
-
         let mut merged_fields = Vec::new();
         let mut merged_outlines = Vec::new();
-        let mut source_idx = 1;
 
-        // 2. Clone pages and global structures from all sources
-        for source_doc in sources {
-            let mut cloner = cloning::ObjectCloner::new(source_doc.inner.arena(), &target_arena);
-            let count = source_doc.page_count()?;
-            for i in 0..count {
-                let source_page = source_doc.inner.get_page(i)?;
-                let source_page_handle = source_page.dict_handle();
-                
-                // Clone the page dictionary
-                let cloned_page_dict_obj = cloner.clone_object(&Object::Dictionary(source_page_handle))?;
-                
-                if let Object::Dictionary(dh) = cloned_page_dict_obj {
-                    let mut dict = target_arena.get_dict(dh).unwrap_or_default();
-                    // Update parent to the new Pages root
-                    dict.insert(parent_key, Object::Reference(pages_root_handle));
-                    target_arena.set_dict(dh, dict);
-                    
-                    // Allocate as an indirect object
-                    let target_page_handle = target_arena.alloc_object(Object::Dictionary(dh));
-                    target_pages.push(Object::Reference(target_page_handle));
-                }
-            }
-
-            // 2b. Merge AcroForm Fields
-            if let Some(cah) = source_doc.inner.catalog_handle()
-                && let Some(acro_form_obj) = source_doc.inner.arena().get_dict(cah).and_then(|c| c.get(&target_arena.name("AcroForm")).cloned())
-                && let Some(afh) = acro_form_obj.resolve(source_doc.inner.arena()).as_dict_handle()
-                && let Some(af_dict) = source_doc.inner.arena().get_dict(afh)
-                && let Some(fields_obj) = af_dict.get(&target_arena.name("Fields"))
-                && let Some(fah) = fields_obj.resolve(source_doc.inner.arena()).as_array()
-                && let Some(fields) = source_doc.inner.arena().get_array(fah)
-            {
-                for field in fields {
-                    if let Ok(cloned_field) = cloner.clone_object(&field) {
-                        merged_fields.push(cloned_field);
-                    }
-                }
-            }
-
-            // 2c. Merge Outlines (nest them under a source root)
-            if let Some(cah) = source_doc.inner.catalog_handle()
-                && let Some(outlines_obj) = source_doc.inner.arena().get_dict(cah).and_then(|c| c.get(&target_arena.name("Outlines")).cloned())
-                && let Some(oh) = outlines_obj.resolve(source_doc.inner.arena()).as_dict_handle()
-                && let Some(o_dict) = source_doc.inner.arena().get_dict(oh)
-                && let Some(first_obj) = o_dict.get(&target_arena.name("First"))
-                && let Ok(cloned_first) = cloner.clone_object(first_obj)
-            {
-                let mut source_outline_dict = std::collections::BTreeMap::new();
-                source_outline_dict.insert(target_arena.name("Title"), Object::String(format!("Source {source_idx}").into()));
-                source_outline_dict.insert(target_arena.name("First"), cloned_first);
-                let source_outline_h = target_arena.alloc_dict(source_outline_dict);
-                merged_outlines.push(Object::Reference(target_arena.alloc_object(Object::Dictionary(source_outline_h))));
-            }
-            source_idx += 1;
+        for (idx, source) in sources.iter().enumerate() {
+            let mut cloner = cloning::ObjectCloner::new(source.inner.arena(), &target_arena);
+            Self::merge_clone_pages(source, &target_arena, pages_root_h, &mut target_pages, &mut cloner)?;
+            Self::merge_clone_acro_form(source, &target_arena, &mut merged_fields, &mut cloner);
+            Self::merge_clone_outlines(source, idx + 1, &target_arena, &mut merged_outlines, &mut cloner);
         }
 
-        // 3. Finalize Pages root
+        Self::merge_assemble(target_arena, pages_root_h, pages_root_dict_h, target_pages, merged_fields, merged_outlines)
+    }
+
+    fn merge_clone_pages(
+        source: &PdfDocument,
+        target_arena: &PdfArena,
+        pages_root_h: Handle<Object>,
+        target_pages: &mut Vec<Object>,
+        cloner: &mut cloning::ObjectCloner,
+    ) -> PdfResult<()> {
+        let parent_key = target_arena.name("Parent");
+        let count = source.page_count()?;
+        for i in 0..count {
+            let source_page = source.inner.get_page(i)?;
+            let cloned = cloner.clone_object(&Object::Dictionary(source_page.dict_handle()))?;
+            if let Object::Dictionary(dh) = cloned {
+                let mut dict = target_arena.get_dict(dh).unwrap_or_default();
+                dict.insert(parent_key, Object::Reference(pages_root_h));
+                target_arena.set_dict(dh, dict);
+                let target_page_h = target_arena.alloc_object(Object::Dictionary(dh));
+                target_pages.push(Object::Reference(target_page_h));
+            }
+        }
+        Ok(())
+    }
+
+    fn merge_clone_acro_form(
+        source: &PdfDocument,
+        target_arena: &PdfArena,
+        merged_fields: &mut Vec<Object>,
+        cloner: &mut cloning::ObjectCloner,
+    ) {
+        if let Some(cah) = source.inner.catalog_handle()
+            && let Some(af_obj) = source.inner.arena().get_dict(cah).and_then(|c| c.get(&target_arena.name("AcroForm")).cloned())
+            && let Some(afh) = af_obj.resolve(source.inner.arena()).as_dict_handle()
+            && let Some(af_dict) = source.inner.arena().get_dict(afh)
+            && let Some(fields_obj) = af_dict.get(&target_arena.name("Fields"))
+            && let Some(fah) = fields_obj.resolve(source.inner.arena()).as_array()
+            && let Some(fields) = source.inner.arena().get_array(fah)
+        {
+            for field in fields {
+                if let Ok(cloned_field) = cloner.clone_object(&field) {
+                    merged_fields.push(cloned_field);
+                }
+            }
+        }
+    }
+
+    fn merge_clone_outlines(
+        source: &PdfDocument,
+        idx: usize,
+        target_arena: &PdfArena,
+        merged_outlines: &mut Vec<Object>,
+        cloner: &mut cloning::ObjectCloner,
+    ) {
+        if let Some(cah) = source.inner.catalog_handle()
+            && let Some(outlines_obj) = source.inner.arena().get_dict(cah).and_then(|c| c.get(&target_arena.name("Outlines")).cloned())
+            && let Some(oh) = outlines_obj.resolve(source.inner.arena()).as_dict_handle()
+            && let Some(o_dict) = source.inner.arena().get_dict(oh)
+            && let Some(first_obj) = o_dict.get(&target_arena.name("First"))
+            && let Ok(cloned_first) = cloner.clone_object(first_obj)
+        {
+            let mut source_outline_dict = std::collections::BTreeMap::new();
+            source_outline_dict.insert(target_arena.name("Title"), Object::String(format!("Source {idx}").into()));
+            source_outline_dict.insert(target_arena.name("First"), cloned_first);
+            let source_outline_h = target_arena.alloc_dict(source_outline_dict);
+            merged_outlines.push(Object::Reference(target_arena.alloc_object(Object::Dictionary(source_outline_h))));
+        }
+    }
+
+    fn merge_assemble(
+        target_arena: PdfArena,
+        pages_root_h: Handle<Object>,
+        pages_root_dict_h: Handle<std::collections::BTreeMap<Handle<ferruginous_core::PdfName>, Object>>,
+        target_pages: Vec<Object>,
+        merged_fields: Vec<Object>,
+        merged_outlines: Vec<Object>,
+    ) -> PdfResult<Self> {
+        let type_key = target_arena.name("Type");
+        let pages_root_key = target_arena.name("Pages");
+        let catalog_key = target_arena.name("Catalog");
+
+        // Finalize Pages root
         let mut pages_dict = std::collections::BTreeMap::new();
         pages_dict.insert(type_key, Object::Name(pages_root_key));
         #[allow(clippy::cast_possible_wrap)]
-        pages_dict.insert(count_key, Object::Integer(target_pages.len() as i64));
-        pages_dict.insert(kids_key, Object::Array(target_arena.alloc_array(target_pages)));
-        target_arena.set_dict(pages_root_dict_handle, pages_dict);
+        pages_dict.insert(target_arena.name("Count"), Object::Integer(target_pages.len() as i64));
+        pages_dict.insert(target_arena.name("Kids"), Object::Array(target_arena.alloc_array(target_pages)));
+        target_arena.set_dict(pages_root_dict_h, pages_dict);
 
-        // 4. Create Catalog
+        // Create Catalog
         let mut catalog_dict = std::collections::BTreeMap::new();
         catalog_dict.insert(type_key, Object::Name(catalog_key));
-        catalog_dict.insert(pages_root_key, Object::Reference(pages_root_handle));
+        catalog_dict.insert(pages_root_key, Object::Reference(pages_root_h));
 
         if !merged_fields.is_empty() {
             let mut af_dict = std::collections::BTreeMap::new();
@@ -321,45 +344,39 @@ impl PdfDocument {
         }
 
         if !merged_outlines.is_empty() {
-            // Link merged outlines together
-            let mut outline_handles = Vec::new();
-            for item in merged_outlines {
-                if let Object::Reference(h) = item {
-                    outline_handles.push(h);
-                }
-            }
-
-            for (i, &current_h) in outline_handles.iter().enumerate() {
-                if let Object::Dictionary(dh) = target_arena.get_object(current_h).unwrap_or(Object::Null) {
-                    let mut dict = target_arena.get_dict(dh).unwrap_or_default();
-                    if i > 0 {
-                        dict.insert(target_arena.name("Prev"), Object::Reference(outline_handles[i - 1]));
-                    }
-                    if i + 1 < outline_handles.len() {
-                        dict.insert(target_arena.name("Next"), Object::Reference(outline_handles[i + 1]));
-                    }
-                    target_arena.set_dict(dh, dict);
-                }
-            }
-
-            let mut outlines_root = std::collections::BTreeMap::new();
-            outlines_root.insert(type_key, Object::Name(target_arena.name("Outlines")));
-            if let Some(first_h) = outline_handles.first() {
-                outlines_root.insert(target_arena.name("First"), Object::Reference(*first_h));
-            }
-            if let Some(last_h) = outline_handles.last() {
-                outlines_root.insert(target_arena.name("Last"), Object::Reference(*last_h));
-            }
-            #[allow(clippy::cast_possible_wrap)]
-            outlines_root.insert(target_arena.name("Count"), Object::Integer(outline_handles.len() as i64));
-            catalog_dict.insert(target_arena.name("Outlines"), Object::Dictionary(target_arena.alloc_dict(outlines_root)));
+            Self::merge_link_outlines(&target_arena, &merged_outlines, &mut catalog_dict);
         }
 
-        let catalog_handle = target_arena.alloc_object(Object::Dictionary(target_arena.alloc_dict(catalog_dict)));
+        let catalog_h = target_arena.alloc_object(Object::Dictionary(target_arena.alloc_dict(catalog_dict)));
+        Ok(Self { inner: Document::new(target_arena, catalog_h, None) })
+    }
 
-        Ok(Self {
-            inner: Document::new(target_arena, catalog_handle, None),
-        })
+    fn merge_link_outlines(
+        target_arena: &PdfArena,
+        merged_outlines: &[Object],
+        catalog_dict: &mut std::collections::BTreeMap<Handle<ferruginous_core::PdfName>, Object>,
+    ) {
+        let mut outline_handles = Vec::new();
+        for item in merged_outlines {
+            if let Object::Reference(h) = item { outline_handles.push(*h); }
+        }
+
+        for (i, &current_h) in outline_handles.iter().enumerate() {
+            if let Object::Dictionary(dh) = target_arena.get_object(current_h).unwrap_or(Object::Null) {
+                let mut dict = target_arena.get_dict(dh).unwrap_or_default();
+                if i > 0 { dict.insert(target_arena.name("Prev"), Object::Reference(outline_handles[i - 1])); }
+                if i + 1 < outline_handles.len() { dict.insert(target_arena.name("Next"), Object::Reference(outline_handles[i + 1])); }
+                target_arena.set_dict(dh, dict);
+            }
+        }
+
+        let mut outlines_root = std::collections::BTreeMap::new();
+        outlines_root.insert(target_arena.name("Type"), Object::Name(target_arena.name("Outlines")));
+        if let Some(first_h) = outline_handles.first() { outlines_root.insert(target_arena.name("First"), Object::Reference(*first_h)); }
+        if let Some(last_h) = outline_handles.last() { outlines_root.insert(target_arena.name("Last"), Object::Reference(*last_h)); }
+        #[allow(clippy::cast_possible_wrap)]
+        outlines_root.insert(target_arena.name("Count"), Object::Integer(outline_handles.len() as i64));
+        catalog_dict.insert(target_arena.name("Outlines"), Object::Dictionary(target_arena.alloc_dict(outlines_root)));
     }
 
     /// Extracts specific pages into a new document.
@@ -537,126 +554,102 @@ impl PdfDocument {
         sign_options: &SignOptions,
     ) -> PdfResult<()> {
         let arena = self.inner.arena();
+        let sig_h = self.create_sig_dict(arena, sign_options);
+        let widget_h = self.create_sig_widget(arena, sign_options, sig_h);
 
-        // 1. Create Signature Dictionary
-        let mut sig_dict = std::collections::BTreeMap::new();
-        sig_dict.insert(arena.name("Type"), Object::Name(arena.name("Sig")));
-        sig_dict.insert(arena.name("Filter"), Object::Name(arena.name("Adobe.PPKLite")));
-        sig_dict.insert(arena.name("SubFilter"), Object::Name(arena.name("adbe.pkcs7.detached")));
+        self.add_sig_to_page(arena, sign_options.page_index, widget_h)?;
+        self.add_sig_to_catalog(arena, widget_h)?;
 
-        if let Some(reason) = &sign_options.reason {
-            sig_dict.insert(arena.name("Reason"), Object::String(Bytes::from(reason.clone())));
-        }
-        if let Some(location) = &sign_options.location {
-            sig_dict.insert(arena.name("Location"), Object::String(Bytes::from(location.clone())));
-        }
-        if let Some(contact) = &sign_options.contact_info {
-            sig_dict
-                .insert(arena.name("ContactInfo"), Object::String(Bytes::from(contact.clone())));
-        }
-        if let Some(name) = &sign_options.name {
-            sig_dict.insert(arena.name("Name"), Object::String(Bytes::from(name.clone())));
-        }
+        let file = std::fs::File::create(output_path).map_err(PdfError::Io)?;
+        let mut writer = crate::writer::PdfWriter::new(file, arena);
+        writer.set_string_encoding(options.string_encoding);
+        writer.add_signature_target(sig_h);
 
-        // Use a 2.0 compliant date format (D:YYYYMMDDHHmmSSOHH'mm')
-        let now_dt = chrono::Local::now();
-        let now = now_dt.format("D:%Y%m%d%H%M%S%:z").to_string().replace(':', "'") + "'";
-        sig_dict.insert(arena.name("M"), Object::String(Bytes::from(now)));
+        if options.vacuum { writer.set_vacuum(true); }
+        if options.compress { writer.set_compression(options.compression_level); }
 
-        // Placeholder for Contents (hex string) - 16KB reserved for PKCS#7
-        let placeholder = vec![0u8; 8192];
-        sig_dict.insert(arena.name("Contents"), Object::Hex(placeholder.into()));
+        writer.write_header(version)?;
+        writer.finish(*self.inner.root_handle(), self.inner.info_handle())?;
+        Ok(())
+    }
 
-        // ByteRange Placeholder
-        let byte_range = vec![
-            Object::Integer(0),
-            Object::Integer(1_000_000_000), // Placeholder for patch
-            Object::Integer(1_000_000_000), // Placeholder for patch
-            Object::Integer(1_000_000_000), // Placeholder for patch
-        ];
-        sig_dict.insert(arena.name("ByteRange"), Object::Array(arena.alloc_array(byte_range)));
+    fn create_sig_dict(&self, arena: &PdfArena, options: &SignOptions) -> Handle<Object> {
+        let mut dict = std::collections::BTreeMap::new();
+        dict.insert(arena.name("Type"), Object::Name(arena.name("Sig")));
+        dict.insert(arena.name("Filter"), Object::Name(arena.name("Adobe.PPKLite")));
+        dict.insert(arena.name("SubFilter"), Object::Name(arena.name("adbe.pkcs7.detached")));
 
-        let sig_handle = arena.alloc_object(Object::Dictionary(arena.alloc_dict(sig_dict)));
+        if let Some(r) = &options.reason { dict.insert(arena.name("Reason"), Object::String(Bytes::from(r.clone()))); }
+        if let Some(l) = &options.location { dict.insert(arena.name("Location"), Object::String(Bytes::from(l.clone()))); }
+        if let Some(c) = &options.contact_info { dict.insert(arena.name("ContactInfo"), Object::String(Bytes::from(c.clone()))); }
+        if let Some(n) = &options.name { dict.insert(arena.name("Name"), Object::String(Bytes::from(n.clone()))); }
 
-        // 2. Create Widget Annotation
-        let mut widget_dict = std::collections::BTreeMap::new();
-        widget_dict.insert(arena.name("Type"), Object::Name(arena.name("Annot")));
-        widget_dict.insert(arena.name("Subtype"), Object::Name(arena.name("Widget")));
-        widget_dict.insert(arena.name("FT"), Object::Name(arena.name("Sig")));
-        widget_dict.insert(arena.name("T"), Object::String(Bytes::from("Signature1")));
-        widget_dict.insert(arena.name("V"), Object::Reference(sig_handle));
-        widget_dict.insert(arena.name("F"), Object::Integer(4)); // Print flag
+        let now = chrono::Local::now().format("D:%Y%m%d%H%M%S%:z").to_string().replace(':', "'") + "'";
+        dict.insert(arena.name("M"), Object::String(Bytes::from(now)));
+        dict.insert(arena.name("Contents"), Object::Hex(vec![0u8; 8192].into()));
+        
+        let br = vec![Object::Integer(0), Object::Integer(1_000_000_000), Object::Integer(1_000_000_000), Object::Integer(1_000_000_000)];
+        dict.insert(arena.name("ByteRange"), Object::Array(arena.alloc_array(br)));
+        
+        arena.alloc_object(Object::Dictionary(arena.alloc_dict(dict)))
+    }
+
+    fn create_sig_widget(&self, arena: &PdfArena, options: &SignOptions, sig_h: Handle<Object>) -> Handle<Object> {
+        let mut dict = std::collections::BTreeMap::new();
+        dict.insert(arena.name("Type"), Object::Name(arena.name("Annot")));
+        dict.insert(arena.name("Subtype"), Object::Name(arena.name("Widget")));
+        dict.insert(arena.name("FT"), Object::Name(arena.name("Sig")));
+        dict.insert(arena.name("T"), Object::String(Bytes::from("Signature1")));
+        dict.insert(arena.name("V"), Object::Reference(sig_h));
+        dict.insert(arena.name("F"), Object::Integer(4));
 
         let rect = vec![
-            Object::Real(f64::from(sign_options.rect[0])),
-            Object::Real(f64::from(sign_options.rect[1])),
-            Object::Real(f64::from(sign_options.rect[2])),
-            Object::Real(f64::from(sign_options.rect[3])),
+            Object::Real(f64::from(options.rect[0])), Object::Real(f64::from(options.rect[1])),
+            Object::Real(f64::from(options.rect[2])), Object::Real(f64::from(options.rect[3])),
         ];
-        widget_dict.insert(arena.name("Rect"), Object::Array(arena.alloc_array(rect)));
+        dict.insert(arena.name("Rect"), Object::Array(arena.alloc_array(rect)));
+        arena.alloc_object(Object::Dictionary(arena.alloc_dict(dict)))
+    }
 
-        let widget_handle = arena.alloc_object(Object::Dictionary(arena.alloc_dict(widget_dict)));
-
-        // 3. Add to Page
-        let page = self.inner.get_page(sign_options.page_index)?;
-        let page_dict_handle = page.dict_handle();
-        let mut page_dict = arena.get_dict(page_dict_handle).ok_or_else(|| PdfError::Other("Page dictionary missing".into()))?;
-
-        let annots_key = arena.name("Annots");
-        let mut annots = if let Some(Object::Array(ah)) = page_dict.get(&annots_key) {
+    fn add_sig_to_page(&self, arena: &PdfArena, page_idx: usize, widget_h: Handle<Object>) -> PdfResult<()> {
+        let page = self.inner.get_page(page_idx)?;
+        let dh = page.dict_handle();
+        let mut dict = arena.get_dict(dh).ok_or_else(|| PdfError::Other("Page dict missing".into()))?;
+        
+        let annots_k = arena.name("Annots");
+        let mut annots = if let Some(Object::Array(ah)) = dict.get(&annots_k) {
             arena.get_array(*ah).unwrap_or_default()
         } else {
             Vec::new()
         };
-        annots.push(Object::Reference(widget_handle));
-        page_dict.insert(annots_key, Object::Array(arena.alloc_array(annots)));
-        arena.set_dict(page_dict_handle, page_dict);
+        annots.push(Object::Reference(widget_h));
+        dict.insert(annots_k, Object::Array(arena.alloc_array(annots)));
+        arena.set_dict(dh, dict);
+        Ok(())
+    }
 
-        // 4. Add to Catalog AcroForm
-        let root_handle = *self.inner.root_handle();
-        if let Some(Object::Dictionary(rdh)) = arena.get_object(root_handle) {
-            let mut root_dict = arena.get_dict(rdh).ok_or_else(|| PdfError::Other("AcroForm root missing".into()))?;
+    fn add_sig_to_catalog(&self, arena: &PdfArena, widget_h: Handle<Object>) -> PdfResult<()> {
+        let root_h = *self.inner.root_handle();
+        let Some(Object::Dictionary(rdh)) = arena.get_object(root_h) else { return Ok(()) };
+        let mut root_dict = arena.get_dict(rdh).ok_or_else(|| PdfError::Other("Catalog dict missing".into()))?;
 
-            let mut acro_form =
-                if let Some(Object::Dictionary(afh)) = root_dict.get(&arena.name("AcroForm")) {
-                    arena.get_dict(*afh).unwrap_or_default()
-                } else {
-                    let mut af = std::collections::BTreeMap::new();
-                    af.insert(arena.name("Fields"), Object::Array(arena.alloc_array(Vec::new())));
-                    af
-                };
+        let mut acro_form = if let Some(Object::Dictionary(afh)) = root_dict.get(&arena.name("AcroForm")) {
+            arena.get_dict(*afh).unwrap_or_default()
+        } else {
+            let mut af = std::collections::BTreeMap::new();
+            af.insert(arena.name("Fields"), Object::Array(arena.alloc_array(Vec::new())));
+            af
+        };
 
-            if let Some(Object::Array(fh)) = acro_form.get(&arena.name("Fields")) {
-                let mut fields = arena.get_array(*fh).unwrap_or_default();
-                fields.push(Object::Reference(widget_handle));
-                acro_form.insert(arena.name("Fields"), Object::Array(arena.alloc_array(fields)));
-            }
-
-            // Set SigFlags to 3 (SignaturesExist | AppendOnly)
-            acro_form.insert(arena.name("SigFlags"), Object::Integer(3));
-
-            root_dict
-                .insert(arena.name("AcroForm"), Object::Dictionary(arena.alloc_dict(acro_form)));
-            arena.set_dict(rdh, root_dict);
+        if let Some(Object::Array(fh)) = acro_form.get(&arena.name("Fields")) {
+            let mut fields = arena.get_array(*fh).unwrap_or_default();
+            fields.push(Object::Reference(widget_h));
+            acro_form.insert(arena.name("Fields"), Object::Array(arena.alloc_array(fields)));
         }
 
-        // 5. Final Save with Signature Patching
-        let file = std::fs::File::create(output_path).map_err(PdfError::Io)?;
-        let mut writer = crate::writer::PdfWriter::new(file, arena);
-        writer.set_string_encoding(options.string_encoding);
-
-        // We'll tell the writer about the signature object to patch
-        writer.add_signature_target(sig_handle);
-
-        if options.vacuum {
-            writer.set_vacuum(true);
-        }
-        if options.compress {
-            writer.set_compression(options.compression_level);
-        }
-
-        writer.write_header(version)?;
-        writer.finish(root_handle, self.inner.info_handle())?;
+        acro_form.insert(arena.name("SigFlags"), Object::Integer(3));
+        root_dict.insert(arena.name("AcroForm"), Object::Dictionary(arena.alloc_dict(acro_form)));
+        arena.set_dict(rdh, root_dict);
         Ok(())
     }
 
@@ -715,22 +708,18 @@ impl PdfDocument {
                     if let Some(arr) = arena.get_array(h) {
                         for (i, obj) in arr.iter().enumerate() {
                             if let Object::Reference(rh) = obj {
-                                let start = std::time::Instant::now();
                                 let stream = self.inner.resolve(rh)?;
                                 let data = self.inner.decode_stream(&stream)?;
-                                eprintln!("fepdf: decoded stream {}/{} in {:?}", i+1, arr.len(), start.elapsed());
-
                                 interpreter.execute(&data)?;
                             }
                         }
                     }
                 }
                 Object::Stream(_, _) => {
-                    let start = std::time::Instant::now();
                     let data = self.inner.decode_stream(&contents_obj)?;
-                    eprintln!("fepdf: decoded stream obj in {:?}", start.elapsed());
                     interpreter.execute(&data)?;
                 }
+                Object::Text(_) => return Err(PdfError::Other("Invalid Contents type (Text)".into())),
                 _ => return Err(PdfError::Other("Invalid Contents type".into())),
             }
         }
@@ -871,7 +860,7 @@ impl PdfDocument {
         ];
         for path in font_paths {
             if let Ok(data) = std::fs::read(path) {
-                backend.system_fonts.insert("ヒラギノ明朝 ProN".to_string(), data);
+                backend.system_fonts.insert("ヒラギノ明朝 ProN".to_string(), std::sync::Arc::new(data));
                 break;
             }
         }

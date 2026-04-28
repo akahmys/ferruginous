@@ -3,19 +3,18 @@ use ferruginous_core::{Document, Object};
 use std::env;
 use std::fs;
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
         eprintln!("Usage: stream_dump <pdf_file>");
-        return;
+        return Ok(());
     }
 
-    let buf = fs::read(&args[1]).expect("Failed to read file");
+    let buf = fs::read(&args[1])?;
     let doc = Document::open(
         bytes::Bytes::from(buf),
         &ferruginous_core::ingest::IngestionOptions::default(),
-    )
-    .expect("Failed to open PDF");
+    ).map_err(|e| format!("{e:?}"))?;
     let arena = doc.arena();
 
     for h in 0..arena.object_count() {
@@ -31,4 +30,5 @@ fn main() {
             }
         }
     }
+    Ok(())
 }

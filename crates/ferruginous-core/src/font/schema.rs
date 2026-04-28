@@ -119,6 +119,10 @@ pub struct PdfCIDFont {
     pub dw: Option<i64>,
     #[pdf_key("W")]
     pub w: Option<Handle<Vec<Object>>>,
+    #[pdf_key("DW2")]
+    pub dw2: Option<Handle<Vec<Object>>>,
+    #[pdf_key("W2")]
+    pub w2: Option<Handle<Vec<Object>>>,
     #[pdf_key("CIDToGIDMap")]
     pub cid_to_gid_map: Option<Object>,
 }

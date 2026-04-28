@@ -60,16 +60,15 @@ This document defines the official naming conventions for the Ferruginous projec
     - `--password`: Encryption setting.
     - `--no-refinement`: Disabling of active 2-pass refinement.
 - **Consistency**: Argument names in CLI must map 1:1 to `SaveOptions` or `IngestionOptions` fields in the SDK.
-+
-+## 8. Multi-Pass Processing Methods
-+
-+- **Rule**: Methods that perform specific transformation phases MUST use the `perform_pass_N_<action>` pattern (where N is the phase number starting from 0).
-+- **Phases**:
-+    - **Pass 0**: Physical Normalization (Decryption, XRef repair, Raw object cleanup).
-+    - **Pass 1**: Structural Ingestion (Arena handle mapping, Semantic parsing).
-+    - **Pass 2**: Content Refinement (Unicode normalization, Color harmonization).
-+- **Purpose**: Clearly indicate the "Depth of Refinement" and the order of operations in the pipeline.
-+- **Criterion**: All major transformation entry points in `Ingestor` and `Refinery` must follow this schema.
+## 8. Multi-Pass Processing Methods
+
+- **Rule**: Methods that perform specific transformation phases MUST use the `perform_pass_N_<action>` pattern (where N is the phase number starting from 0).
+- **Phases**:
+    - **Pass 0**: Physical Normalization (Decryption, XRef repair, Raw object cleanup).
+    - **Pass 1**: Structural Ingestion (Arena handle mapping, Semantic parsing).
+    - **Pass 2**: Content Refinement (Unicode normalization, Color harmonization).
+- **Purpose**: Clearly indicate the "Depth of Refinement" and the order of operations in the pipeline.
+- **Criterion**: All major transformation entry points in `Ingestor` and `Refinery` must follow this schema.
 
 ## 9. Error Variant Naming
 - **Rule**: Enum variants for `PdfError` MUST follow a "Result-of-Action" pattern and prioritize context in their names.
@@ -79,3 +78,12 @@ This document defines the official naming conventions for the Ferruginous projec
     - `Filter`: Errors occurring during stream decoding/encoding.
     - `ClauseViolation`: Specific violations of ISO 32000-2 requirements (MUST include a `clause` field).
 - **Criterion**: Avoid generic names like `General` or `Unknown`. Every variant should represent a specific failure mode in the PDF lifecycle.
+
+---
+
+## 10. Documentation Path Rule
+
+To ensure portability and script reliability:
+
+- **Relativity**: All paths mentioned in convention, skill, and workflow files MUST be relative to the project root or the current file.
+- **Case Sensitivity**: The project root name MUST always be written in lowercase (`ferruginous`) to match the actual filesystem, regardless of how it appears in the user's environment.

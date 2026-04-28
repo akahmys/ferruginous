@@ -1,6 +1,7 @@
-#![allow(missing_docs)]
 mod app;
 mod view;
+mod vello_egui;
+mod worker;
 
 use app::FerruginousApp;
 use std::path::PathBuf;

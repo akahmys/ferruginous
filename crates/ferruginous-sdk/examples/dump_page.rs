@@ -3,47 +3,47 @@ use bytes::Bytes;
 use ferruginous_sdk::PdfDocument;
 use std::path::Path;
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = Path::new("/Users/jun/Downloads/bokutokitan.pdf");
     if !path.exists() {
         eprintln!("File not found: {}", path.display());
-        return;
+        return Ok(());
     }
-    let data = std::fs::read(path).unwrap();
-    let doc = PdfDocument::open(Bytes::from(data)).unwrap();
+    let data = std::fs::read(path)?;
+    let doc = PdfDocument::open(Bytes::from(data)).map_err(|e| format!("{e:?}"))?;
 
-    // Page 3 is index 2
-    let page_count = doc.page_count().unwrap();
+    let page_count = doc.page_count().map_err(|e| format!("{e:?}"))?;
     if page_count < 3 {
         eprintln!("Document only has {page_count} pages");
-        return;
+        return Ok(());
     }
 
-    let summary = doc.get_summary().unwrap();
+    let summary = doc.get_summary().map_err(|e| format!("{e:?}"))?;
     println!("Document Version: {}", summary.version);
 
-    // Get contents via resolve_attribute
-    let page = doc.inner().get_page(2).unwrap();
+    let page = doc.inner().get_page(2).map_err(|e| format!("{e:?}"))?;
     if let Some(contents_obj) = page.resolve_attribute("Contents") {
         let actual_obj = contents_obj.resolve(doc.inner().arena());
         match actual_obj {
             ferruginous_core::Object::Array(h) => {
-                let array = doc.inner().arena().get_array(h).unwrap();
-                println!("--- [ PAGE 3 CONTENT STREAMS (ARRAY OF {}) ] ---", array.len());
-                for (i, obj) in array.iter().enumerate() {
-                    let stream_obj = obj.resolve(doc.inner().arena());
-                    let data = doc.inner().decode_stream(&stream_obj).unwrap();
-                    println!("--- [ STREAM {i} ] ---");
-                    println!("{}", String::from_utf8_lossy(&data));
+                if let Some(array) = doc.inner().arena().get_array(h) {
+                    println!("--- [ PAGE 3 CONTENT STREAMS (ARRAY OF {}) ] ---", array.len());
+                    for (i, obj) in array.iter().enumerate() {
+                        let stream_obj = obj.resolve(doc.inner().arena());
+                        if let Ok(data) = doc.inner().decode_stream(&stream_obj) {
+                            println!("--- [ STREAM {i} ] ---");
+                            println!("{}", String::from_utf8_lossy(&data));
+                        }
+                    }
                 }
             }
             _ => {
-                let data = doc.inner().decode_stream(&actual_obj).unwrap();
-                println!("--- [ PAGE 3 CONTENT STREAM ] ---");
-                println!("{}", String::from_utf8_lossy(&data));
+                if let Ok(data) = doc.inner().decode_stream(&actual_obj) {
+                    println!("--- [ PAGE 3 CONTENT STREAM ] ---");
+                    println!("{}", String::from_utf8_lossy(&data));
+                }
             }
         }
-    } else {
-        println!("Page 3 has no contents.");
     }
+    Ok(())
 }

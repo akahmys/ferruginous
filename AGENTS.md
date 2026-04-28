@@ -14,3 +14,4 @@ Global project rules and principles are defined in [.antigravity/rules.md](file:
 
 ## Specialized Skills
 Procedural instructions for planning, fixing, and verifying compliance are located in [.antigravity/skills/](file:///.antigravity/skills/).
+- **Delegation**: [.antigravity/skills/delegation.md](file:///.antigravity/skills/delegation.md)

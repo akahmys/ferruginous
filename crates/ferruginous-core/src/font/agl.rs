@@ -4,7 +4,11 @@
 
 /// Maps a glyph name to its corresponding Unicode string.
 pub fn lookup(name: &str) -> Option<String> {
-    // 1. Check for uniXXXX or uXXXXX patterns
+    if let Some(s) = lookup_pattern(name) { return Some(s); }
+    lookup_agl(name)
+}
+
+fn lookup_pattern(name: &str) -> Option<String> {
     if name.starts_with("uni") && name.len() >= 7 {
         if let Ok(val) = u32::from_str_radix(&name[3..7], 16)
             && let Some(c) = std::char::from_u32(val) {
@@ -15,8 +19,15 @@ pub fn lookup(name: &str) -> Option<String> {
         && let Some(c) = std::char::from_u32(val) {
         return Some(c.to_string());
     }
+    None
+}
 
-    // 2. Standard AGL lookup
+fn lookup_agl(name: &str) -> Option<String> {
+    if let Some(s) = lookup_agl_standard(name) { return Some(s); }
+    lookup_agl_extended(name)
+}
+
+fn lookup_agl_standard(name: &str) -> Option<String> {
     match name {
         "space" => Some("\u{0020}".to_string()),
         "exclam" => Some("\u{0021}".to_string()),
@@ -61,6 +72,12 @@ pub fn lookup(name: &str) -> Option<String> {
         "bar" => Some("\u{007C}".to_string()),
         "braceright" => Some("\u{007D}".to_string()),
         "asciitilde" => Some("\u{007E}".to_string()),
+        _ => None,
+    }
+}
+
+fn lookup_agl_extended(name: &str) -> Option<String> {
+    match name {
         "bullet" => Some("\u{2022}".to_string()),
         "dagger" => Some("\u{2020}".to_string()),
         "daggerdbl" => Some("\u{2021}".to_string()),
@@ -79,12 +96,6 @@ pub fn lookup(name: &str) -> Option<String> {
         "quotehook" => Some("\u{02BB}".to_string()),
         "trademark" => Some("\u{2122}".to_string()),
         "euro" => Some("\u{20AC}".to_string()),
-        _ => {
-            // Single character check
-            if name.len() == 1 {
-                return Some(name.to_string());
-            }
-            None
-        }
+        _ => if name.len() == 1 { Some(name.to_string()) } else { None }
     }
 }

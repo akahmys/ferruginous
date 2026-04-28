@@ -89,6 +89,7 @@ impl<'a> ObjectCloner<'a> {
                 let target_dh = self.target.alloc_dict(target_dict);
                 Ok(Object::Stream(target_dh, data.clone()))
             }
+            Object::Text(s) => Ok(Object::Text(s.clone())),
         }
     }
 
@@ -166,6 +167,7 @@ impl<'a> ObjectCloner<'a> {
                 let target_dh = self.target.alloc_dict(target_dict);
                 Object::Stream(target_dh, data.clone())
             }
+            Object::Text(s) => Object::Text(s.clone()),
         }
     }
 }

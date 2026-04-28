@@ -29,3 +29,12 @@
 - **Rule**: Isolation of development work in branches following the [merging.md](merging.md) protocol and merging to `main` only after 100% verification and user approval.
 - **Purpose**: Maintain `main` as a continuously stable and compliant foundation.
 - **Compliance Criterion**: `main` must always pass `verify_compliance.sh` and contain only verified, approved features.
+
+---
+
+## 6. Artifact Fallback Policy
+
+To maintain execution momentum during session finalization:
+
+- **Rule**: If a structured edit tool (`replace_file_content` or `multi_replace_file_content`) fails more than once on a non-source-code artifact (e.g., `task.md`, `walkthrough.md`, `implementation_plan.md`), the AI SHOULD immediately switch to `write_to_file` with `Overwrite: true`.
+- **Purpose**: Prevent turn-token waste and session stalls caused by minor formatting mismatches in descriptive documentation.

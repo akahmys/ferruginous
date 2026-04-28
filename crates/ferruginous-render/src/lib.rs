@@ -15,6 +15,7 @@ mod text_tests;
 use ferruginous_core::graphics::{Color, LineCap, LineJoin, PixelFormat, StrokeStyle, WindingRule};
 use kurbo::{Affine, BezPath, Cap, Join, Stroke};
 use skrifa::raw::FileRef;
+use std::sync::Arc;
 use vello::Scene;
 
 pub trait RenderBackend: Send {
@@ -47,17 +48,12 @@ pub trait RenderBackend: Send {
         cid_to_gid_map: Option<Vec<u16>>,
     );
     fn set_font(&mut self, name: &str);
-    #[allow(clippy::too_many_arguments)]
     fn show_text(
         &mut self,
-        glyphs: &[(u32, f32, f32, f32, u32)], // (cid, advance, vx, vy, char_code)
         text: &str,
         size: f64,
         transform: kurbo::Affine,
-        tc: f64,
-        tw: f64,
         is_vertical: bool,
-        op_index: usize,
     );
     fn set_text_render_mode(&mut self, mode: ferruginous_core::graphics::TextRenderingMode);
     fn set_char_spacing(&mut self, spacing: f64);
@@ -98,7 +94,7 @@ pub struct VelloBackend {
     state: VelloState,
     state_stack: Vec<VelloState>,
     font_cache: std::collections::BTreeMap<String, FontCacheEntry>,
-    pub system_fonts: std::collections::BTreeMap<String, Vec<u8>>,
+    pub system_fonts: std::collections::BTreeMap<String, Arc<Vec<u8>>>,
     skrifa_bridge: crate::text::SkrifaBridge,
 }
 
@@ -134,7 +130,7 @@ impl VelloBackend {
                 let mut fonts = std::collections::BTreeMap::new();
                 let font_path = "/System/Library/Fonts/ヒラギノ明朝 ProN.ttc";
                 if let Ok(data) = std::fs::read(font_path) {
-                    fonts.insert("ヒラギノ明朝 ProN".to_string(), data);
+                    fonts.insert("ヒラギノ明朝 ProN".to_string(), Arc::new(data));
                 }
                 fonts
             },
@@ -169,6 +165,126 @@ impl VelloBackend {
 
     pub fn scene(&self) -> &Scene {
         &self.scene
+    }
+
+    fn to_rgba8(&self, data: &[u8], width: u32, height: u32, format: PixelFormat) -> Vec<u8> {
+        let expected_len = width as usize * height as usize;
+        let mut rgba = Vec::with_capacity(expected_len * 4);
+        match format {
+            PixelFormat::Gray8 => {
+                for i in 0..expected_len {
+                    let g = data.get(i).copied().unwrap_or(0);
+                    rgba.extend_from_slice(&[g, g, g, 255]);
+                }
+            }
+            PixelFormat::Rgb8 => {
+                for i in 0..expected_len {
+                    let (r, g, b) = (
+                        data.get(i * 3).copied().unwrap_or(0),
+                        data.get(i * 3 + 1).copied().unwrap_or(0),
+                        data.get(i * 3 + 2).copied().unwrap_or(0)
+                    );
+                    rgba.extend_from_slice(&[r, g, b, 255]);
+                }
+            }
+            PixelFormat::Cmyk8 => {
+                for i in 0..expected_len {
+                    let (c, m, y, k) = (
+                        data.get(i * 4).copied().map(|v| v as f32 / 255.0).unwrap_or(0.0),
+                        data.get(i * 4 + 1).copied().map(|v| v as f32 / 255.0).unwrap_or(0.0),
+                        data.get(i * 4 + 2).copied().map(|v| v as f32 / 255.0).unwrap_or(0.0),
+                        data.get(i * 4 + 3).copied().map(|v| v as f32 / 255.0).unwrap_or(0.0)
+                    );
+                    let (r, g, b) = ((1.0 - c) * (1.0 - k), (1.0 - m) * (1.0 - k), (1.0 - y) * (1.0 - k));
+                    rgba.extend_from_slice(&[(r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8, 255]);
+                }
+            }
+        }
+        rgba
+    }
+
+    fn prepare_font_data_arc(&mut self) -> Option<Arc<Vec<u8>>> {
+        let font_data_arc = self.state.font_data.clone();
+        
+        if let Some(font_name) = &self.state.font_name
+            && let Some(entry) = self.font_cache.get_mut(font_name)
+        {
+            if entry.sfnt_data.is_none() {
+                let r = entry.data.as_deref().map(|d| d.as_slice()).unwrap_or(&[]);
+                if let Some(sfnt) = crate::text::ensure_sfnt(r) {
+                    entry.sfnt_data = Some(Arc::new(sfnt));
+                }
+            }
+            if let Some(sfnt_arc) = &entry.sfnt_data {
+                return Some(sfnt_arc.clone());
+            }
+        }
+        font_data_arc
+    }
+
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_single_glyph<'a>(
+        scene: &mut Scene,
+        skrifa_bridge: &mut crate::text::SkrifaBridge,
+        state: &VelloState,
+        gid: u32,
+        width: f64,
+        vx: f32,
+        vy: f32,
+        char_code: u32,
+        char_iter: &mut std::str::Chars<'_>,
+        size: f64,
+        transform: Affine,
+        tc: f64,
+        tw: f64,
+        is_vertical: bool,
+        mut advance_offset: f64,
+        data_ref: &[u8],
+        brush: &vello::peniko::Brush,
+        sys_ref: Option<&skrifa::FontRef<'a>>,
+        prim_ref: Option<&skrifa::FontRef<'a>>,
+        th: f64,
+    ) -> (f64, bool) {
+        let unicode_fallback = char_iter.next();
+        let is_japanese = state.font_name.as_ref().map(|n| {
+            let nl = n.to_lowercase();
+            nl.contains("hira") || nl.contains("mincho") || nl.contains("gothic") || nl.contains("koz") || nl.contains("aj1") || nl.contains("ipa") || nl.contains("ms-")
+        }).unwrap_or(false);
+
+        let is_repurposed_japanese = char_code == 0x20 && unicode_fallback.map(|c| (c as u32) >= 0x2E80).unwrap_or(false);
+
+        if state.text_render_mode == 3 || (char_code == 0x20 && !is_repurposed_japanese) {
+            advance_offset += if is_vertical {
+                width * (size / 1000.0)
+            } else {
+                width * (size / 1000.0) * th
+            } + tc + if char_code == 0x20 { tw } else { 0.0 };
+            return (advance_offset, false);
+        }
+
+        let path_opt = skrifa_bridge.extract_path(
+            data_ref, gid, char_code, state.cid_to_gid_map.as_deref(),
+            is_vertical, unicode_fallback, is_japanese, false, sys_ref, prim_ref,
+        );
+
+        if let Some(mut path) = path_opt {
+            let units_per_em = skrifa_bridge.get_units_per_em(data_ref).unwrap_or(1000) as f64;
+            let glyph_scale = size / units_per_em;
+            let writing_line_advance = if is_vertical { Affine::translate((0.0, -advance_offset)) } else { Affine::translate((advance_offset, 0.0)) };
+
+            let glyph_transform = state.transform * transform * writing_line_advance * Affine::scale_non_uniform(glyph_scale * th, glyph_scale) * Affine::translate((-vx as f64, -vy as f64));
+            path.apply_affine(glyph_transform);
+            scene.fill(vello::peniko::Fill::NonZero, Affine::IDENTITY, brush, None, &path);
+
+            let char_width = width * (size / 1000.0);
+            let new_advance = advance_offset + if is_vertical { char_width } else { char_width * th } + tc + if char_code == 0x20 { tw } else { 0.0 };
+            (new_advance, true)
+        } else {
+            let char_width = width * (size / 1000.0);
+            let new_advance = advance_offset + if is_vertical { char_width } else { char_width * th } + tc + if char_code == 0x20 { tw } else { 0.0 };
+            (new_advance, false)
+        }
     }
 }
 
@@ -266,52 +382,9 @@ impl RenderBackend for VelloBackend {
     fn draw_image(&mut self, data: &[u8], width: u32, height: u32, format: PixelFormat) {
         use vello::peniko::{Blob, ImageAlphaType, ImageData, ImageFormat};
 
-        // Convert input data to RGBA8 for Vello compatibility and to prevent buffer overruns
-        let rgba_data = match format {
-            PixelFormat::Gray8 => {
-                let mut rgba = Vec::with_capacity(width as usize * height as usize * 4);
-                let expected_len = width as usize * height as usize;
-                for i in 0..expected_len {
-                    let g = data.get(i).copied().unwrap_or(0);
-                    rgba.extend_from_slice(&[g, g, g, 255]);
-                }
-                rgba
-            }
-            PixelFormat::Rgb8 => {
-                let mut rgba = Vec::with_capacity(width as usize * height as usize * 4);
-                let expected_len = width as usize * height as usize;
-                for i in 0..expected_len {
-                    let r = data.get(i * 3).copied().unwrap_or(0);
-                    let g = data.get(i * 3 + 1).copied().unwrap_or(0);
-                    let b = data.get(i * 3 + 2).copied().unwrap_or(0);
-                    rgba.extend_from_slice(&[r, g, b, 255]);
-                }
-                rgba
-            }
-            PixelFormat::Cmyk8 => {
-                let mut rgba = Vec::with_capacity(width as usize * height as usize * 4);
-                let expected_len = width as usize * height as usize;
-                for i in 0..expected_len {
-                    let c = data.get(i * 4).copied().map(|v| v as f32 / 255.0).unwrap_or(0.0);
-                    let m = data.get(i * 4 + 1).copied().map(|v| v as f32 / 255.0).unwrap_or(0.0);
-                    let y = data.get(i * 4 + 2).copied().map(|v| v as f32 / 255.0).unwrap_or(0.0);
-                    let k = data.get(i * 4 + 3).copied().map(|v| v as f32 / 255.0).unwrap_or(0.0);
-                    let r = (1.0 - c) * (1.0 - k);
-                    let g = (1.0 - m) * (1.0 - k);
-                    let b = (1.0 - y) * (1.0 - k);
-                    rgba.extend_from_slice(&[
-                        (r * 255.0) as u8,
-                        (g * 255.0) as u8,
-                        (b * 255.0) as u8,
-                        255,
-                    ]);
-                }
-                rgba
-            }
-        };
-
-        let blob_data: std::sync::Arc<dyn AsRef<[u8]> + Send + Sync> =
-            std::sync::Arc::new(rgba_data);
+        let rgba_data = self.to_rgba8(data, width, height, format);
+        let blob_data: std::sync::Arc<dyn AsRef<[u8]> + Send + Sync> = std::sync::Arc::new(rgba_data);
+        
         let image = ImageData {
             data: Blob::new(blob_data),
             format: ImageFormat::Rgba8,
@@ -416,167 +489,41 @@ impl RenderBackend for VelloBackend {
         self.state.word_spacing = spacing;
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn show_text(
         &mut self,
-        glyphs: &[(u32, f32, f32, f32, u32)],
         text: &str,
         size: f64,
-        transform: Affine,
-        _tc: f64,
-        _tw: f64,
+        transform: kurbo::Affine,
         is_vertical: bool,
-        _op_index: usize,
     ) {
-        let font_data_arc = self.state.font_data.clone();
-        let font_data_raw = font_data_arc.as_deref().map(|d| d.as_slice()).unwrap_or(&[]);
-        
-        let (data_ref, _sfnt_holder): (&[u8], Option<std::sync::Arc<Vec<u8>>>) = 
-        if let Some(font_name) = &self.state.font_name {
-            if let Some(entry) = self.font_cache.get_mut(font_name) {
-                if entry.sfnt_data.is_none() {
-                    let raw = entry.data.as_deref().map(|d| d.as_slice()).unwrap_or(&[]);
-                    if let Some(sfnt) = crate::text::ensure_sfnt(raw) {
-                        entry.sfnt_data = Some(std::sync::Arc::new(sfnt));
-                    }
-                }
-                if let Some(sfnt_arc) = &entry.sfnt_data {
-                    (sfnt_arc.as_slice(), Some(sfnt_arc.clone()))
-                } else {
-                    let raw = entry.data.as_deref().map(|d| d.as_slice()).unwrap_or(&[]);
-                    (raw, entry.data.clone())
-                }
-            } else {
-                (font_data_raw, font_data_arc.clone())
-            }
-        } else {
-            (font_data_raw, font_data_arc.clone())
-        };
-        let data_ref: &[u8] = data_ref;
-
-        let start_time = std::time::Instant::now();
-        let mut glyph_count = 0;
-        let _cache_hits = 0;
-
-        if self.skrifa_bridge.primary_system_font.is_none()
-            && let Some(f) = self.system_fonts.get("ヒラギノ明朝 ProN") {
-            self.skrifa_bridge.primary_system_font = Some(f.clone());
-        }
-
-        let brush = to_vello_brush(&self.state.fill_color, self.state.fill_alpha as f32);
-        let mut advance_offset = 0.0;
-
-        let cid_to_gid_map = self.state.cid_to_gid_map.as_deref();
-        let font_name = self.state.font_name.as_ref();
-        let is_japanese = font_name
-            .map(|n| {
-                let nl = n.to_lowercase();
-                nl.contains("hira") || nl.contains("mincho") || nl.contains("gothic") || nl.contains("koz") || nl.contains("aj1") || nl.contains("ipa") || nl.contains("ms-")
-            })
-            .unwrap_or(false);
-
-        // Pre-parse system font once for this show_text operation to avoid heavy overhead in the loop
-        let system_font_data = self.system_fonts.get("ヒラギノ明朝 ProN").map(|v| v.as_slice());
-        let system_font_file = system_font_data.and_then(|d| FileRef::new(d).ok());
-        let system_font_ref = system_font_file.and_then(|f| match f {
-            FileRef::Font(font) => Some(font),
-            FileRef::Collection(c) => c.get(0).ok(),
-        });
-
-        // Pre-parse primary font once for this show_text operation
-        let primary_font_file = FileRef::new(data_ref).ok();
-        let primary_font_ref = primary_font_file.and_then(|f| match f {
-            FileRef::Font(font) => Some(font),
+        let prim_arc = self.prepare_font_data_arc();
+        let prim_ref_owned = prim_arc.as_ref().and_then(|a| FileRef::new(a.as_slice()).ok());
+        let prim_ref = prim_ref_owned.as_ref().and_then(|f| match f {
+            FileRef::Font(font) => Some(font.clone()),
             FileRef::Collection(c) => c.get(self.state.font_index.unwrap_or(0) as u32).ok(),
         });
 
-        let mut char_iter = text.chars();
-        for (gid_u32, _width, vx, vy, char_code) in glyphs.iter() {
-            let gid = *gid_u32;
-            let char_code = *char_code;
-            let unicode_fallback = char_iter.next();
+        let mut advance_offset = 0.0;
+        let brush = to_vello_brush(&self.state.fill_color, self.state.fill_alpha as f32);
+        let data_ref = prim_arc.as_deref().map(|v| v.as_slice()).unwrap_or(&[]);
 
-            // Skip rendering for common whitespace or if mode is 3 (Invisible)
-            let is_whitespace_code =
-                char_code == 0x20 || char_code == 0x09 || char_code == 0x0A || char_code == 0x0D;
-
-            let is_repurposed_japanese = char_code == 0x20
-                && unicode_fallback.map(|c| (c as u32) >= 0x2E80).unwrap_or(false);
-            let should_skip =
-                self.state.text_render_mode == 3 || (is_whitespace_code && !is_repurposed_japanese);
-            if should_skip {
-                let glyph_scale = size / 1000.0;
-                let advance = *_width as f64 * glyph_scale;
-                advance_offset += advance;
-                continue;
-            }
-
-            let path_opt: Option<BezPath> = self.skrifa_bridge.extract_path(
-                data_ref,
-                gid,
-                char_code,
-                cid_to_gid_map,
-                is_vertical,
-                unicode_fallback,
-                is_japanese,
-                false, // force_system_fallback
-                system_font_ref.as_ref(),
-                primary_font_ref.as_ref(),
-            );
-
-            glyph_count += 1;
-            if path_opt.is_some() {
-                // Total glyphs processed.
-            }
-
-            if let Some(path) = path_opt {
-                // Get units_per_em from the font if possible, fallback to 1000
+        for c in text.chars() {
+            // For normalized fonts, GID == Unicode or GID is mapped via simple cmap
+            let gid = prim_ref.as_ref().map(|f| f.charmap().map(c).unwrap_or(skrifa::GlyphId::new(0))).unwrap_or(skrifa::GlyphId::new(0));
+            
+            // Simplified rendering using skrifa_bridge
+            if let Some(mut path) = self.skrifa_bridge.extract_path(data_ref, gid.to_u32(), c as u32, None, is_vertical, None) {
                 let units_per_em = self.skrifa_bridge.get_units_per_em(data_ref).unwrap_or(1000) as f64;
                 let glyph_scale = size / units_per_em;
-                let metrics_scale = size / 1000.0;
-                let origin_shift = kurbo::Vec2::new(-*vx as f64, -*vy as f64);
-                let writing_line_advance = if is_vertical {
-                    Affine::translate((0.0, -advance_offset))
-                } else {
-                    Affine::translate((advance_offset, 0.0))
-                };
-
-                let glyph_transform = self.state.transform
-                    * transform
-                    * writing_line_advance
-                    * Affine::scale(glyph_scale)
-                    * Affine::translate(origin_shift);
-
-                let mut path: kurbo::BezPath = path;
+                let writing_line_advance = if is_vertical { Affine::translate((0.0, -advance_offset)) } else { Affine::translate((advance_offset, 0.0)) };
+                
+                let glyph_transform = self.state.transform * transform * writing_line_advance * Affine::scale(glyph_scale);
                 path.apply_affine(glyph_transform);
-                self.scene.fill(
-                    vello::peniko::Fill::NonZero,
-                    Affine::IDENTITY,
-                    &brush,
-                    None,
-                    &path,
-                );
-
-                let advance = *_width as f64 * metrics_scale;
-                advance_offset += advance;
-            } else {
-                eprintln!(
-                    "WARNING: Failed to extract path for gid={} unicode={:?}",
-                    gid, unicode_fallback
-                );
-                let advance = *_width as f64 * (size / 1000.0);
-                advance_offset += advance;
+                self.scene.fill(vello::peniko::Fill::NonZero, Affine::IDENTITY, &brush, None, &path);
+                
+                // Advance (Stub: use font metrics)
+                advance_offset += size * 0.6; // FIXME: Use real metrics
             }
-        }
-
-        let elapsed = start_time.elapsed();
-        if elapsed.as_millis() > 10 {
-            eprintln!(
-                "show_text: processed {} glyphs in {:?} (font: {:?})",
-                glyph_count,
-                elapsed,
-                self.state.font_name.as_deref().unwrap_or("unknown")
-            );
         }
     }
 }

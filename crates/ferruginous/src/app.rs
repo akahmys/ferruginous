@@ -1,54 +1,60 @@
-use crate::view::PDFView;
-use bytes::Bytes;
-use ferruginous_render::VelloBackend;
-use ferruginous_sdk::PdfDocument;
-use pollster::block_on;
+use crate::view::{PDFView, PageLayout};
+use crate::vello_egui::VelloRenderer;
+use crate::worker::{run_worker, WorkerRequest, WorkerResponse};
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::Arc;
+use vello::Scene;
 
 pub struct FerruginousApp {
-    doc: Option<PdfDocument>,
-    current_page: usize,
+    tx_worker: Sender<WorkerRequest>,
+    rx_worker: Receiver<WorkerResponse>,
+    
     total_pages: usize,
+    page_layouts: Vec<PageLayout>,
+    
     view: PDFView,
     error: Option<String>,
     pdf_path: Option<PathBuf>,
+    
+    vello_renderer: Option<VelloRenderer>,
+    scenes: HashMap<usize, Arc<Scene>>,
+    request_queue: HashSet<usize>,
 }
 
 impl FerruginousApp {
-    pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        let vello_renderer = cc.wgpu_render_state.as_ref().map(|rs| VelloRenderer::new(&rs.device));
+        let (tx_req, rx_req) = channel();
+        let (tx_res, rx_res) = channel();
+        
+        std::thread::spawn(move || {
+            run_worker(rx_req, tx_res);
+        });
+        
         Self {
-            doc: None,
-            current_page: 0,
+            tx_worker: tx_req,
+            rx_worker: rx_res,
             total_pages: 0,
+            page_layouts: Vec::new(),
             view: PDFView::new(),
             error: None,
             pdf_path: None,
+            vello_renderer,
+            scenes: HashMap::new(),
+            request_queue: HashSet::new(),
         }
     }
 
-    pub fn open_file(&mut self, path: PathBuf, ctx: &egui::Context) {
-        let data = match std::fs::read(&path) {
-            Ok(d) => Bytes::from(d),
-            Err(e) => {
-                self.error = Some(format!("Failed to read file: {}", e));
-                return;
-            }
-        };
-
-        match PdfDocument::open(data) {
-            Ok(doc) => {
-                self.total_pages = doc.page_count().unwrap_or(0);
-                self.doc = Some(doc);
-                self.current_page = 0;
-                self.pdf_path = Some(path);
-                self.error = None;
-                self.reset_view();
-                self.render_current_page(ctx);
-            }
-            Err(e) => {
-                self.error = Some(format!("Failed to load PDF: {}", e));
-            }
-        }
+    pub fn open_file(&mut self, path: PathBuf, _ctx: &egui::Context) {
+        self.error = None;
+        self.total_pages = 0;
+        self.page_layouts.clear();
+        self.scenes.clear();
+        self.request_queue.clear();
+        self.reset_view();
+        let _ = self.tx_worker.send(WorkerRequest::Open(path));
     }
 
     fn reset_view(&mut self) {
@@ -56,114 +62,129 @@ impl FerruginousApp {
         self.view.pan = egui::Vec2::ZERO;
     }
 
-    fn render_current_page(&mut self, ctx: &egui::Context) {
-        let Some(doc) = &self.doc else { return };
-
-        let (p_w, p_h) = doc.get_page_size(self.current_page).unwrap_or((595.0, 842.0));
-        let width = (p_w * 2.0).round() as u32;
-        let height = (p_h * 2.0).round() as u32;
-
-        let mut backend = VelloBackend::new();
-        let scale = 2.0;
-        let initial_transform = kurbo::Affine::new([scale, 0.0, 0.0, -scale, 0.0, p_h * scale]);
-
-        if let Ok(()) = doc.render_page(self.current_page, &mut backend, initial_transform) {
-            #[allow(dead_code)]
-            let scene = backend.scene().clone();
-
-            match block_on(ferruginous_render::headless::render_to_bytes(&scene, width, height)) {
-                Ok(bytes) => {
-                    let color_image = egui::ColorImage::from_rgba_unmultiplied(
-                        [width as usize, height as usize],
-                        &bytes,
-                    );
-                    let texture = ctx.load_texture(
-                        format!("pdf_page_{}", self.current_page),
-                        color_image,
-                        Default::default(),
-                    );
-                    self.view.texture = Some(texture);
+    fn process_worker_messages(&mut self, ctx: &egui::Context) {
+        // Process all pending messages from the worker
+        while let Ok(msg) = self.rx_worker.try_recv() {
+            match msg {
+                WorkerResponse::DocumentLoaded { path, num_pages, page_sizes } => {
+                    self.pdf_path = Some(path);
+                    self.total_pages = num_pages;
+                    self.compute_layouts(&page_sizes);
+                    ctx.request_repaint(); // Important to draw the new layout
                 }
-                Err(e) => {
-                    self.error = Some(format!("Rendering Error: {}", e));
+                WorkerResponse::PageRendered { index, scene, .. } => {
+                    self.scenes.insert(index, scene);
+                    self.request_queue.remove(&index);
+                    ctx.request_repaint(); // Trigger a repaint to show the new page
+                }
+                WorkerResponse::Error(err) => {
+                    self.error = Some(err);
                 }
             }
         }
     }
 
-    fn next_page(&mut self, ctx: &egui::Context) {
-        if self.current_page + 1 < self.total_pages {
-            self.current_page += 1;
-            self.render_current_page(ctx);
+    fn compute_layouts(&mut self, page_sizes: &[(f64, f64)]) {
+        let mut layouts = Vec::with_capacity(page_sizes.len());
+        let mut current_y = 0.0;
+        let gap = 20.0; // Fixed gap between pages
+
+        for (i, &(w, h)) in page_sizes.iter().enumerate() {
+            let w = w as f32;
+            let h = h as f32;
+            
+            // Center pages horizontally relative to x=0
+            let x = -w / 2.0; 
+            let rect = egui::Rect::from_min_size(egui::pos2(x, current_y), egui::vec2(w, h));
+            layouts.push(PageLayout { index: i, rect });
+            
+            current_y += h + gap;
         }
+        self.page_layouts = layouts;
     }
 
-    fn prev_page(&mut self, ctx: &egui::Context) {
-        if self.current_page > 0 {
-            self.current_page -= 1;
-            self.render_current_page(ctx);
+    fn update_vello(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        self.process_worker_messages(ctx);
+
+        let Some(vello_renderer) = &mut self.vello_renderer else { return };
+        let Some(rs) = frame.wgpu_render_state() else { return };
+
+        // 1. Dispatch requests for visible pages that don't have scenes
+        for &visible_index in &self.view.visible_pages {
+            if !self.scenes.contains_key(&visible_index) && !self.request_queue.contains(&visible_index) {
+                let scale = 2.0; // Higher internal resolution for crispness
+                self.request_queue.insert(visible_index);
+                let _ = self.tx_worker.send(WorkerRequest::RenderPage { index: visible_index, scale });
+            }
         }
-    }
-}
 
-impl eframe::App for FerruginousApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        egui::TopBottomPanel::top("top_bar").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                if ui.button("Open PDF").clicked()
-                    && let Some(path) =
-                        rfd::FileDialog::new().add_filter("PDF", &["pdf"]).pick_file()
-                {
-                    self.open_file(path, ctx);
+        // 2. Rasterize visible scenes into textures
+        let mut active_textures = HashMap::new();
+        for &visible_index in &self.view.visible_pages {
+            if let Some(scene) = self.scenes.get(&visible_index) {
+                // Get page size from layout
+                if let Some(layout) = self.page_layouts.get(visible_index) {
+                    let scale = 2.0; 
+                    let width = (layout.rect.width() * scale).round() as u32;
+                    let height = (layout.rect.height() * scale).round() as u32;
+                    
+                    let tid = vello_renderer.render_page(rs, scene, visible_index, width, height);
+                    active_textures.insert(visible_index, tid);
                 }
+            }
+        }
 
-                ui.separator();
+        // 3. Free textures for pages that are no longer visible (to save GPU memory)
+        // Note: For this simple implementation, we might keep them around or clear them. 
+        // For now, let's keep them in memory. In a full implementation, we would call `free_texture`.
 
-                if self.doc.is_some() {
-                    if ui.button("<<").clicked() {
-                        self.prev_page(ctx);
-                    }
-                    ui.label(format!("Page {} / {}", self.current_page + 1, self.total_pages));
-                    if ui.button(">>").clicked() {
-                        self.next_page(ctx);
-                    }
-
-                    if ui.button("Reset View").clicked() {
-                        self.reset_view();
-                    }
-
-                    ui.separator();
-                    ui.label(format!("Zoom: {:.1}%", self.view.zoom * 100.0));
-
-                    if let Some(path) = &self.pdf_path {
-                        ui.separator();
-                        ui.label(path.file_name().unwrap_or_default().to_string_lossy());
-                    }
-                }
-            });
-        });
-
+        // Update view
         egui::CentralPanel::default().show(ctx, |ui| {
             if let Some(err) = &self.error {
-                ui.centered_and_justified(|ui| {
-                    ui.colored_label(egui::Color32::RED, err);
-                });
-            } else if self.doc.is_some() {
-                self.view.show(ui);
+                ui.centered_and_justified(|ui| { ui.colored_label(egui::Color32::RED, err); });
+            } else if !self.page_layouts.is_empty() {
+                self.view.show(ui, &self.page_layouts, &active_textures);
+            } else if self.pdf_path.is_some() {
+                ui.centered_and_justified(|ui| { ui.label("Loading document..."); });
             } else {
                 ui.vertical_centered(|ui| {
                     ui.add_space(100.0);
                     ui.heading("Ferruginous");
                     ui.label("Fast, Secure, GPU-Accelerated PDF Viewer");
                     ui.add_space(20.0);
-                    if ui.button("Open a PDF").clicked()
-                        && let Some(path) =
-                            rfd::FileDialog::new().add_filter("PDF", &["pdf"]).pick_file()
-                    {
-                        self.open_file(path, ctx);
+                    if ui.button("Open a PDF").clicked() && let Some(p) = rfd::FileDialog::new().add_filter("PDF", &["pdf"]).pick_file() {
+                        self.open_file(p, ctx);
                     }
                 });
             }
         });
+    }
+
+    fn show_top_bar(&mut self, ctx: &egui::Context) {
+        egui::TopBottomPanel::top("top_bar").show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                if ui.button("Open PDF").clicked() && let Some(p) = rfd::FileDialog::new().add_filter("PDF", &["pdf"]).pick_file() {
+                    self.open_file(p, ctx);
+                }
+                ui.separator();
+                if self.total_pages > 0 {
+                    ui.label(format!("{} Pages", self.total_pages));
+                    if ui.button("Reset View").clicked() { self.reset_view(); }
+                    ui.separator();
+                    ui.label(format!("Zoom: {:.1}%", self.view.zoom * 100.0));
+                    if let Some(p) = &self.pdf_path {
+                        ui.separator();
+                        ui.label(p.file_name().unwrap_or_default().to_string_lossy());
+                    }
+                }
+            });
+        });
+    }
+}
+
+impl eframe::App for FerruginousApp {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        self.show_top_bar(ctx);
+        self.update_vello(ctx, frame);
     }
 }

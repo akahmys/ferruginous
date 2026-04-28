@@ -31,6 +31,7 @@ proc-macro2 = "1.0"
 rayon = "1.10"
 parking_lot = "0.12"
 id-arena = "2.2"
+zstd = "0.13"
 
 # PDF Physical Engine
 lopdf = "0.34"
@@ -45,7 +46,7 @@ read-fonts = "0.22"
 ttf-parser = "0.21"
 
 # Graphics & Rendering
-vello = "0.8.0"
+vello = "0.7.0"
 kurbo = { version = "0.13", features = ["serde"] }
 
 # Color Management (Hardening)

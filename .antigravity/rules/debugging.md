@@ -18,6 +18,7 @@ Conventions for troubleshooting and the debugging thought process in Ferruginous
 - **Reference Comparison**: Compare a "working case" against a "broken case" using identical conditions and log formats.
 - **Minimization**: Identify the minimal reproduction case (specific character, font size, or rendering mode) to eliminate noise.
 
-## 5. Pipeline Holism
-- **Upstream/Downstream Check**: Ensure a fix in one layer does not break the assumptions of the Backend or contradict input from the Interpreter.
-- **Unit Integrity**: Even if a fix is local, always maintain the integrity of the entire pipeline.
+## 6. Physical vs. Semantic Boundary
+- **Layer Isolation**: Distinguish between "Physical" issues (decryption, stream decompression, parsing) and "Semantic" issues (refinement, resource mapping, font selection).
+- **Physical Indicators**: Corrupt stream errors, "Unexpected token" panics, or truncated object streams indicate a Physical failure.
+- **Semantic Indicators**: "Invisible" text (correct positions but missing glyphs), garbled strings (mojibake), or incorrect font faces suggest a failure in the Refinery or Resource discovery phase.

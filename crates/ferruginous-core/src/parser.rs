@@ -48,6 +48,7 @@ impl<'a> Parser<'a> {
             }
             Token::Real(f) => Ok(Object::Real(f)),
             Token::String(s) => Ok(Object::String(s)),
+            Token::Hex(s) => Ok(Object::Hex(s)),
             Token::Name(n) => {
                 let name_h = self.arena.intern_name(PdfName(n));
                 Ok(Object::Name(name_h))

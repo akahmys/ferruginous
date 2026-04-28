@@ -18,3 +18,13 @@ When exploring the codebase to understand a feature or investigate a bug, the fo
 When reporting discovery results to the user or recording them in the `implementation_plan.md`:
 - Indicate if semantic search was used to discover a pattern.
 - Record any conceptual links found that were not obvious from file names alone.
+
+---
+
+## 4. Tool Precision Guard (Mechanical Accuracy)
+
+To prevent execution failures and save user turn tokens, the AI MUST adhere to the following mechanical rules:
+
+- **Literal Matching**: When using `replace_file_content` or `multi_replace_file_content`, the `TargetContent` MUST be a literal, exact copy of the file content.
+- **Line Number Stripping**: Any line numbers prefixed by the `view_file` tool MUST be explicitly removed from the `TargetContent`.
+- **Whitespace Fidelity**: Invisible characters, including trailing spaces and specific newline sequences, MUST be verified character-by-character to ensure a 1:1 match.

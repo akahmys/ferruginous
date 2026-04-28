@@ -107,7 +107,7 @@ impl Ingestor {
                         message: format!("Missing handle for refined object {:?}", id).into(),
                     }
                 })?;
-                let committed = crate::refine::commit_to_arena(&arena, refined);
+                let committed = crate::refine::commit_to_arena(&arena, refined, 0);
                 arena.set_object(handle, committed);
                 all_issues.append(&mut issues);
             }
@@ -149,8 +149,8 @@ impl Ingestor {
                         .and_then(|o| o.as_array())
                         .map(|a| a.first().and_then(|o| o.as_str().ok()).unwrap_or(&[]))
                         .unwrap_or(&[]);
-                    
-                    if let Ok(handler) = SecurityHandler::new_v4("", o_str, u_str, p_val, file_id) {
+                    let encrypt_metadata = dict.get(b"EncryptMetadata").and_then(|o| o.as_bool()).unwrap_or(true);
+                    if let Ok(handler) = SecurityHandler::new_v4("", o_str, u_str, p_val, file_id, encrypt_metadata) {
                         security_handler = Some(handler);
                     }
                 } else if v_val == 5 && r_val == 5 {

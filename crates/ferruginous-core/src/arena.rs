@@ -183,6 +183,56 @@ impl PdfArena {
     pub fn process_filters(&self, data: &[u8], dict: &BTreeMap<Handle<PdfName>, Object>) -> PdfResult<Bytes> {
         crate::filters::process_arena_filters(data, dict, self)
     }
+
+    /// Sublimates raw stream data into a compressed or structured format.
+    pub fn sublimate_stream(&self, handle: Handle<Object>, data: Bytes, is_content_stream: bool) -> PdfResult<()> {
+        use crate::object::SublimatedData;
+        
+        let sublimated = if is_content_stream {
+            // STUB: This will be replaced by the real IR parser in Pass 2
+            SublimatedData::Raw(data)
+        } else if data.len() > 1024 {
+            // Compress large non-content streams (images, fonts) with Zstd
+            let compressed = zstd::encode_all(&*data, 3).map_err(|e| crate::PdfError::Other(e.to_string()))?;
+            SublimatedData::Compressed {
+                original_len: data.len(),
+                data: compressed,
+            }
+        } else {
+            SublimatedData::Raw(data)
+        };
+
+        if let Some(Object::Stream(dh, _)) = self.get_object(handle) {
+            self.set_object(handle, Object::Stream(dh, std::sync::Arc::new(sublimated)));
+        }
+        Ok(())
+    }
+
+    /// Accesses the raw bytes of a stream, transparently decompressing if necessary.
+    pub fn get_stream_bytes(&self, data: &crate::object::SublimatedData) -> PdfResult<bytes::Bytes> {
+        match data {
+            crate::object::SublimatedData::Raw(b) => Ok(b.clone()),
+            crate::object::SublimatedData::Compressed { data, .. } => {
+                let decoded = zstd::decode_all(&**data).map_err(|e| crate::PdfError::Other(e.to_string()))?;
+                Ok(bytes::Bytes::from(decoded))
+            }
+            crate::object::SublimatedData::Commands(cmds) => {
+                let mut output = Vec::new();
+                for cmd in cmds {
+                    output.extend_from_slice(format!("{:?}\n", cmd).as_bytes());
+                }
+                Ok(bytes::Bytes::from(output))
+            }
+        }
+    }
+
+    pub fn get_sublimated_data(&self, handle: Handle<Object>) -> Option<std::sync::Arc<crate::object::SublimatedData>> {
+        if let Some(Object::Stream(_, data)) = self.get_object(handle) {
+            Some(data.clone())
+        } else {
+            None
+        }
+    }
 }
 
 pub type RemappingTable = BTreeMap<(u32, u16), Handle<Object>>;

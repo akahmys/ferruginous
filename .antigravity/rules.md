@@ -22,3 +22,17 @@ Project tracking documents must reflect only **"Cold Hard Facts"** based on obje
 - **Compliance Target**: ISO 32000-2:2020 (PDF 2.0).
 - **Hardening Standard**: Must comply with [RR-15 Hardening Rules](file:///.antigravity/rules/hardening.md).
 - **MSRV**: 1.94 (Edition 2024).
+
+---
+
+## 3. Hierarchy of Truth (SSoT Structure)
+
+To ensure the integrity of the project's External Long-Term Memory (ELM), all rules and protocols are organized into a strict hierarchy. In the event of a conflict, higher-layer rules prevail.
+
+| Layer | Name | Role | Primary Files |
+| :--- | :--- | :--- | :--- |
+| **1** | **Constitution (憲法)** | Immutable principles and philosophy. | `rules.md` |
+| **2** | **Governance (統治)** | Development lifecycle, branching, and decisions. | `planning.md`, `merging.md`, `delegation.md` |
+| **3** | **Hardening (防壁)** | Absolute implementation safety constraints. | `hardening.md` (RR-15) |
+| **4** | **Domain Standards (規格)** | Technical specs and compliance targets. | `rendering.md`, `compliance.md`, ISO 32000-2 |
+| **5** | **Operational (術式)** | Concrete execution methods and automated steps. | `skills/`, `workflows/` |

@@ -21,6 +21,16 @@ pub struct PdfCatalog {
     pub metadata: Option<Object>,
     #[pdf_key("Version")]
     pub version: Option<Handle<PdfName>>,
+    #[pdf_key("AcroForm")]
+    pub acro_form: Option<Object>,
+    #[pdf_key("Names")]
+    pub names: Option<Object>,
+    #[pdf_key("Outlines")]
+    pub outlines: Option<Object>,
+    #[pdf_key("OpenAction")]
+    pub open_action: Option<Object>,
+    #[pdf_key("AA")]
+    pub additional_actions: Option<Object>,
 }
 
 /// Type alias for a dictionary handle to satisfy clippy complexity rules.
@@ -57,7 +67,11 @@ impl Document {
         if lopdf_doc.is_encrypted() {
             match lopdf_doc.decrypt("") {
                 Ok(_) => println!("DEBUG: Document decrypted with empty password."),
-                Err(e) => println!("DEBUG: Decryption failed: {:?}", e),
+                Err(e) => {
+                    println!("DEBUG: lopdf decryption failed: {:?}", e);
+                    // We will try manual Pass 0 decryption in Ingestor, 
+                    // but we need to mark it so we can check later.
+                }
             }
         }
 
@@ -154,85 +168,78 @@ impl Document {
 
     fn find_page_recursive(
         &self,
-        node_handle: Handle<BTreeMap<Handle<PdfName>, Object>>,
+        root_node: Handle<BTreeMap<Handle<PdfName>, Object>>,
         mut target_index: usize,
-        mut path: Vec<Handle<BTreeMap<Handle<PdfName>, Object>>>,
+        _unused_path: Vec<Handle<BTreeMap<Handle<PdfName>, Object>>>,
     ) -> PdfResult<Page<'_>> {
-        // Hardening: Recursion depth limit for page tree (ISO 32000-2 Clause 7.7.3.3)
-        if path.len() > 32 {
-            return Err(PdfError::Other("Page tree recursion depth limit exceeded".into()));
-        }
-        let dict = self
-            .arena
-            .get_dict(node_handle)
-            .ok_or_else(|| PdfError::Other("Invalid node in page tree".into()))?;
+        let mut current_node = root_node;
+        let mut path = Vec::new();
 
-        let type_key = self.arena.name("Type");
-        let node_type = dict.get(&type_key).and_then(|o| o.resolve(&self.arena).as_name());
-
-        if let Some(t) = node_type {
-            let name = self
-                .arena
-                .get_name(t)
-                .ok_or_else(|| PdfError::Other("Invalid name handle".into()))?;
-            if name.as_str() == "Page" {
-                return Ok(Page::new(&self.arena, node_handle, path));
+        loop {
+            // Hardening: Recursion depth limit for page tree
+            if path.len() > 32 {
+                return Err(PdfError::Other("Page tree depth limit exceeded".into()));
             }
-        }
 
-        // It's a Pages node (intermediate)
-        let kids_key = self.arena.name("Kids");
-        if let Some(kids_array_handle) =
-            dict.get(&kids_key).and_then(|o| o.resolve(&self.arena).as_array())
-        {
-            let kids = self
-                .arena
-                .get_array(kids_array_handle)
+            let dict = self.arena.get_dict(current_node)
+                .ok_or_else(|| PdfError::Other("Invalid node in page tree".into()))?;
+
+            let type_key = self.arena.name("Type");
+            let node_type = dict.get(&type_key).and_then(|o| o.resolve(&self.arena).as_name())
+                .and_then(|h| self.arena.get_name(h));
+
+            if let Some(name) = node_type && name.as_str() == "Page" {
+                return Ok(Page::new(&self.arena, current_node, path));
+            }
+
+            // It's a Pages node (intermediate)
+            let kids_key = self.arena.name("Kids");
+            let kids_array_handle = dict.get(&kids_key)
+                .and_then(|o| o.resolve(&self.arena).as_array())
+                .ok_or_else(|| PdfError::Other("Missing Kids in Pages node".into()))?;
+
+            let kids = self.arena.get_array(kids_array_handle)
                 .ok_or_else(|| PdfError::Other("Invalid kids array handle".into()))?;
-            path.push(node_handle);
+
+            path.push(current_node);
+            let mut found = false;
 
             for kid_obj in kids {
-                let kid_handle = kid_obj
-                    .resolve(&self.arena)
-                    .as_dict_handle()
+                let kid_handle = kid_obj.resolve(&self.arena).as_dict_handle()
                     .ok_or_else(|| PdfError::Other("Invalid kid object".into()))?;
 
-                // Check if we can skip this node based on /Count
-                let kid_dict = self
-                    .arena
-                    .get_dict(kid_handle)
+                let kid_dict = self.arena.get_dict(kid_handle)
                     .ok_or_else(|| PdfError::Other("Invalid kid dictionary".into()))?;
-                let count_key = self.arena.name("Count");
-
-                if let Some(count) = kid_dict
-                    .get(&count_key)
-                    .and_then(|o: &Object| o.resolve(&self.arena).as_integer())
-                {
-                    let count = usize::try_from(count).unwrap_or(0);
-                    if target_index >= count {
-                        target_index -= count;
-                        continue;
-                    }
+                
+                let count = self.get_node_count(&kid_dict);
+                if target_index < count {
+                    current_node = kid_handle;
+                    found = true;
+                    break;
                 } else {
-                    // Check if it's a Page node (count is usually missing in leaf Page nodes)
-                    let type_key = self.arena.name("Type");
-                    let node_type =
-                        kid_dict.get(&type_key).and_then(|o| o.resolve(&self.arena).as_name());
-                    if let Some(t) = node_type
-                        && let Some(name) = self.arena.get_name(t)
-                        && name.as_str() == "Page"
-                        && target_index > 0
-                    {
-                        target_index -= 1;
-                        continue;
-                    }
+                    target_index -= count;
                 }
+            }
 
-                return self.find_page_recursive(kid_handle, target_index, path);
+            if !found {
+                return Err(PdfError::Other("Page index out of bounds".into()));
             }
         }
+    }
 
-        Err(PdfError::Other("Page index out of bounds".into()))
+    fn get_node_count(&self, dict: &BTreeMap<Handle<PdfName>, Object>) -> usize {
+        let count_key = self.arena.name("Count");
+        if let Some(count) = dict.get(&count_key).and_then(|o| o.resolve(&self.arena).as_integer()) {
+            return usize::try_from(count).unwrap_or(0);
+        }
+        // Leaf Page nodes usually lack /Count, they count as 1
+        let type_key = self.arena.name("Type");
+        if let Some(t) = dict.get(&type_key).and_then(|o| o.resolve(&self.arena).as_name())
+            && let Some(name) = self.arena.get_name(t)
+            && name.as_str() == "Page" {
+            return 1;
+        }
+        0
     }
 
     /// Returns high-level compliance information about the document.

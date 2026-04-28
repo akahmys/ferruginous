@@ -1,7 +1,7 @@
 use lopdf::Document;
 use ferruginous_core::security::SecurityHandler;
 use std::env;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = env::args().collect();
@@ -27,23 +27,7 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn perform_pass_0_decryption_debug(doc: &mut lopdf::Document) -> anyhow::Result<()> {
-    let mut type_counts = HashMap::new();
-    for obj in doc.objects.values() {
-        let type_name = match obj {
-            lopdf::Object::Null => "Null",
-            lopdf::Object::Boolean(_) => "Boolean",
-            lopdf::Object::Integer(_) => "Integer",
-            lopdf::Object::Real(_) => "Real",
-            lopdf::Object::Name(_) => "Name",
-            lopdf::Object::String(_, _) => "String",
-            lopdf::Object::Array(_) => "Array",
-            lopdf::Object::Dictionary(_) => "Dictionary",
-            lopdf::Object::Stream(_) => "Stream",
-            lopdf::Object::Reference(_) => "Reference",
-        };
-        *type_counts.entry(type_name).or_insert(0) += 1;
-    }
-    println!("Object type counts: {:?}", type_counts);
+    count_object_types(doc);
 
     if let Some(obj8253) = doc.objects.get(&(8253, 0)) {
         println!("Object 8253 type: {:?}", match obj8253 {
@@ -55,68 +39,7 @@ fn perform_pass_0_decryption_debug(doc: &mut lopdf::Document) -> anyhow::Result<
         });
     }
 
-    let mut security_handler = None;
-    
-    if let Ok(encrypt_dict_obj) = doc.trailer.get(b"Encrypt") {
-        println!("Found Encrypt entry in trailer.");
-        let encrypt_obj = if let Ok(id) = encrypt_dict_obj.as_reference() {
-            println!("Encrypt dict is at reference {:?}", id);
-            doc.objects.get(&id)
-        } else {
-            Some(encrypt_dict_obj)
-        };
-
-        if let Some(lopdf::Object::Dictionary(dict)) = encrypt_obj {
-            let v_val = dict.get(b"V").and_then(|o| o.as_i64()).unwrap_or(0);
-            let r_val = dict.get(b"R").and_then(|o| o.as_i64()).unwrap_or(0);
-            println!("V: {}, R: {}", v_val, r_val);
-            
-            if (v_val == 4 && r_val == 4) || (v_val == 1 && r_val == 3) || (v_val == 2 && r_val == 3) {
-                let o_str = dict.get(b"O").and_then(|o| o.as_str()).unwrap_or(&[]);
-                let u_str = dict.get(b"U").and_then(|o| o.as_str()).unwrap_or(&[]);
-                let p_val = dict.get(b"P").and_then(|o| o.as_i64()).unwrap_or(0) as i32;
-                
-                let mut file_id = &[][..];
-                if let Ok(id_obj) = doc.trailer.get(b"ID")
-                    && let Ok(arr) = id_obj.as_array()
-                    && let Some(first) = arr.first().and_then(|o| o.as_str().ok()) {
-                    file_id = first;
-                }
-                
-                println!("O len: {}, U len: {}, P: {}, ID len: {}", o_str.len(), u_str.len(), p_val, file_id.len());
-                
-                match SecurityHandler::new_v4("", o_str, u_str, p_val, file_id) {
-                    Ok(handler) => {
-                        println!("SecurityHandler V4 initialized successfully.");
-                        security_handler = Some(handler);
-                    }
-                    Err(e) => println!("Failed to initialize SecurityHandler V4: {:?}", e),
-                }
-            } else if v_val == 5 && r_val == 5 {
-                let mut file_id = &[][..];
-                if let Ok(id_array) = doc.trailer.get(b"ID")
-                    && let Ok(arr) = id_array.as_array()
-                    && let Some(first) = arr.first().and_then(|o| o.as_str().ok()) {
-                    file_id = first;
-                }
-                match SecurityHandler::new_v5("", "", file_id) {
-                    Ok(handler) => {
-                        println!("SecurityHandler V5 initialized successfully.");
-                        security_handler = Some(handler);
-                    }
-                    Err(e) => println!("Failed to initialize SecurityHandler V5: {:?}", e),
-                }
-            } else {
-                println!("Unsupported Encryption Version/Revision: V={}, R={}", v_val, r_val);
-            }
-        } else {
-            println!("Encrypt entry found but not a dictionary.");
-        }
-    } else {
-        println!("No Encrypt entry in trailer.");
-    }
-
-    if let Some(handler) = security_handler {
+    if let Some(handler) = init_security_handler(doc) {
         let mut string_count = 0;
         let mut stream_count = 0;
         let mut fail_count = 0;
@@ -133,6 +56,100 @@ fn perform_pass_0_decryption_debug(doc: &mut lopdf::Document) -> anyhow::Result<
         println!("Removed /Encrypt from trailer.");
     }
     Ok(())
+}
+
+fn count_object_types(doc: &lopdf::Document) {
+    let mut type_counts = BTreeMap::new();
+    for obj in doc.objects.values() {
+        let type_name = match obj {
+            lopdf::Object::Null => "Null",
+            lopdf::Object::Boolean(_) => "Boolean",
+            lopdf::Object::Integer(_) => "Integer",
+            lopdf::Object::Real(_) => "Real",
+            lopdf::Object::Name(_) => "Name",
+            lopdf::Object::String(_, _) => "String",
+            lopdf::Object::Array(_) => "Array",
+            lopdf::Object::Dictionary(_) => "Dictionary",
+            lopdf::Object::Stream(_) => "Stream",
+            lopdf::Object::Reference(_) => "Reference",
+        };
+        *type_counts.entry(type_name).or_insert(0) += 1;
+    }
+    println!("Object type counts: {:?}", type_counts);
+}
+
+fn init_security_handler(doc: &lopdf::Document) -> Option<SecurityHandler> {
+    let encrypt_dict_obj = doc.trailer.get(b"Encrypt").ok()?;
+    println!("Found Encrypt entry in trailer.");
+    
+    let encrypt_obj = if let Ok(id) = encrypt_dict_obj.as_reference() {
+        println!("Encrypt dict is at reference {:?}", id);
+        doc.objects.get(&id)
+    } else {
+        Some(encrypt_dict_obj)
+    };
+
+    let lopdf::Object::Dictionary(dict) = encrypt_obj? else {
+        println!("Encrypt entry found but not a dictionary.");
+        return None;
+    };
+
+    let (v_val, r_val) = (dict.get(b"V").and_then(|o| o.as_i64()).unwrap_or(0), dict.get(b"R").and_then(|o| o.as_i64()).unwrap_or(0));
+    println!("V: {}, R: {}", v_val, r_val);
+    
+    if (v_val == 4 && r_val == 4) || (v_val == 1 && r_val == 3) || (v_val == 2 && r_val == 3) {
+        init_v4_handler(doc, dict)
+    } else if v_val == 5 && r_val == 5 {
+        init_v5_handler(doc)
+    } else {
+        println!("Unsupported Encryption Version/Revision: V={}, R={}", v_val, r_val);
+        None
+    }
+}
+
+fn init_v4_handler(doc: &lopdf::Document, dict: &lopdf::Dictionary) -> Option<SecurityHandler> {
+    let o_str = dict.get(b"O").and_then(|o| o.as_str()).unwrap_or(&[]);
+    let u_str = dict.get(b"U").and_then(|o| o.as_str()).unwrap_or(&[]);
+    let p_val = dict.get(b"P").and_then(|o| o.as_i64()).unwrap_or(0) as i32;
+    
+    let mut file_id = &[][..];
+    if let Ok(id_obj) = doc.trailer.get(b"ID")
+        && let Ok(arr) = id_obj.as_array()
+        && let Some(first) = arr.first().and_then(|o| o.as_str().ok()) {
+        file_id = first;
+    }
+    
+    println!("O len: {}, U len: {}, P: {}, ID len: {}", o_str.len(), u_str.len(), p_val, file_id.len());
+    
+    match SecurityHandler::new_v4("", o_str, u_str, p_val, file_id, true) {
+        Ok(handler) => {
+            println!("SecurityHandler V4 initialized successfully.");
+            Some(handler)
+        }
+        Err(e) => {
+            println!("Failed to initialize SecurityHandler V4: {:?}", e);
+            None
+        }
+    }
+}
+
+fn init_v5_handler(doc: &lopdf::Document) -> Option<SecurityHandler> {
+    let mut file_id = &[][..];
+    if let Ok(id_array) = doc.trailer.get(b"ID")
+        && let Ok(arr) = id_array.as_array()
+        && let Some(first) = arr.first().and_then(|o| o.as_str().ok()) {
+        file_id = first;
+    }
+    match SecurityHandler::new_v5("", "", file_id) {
+        Ok(handler) => {
+            println!("SecurityHandler V5 initialized successfully.");
+            Some(handler)
+        }
+        Err(e) => {
+            println!("Failed to initialize SecurityHandler V5: {:?}", e);
+            None
+        }
+    }
 }
 
 fn decrypt_object_recursive(
@@ -154,12 +171,26 @@ fn decrypt_object_recursive(
             }
         }
         lopdf::Object::Stream(stream) => {
-            *stream_count += 1;
-            match handler.decrypt_bytes(&stream.content, id.0, id.1) {
-                Ok(decrypted) => {
-                    stream.content = decrypted;
+            let mut should_decrypt = true;
+            if let Ok(type_obj) = stream.dict.get(b"Type") {
+                if let Ok(name) = type_obj.as_name_str() {
+                    if name == "ObjStm" || name == "XRef" {
+                        should_decrypt = false;
+                    }
                 }
-                Err(_) => *fail_count += 1,
+            }
+
+            if should_decrypt {
+                *stream_count += 1;
+                match handler.decrypt_bytes(&stream.content, id.0, id.1) {
+                    Ok(decrypted) => {
+                        if *stream_count < 5 {
+                            println!("DEBUG: Stream {:?} decrypted sample: {:?}", id, &decrypted[..decrypted.len().min(16)]);
+                        }
+                        stream.content = decrypted;
+                    }
+                    Err(_) => *fail_count += 1,
+                }
             }
         }
         lopdf::Object::Array(arr) => {

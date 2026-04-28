@@ -28,6 +28,7 @@ read-fonts.workspace = true
 ttf-parser.workspace = true
 parking_lot.workspace = true
 pdf-writer.workspace = true
+zstd.workspace = true
 
 # Local only / specific
 encoding_rs = "0.8"

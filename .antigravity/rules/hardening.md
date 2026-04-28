@@ -11,9 +11,9 @@
 - **Compliance Criterion**: All functions (excluding test code) must stay within 50 effective logic lines. Blank lines, doc-comments, and single-line attribute macros (like `#[test]`) are excluded from this count.
 
 ## 2. No-Panic Principle
-- **Rule**: Prohibit `unwrap()`, `expect()`, and `panic!()`.
-- **Purpose**: Eradicate runtime crashes.
-- **Compliance Criterion**: In production code, there must be no paths that cause forced termination due to unrecoverable errors.
+- **Rule**: Prohibit `unwrap()`, `expect()`, and `panic!()` for input-driven errors.
+- **Purpose**: Eradicate runtime crashes caused by malformed or unexpected data.
+- **Compliance Criterion**: In production code, there must be no paths that cause forced termination due to unrecoverable errors originating from external inputs. Use `Result` for all data-dependent operations.
 
 ## 3. Safety Isolation
 - **Rule**: Total prohibition of `unsafe` blocks in the core layers (SDK/Render).
@@ -30,10 +30,12 @@
 - **Purpose**: Induce compiler errors when enums are extended.
 - **Compliance Criterion**: In all `match` expressions, the compiler must be able to detect the addition of future variants.
 
-## 6. Stack Safety
-- **Rule**: Prohibit function recursion. Use an explicit stack (`Vec`) instead.
-- **Purpose**: Eradicate stack overflows.
-- **Compliance Criterion**: The runtime call stack must be predictable, with no deep nested recursive calls.
+## 6. Stack Safety (Unbounded Recursion Guard)
+- **Rule**: Prohibit unbounded function recursion. Use an explicit stack (`Vec`) for structural traversals.
+- **Purpose**: Eradicate stack overflows and ensure compliance with ISO 32000-2 resource limits.
+- **Compliance Criterion**: Any function traversing tree-like structures (e.g., page trees or object graphs) MUST either:
+    1. Use an explicit `Vec`-based stack for iterative traversal.
+    2. Use a `depth: usize` parameter with a hard-coded safety limit (e.g., 32 or 64).
 
 ## 7. Pure State Management
 - **Rule**: Prohibit global mutable state (`static mut`).
@@ -61,9 +63,9 @@
 - **Compliance Criterion**: All errors must be defined as domain-specific Enum types. Complex variants MUST use **named fields** (struct-like variants) rather than tuples. All string-based payloads MUST use `std::borrow::Cow<'static, str>` to allow zero-copy static messages and efficient dynamic context. Errors must capture mandatory contextual enrichment (e.g., `pos` for parsing, `context` for ingestion).
 
 ## 12. Bound & Invariant Enforcement
-- **Rule**: Enforce a 256MB limit on external inputs (PDF streams) and explicitly state invariants using `assert!`.
-- **Purpose**: Early detection of resource exhaustion (OOM) and logical contradictions.
-- **Compliance Criterion**: Resource limits must be enforced by types or constants. For structural parsers, a multi-token lookahead buffer must be used to ensure no data loss during disambiguation.
+- **Rule**: Enforce a 256MB limit on external inputs and explicitly state logical invariants using `assert!`.
+- **Purpose**: Early detection of resource exhaustion and developer-originated logical contradictions.
+- **Compliance Criterion**: Resource limits must be enforced by types or constants. `assert!` MUST ONLY be used for "impossible" logical states that indicate a bug in the code, never for validating untrusted input.
 
 ## 13. Zero Silent Swallowing
 - **Rule**: Prohibit discarding errors via `.ok()` or `_`. Always log or propagate.
@@ -79,25 +81,3 @@
 - **Rule**: Prohibit `.clone()` for the purpose of avoiding borrow checker errors. Rethink ownership structure instead.
 - **Purpose**: Visualize inefficient memory allocations and design distortions.
 - **Compliance Criterion**: Use of `.clone()` must be limited to cases where "logical duplication of data" is truly required.
-
-## 16. Context Propagation Guard
-- **Rule**: Interpretation of document data MUST enforce type-level provision of a `Resolver` and `ResourceStack`.
-- **Purpose**: Eliminate runtime "Missing Resolver" or "Missing Resource" errors.
-- **Compliance Criterion**: Public high-level interpreters MUST NOT have default constructors that omit these dependencies.
-
-## 17. Binary Integrity Guard
-- **Rule**: Non-textual streams (Fonts, Images, ICCProfiles) MUST be strictly excluded from text-based refinement pipelines.
-- **Purpose**: Prevent data corruption caused by misapplying UTF-8 normalization or text substitutions to binary data.
-- **Compliance Criterion**: The refinery engine must maintain an explicit "Refinement Denylist" based on PDF object types (e.g., `/FontFile`, `/XObject`).
-
-## 18. Pass 0 Physical Normalization Guard
-- **Rule**: All input PDFs MUST undergo a "Physical Normalization" phase (Pass 0) at the raw object level before semantic ingestion into the `PdfArena`.
-- **Purpose**: Ensure structural integrity, viewer compatibility (e.g., Acrobat Error 135), and uniform internal state. This phase handles decryption, repair of broken XRef tables, and mandatory UTF-8 re-encoding of Metadata.
-- **Compliance Criterion**: Any operation that maps physical offsets to semantic handles MUST be preceded by a call to `Ingestor::perform_pass_0_normalization`. This process must be iterative (stack-based) and non-destructive to the original document intent while stripping transport-level artifacts (like `/Encrypt` dictionaries).
-
-## 19. Unbounded Recursion Guard
-- **Rule**: Prohibit unbounded recursion in all structural traversals.
-- **Purpose**: Eradicate stack overflows and ensure compliance with ISO 32000-2 resource limits.
-- **Compliance Criterion**: Any function traversing tree-like structures (e.g., page trees, structure trees, or object graphs) MUST either:
-    1. Use an explicit `Vec`-based stack for iterative traversal.
-    2. Use a `depth: usize` parameter with a hard-coded safety limit (e.g., 32 or 64).

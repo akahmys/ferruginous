@@ -10,12 +10,27 @@ impl Interpreter<'_> {
             self.find_resource(&self.doc.arena().intern_name(PdfName::new("Font")), name)?;
         let h =
             entry.as_reference().unwrap_or_else(|| self.doc.arena().alloc_object(entry.clone()));
-        self.get_font(h)
+        self.get_font(h, Some(name))
     }
 
-    pub(crate) fn get_font(&mut self, h: Handle<Object>) -> PdfResult<Arc<FontResource>> {
-        if let Some(cached) = self.font_cache.get(&h) {
-            return Ok(Arc::clone(cached));
+    pub(crate) fn get_font(&mut self, h: Handle<Object>, res_name: Option<&PdfName>) -> PdfResult<Arc<FontResource>> {
+        if let Some(cached) = self.font_cache.get(&h).cloned() {
+            let default_name = "UnknownFont".to_string();
+            let name = res_name.map(|n| n.as_str().to_string())
+                .or_else(|| self.font_name_map.get(&h).cloned())
+                .unwrap_or(default_name);
+                
+            if !self.defined_fonts.contains(name.as_str()) {
+                self.backend.define_font(
+                    name.as_str(),
+                    Some(cached.base_font.as_str()),
+                    cached.data.clone(),
+                    None,
+                    cached.cid_to_gid_map.clone(),
+                );
+                self.defined_fonts.insert(name.as_str().to_string());
+            }
+            return Ok(cached);
         }
 
         let arena = self.doc.arena();
@@ -89,7 +104,11 @@ impl Interpreter<'_> {
         self.font_cache.insert(h, Arc::clone(&res));
 
         // Register font with backend if data is available
-        let name = self.font_name_map.get(&h).cloned().unwrap_or_else(|| "UnknownFont".to_string());
+        let default_name = "UnknownFont".to_string();
+        let name = res_name.map(|n| n.as_str().to_string())
+            .or_else(|| self.font_name_map.get(&h).cloned())
+            .unwrap_or(default_name);
+            
         if !self.defined_fonts.contains(name.as_str()) {
             self.backend.define_font(
                 name.as_str(),

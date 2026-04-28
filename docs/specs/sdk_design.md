@@ -54,25 +54,42 @@ The following libraries are selected to guarantee deterministic and safe operati
 
 ```rust
 pub struct GraphicsState {
-    pub ctm: kurbo::Affine,
-    pub clipping_path: kurbo::BezPath,
-    pub blend_mode: BlendMode,          // PDF 2.0
-    pub alpha_constant: f32,
-    pub black_point_compensation: bool, // Required in PDF 2.0
+    pub ctm: Matrix,
+    pub stroke_color: Color,
+    pub fill_color: Color,
+    pub font_size: f64,
+    pub char_spacing: f64,
+    pub word_spacing: f64,
+    pub horizontal_scaling: f64,
+    pub text_rise: f64,
+    pub wmode: u8, // Writing Mode (0: Horizontal, 1: Vertical)
     // ...
 }
 ```
 
-### DrawOp (Intermediate Representation)
+### Command IR (Sublimated Representation)
 
 ```rust
-pub enum DrawOp {
+pub enum Command {
     PushState, PopState,
-    FillPath { path: kurbo::BezPath, color: Color, opacity: f32 },
-    StrokePath { path: kurbo::BezPath, color: Color, style: StrokeStyle },
-    Text { glyphs: Vec<GlyphInstance>, font_id: ResourceId, size: f32 },
-    Image { id: ResourceId, rect: kurbo::Rect },
-    Clip(kurbo::BezPath, ClippingRule),
+    Transform(Affine),
+    MoveTo(Point), LineTo(Point), CurveTo(Point, Point, Point),
+    Fill(WindingRule), Stroke(StrokeStyle),
+    BeginText, EndText,
+    ShowText(String), // UTF-8 Normalized
+    SetFont { font: String, size: f64 },
+    SetWritingMode(u8),
+    DrawXObject(String),
+}
+```
+
+### SublimatedData (Memory Optimization)
+
+```rust
+pub enum SublimatedData {
+    Raw(Bytes),
+    Compressed { original_len: usize, data: Vec<u8> }, // Zstd
+    Commands(Vec<Command>), // Middle Representation
 }
 ```
 

@@ -52,3 +52,12 @@ These rules capture the architectural hardening requirements identified during t
 - **Recursion Safety**:
     - **Iterative First**: Prefer `Vec`-based iterative stacks for traversing object graphs (Rule 6).
     - **Depth Counters**: For logic that remains recursive (e.g., CMap nested includes), a `depth: usize` parameter MUST be used with a hard limit of 32 (Rule 19).
+55: 
+56: ## 9. Modularization for Rule 1 Compliance
+57: - **Rule**: Maintain the 50-line function limit (Rule 1) through logical decomposition rather than arbitrary splitting.
+58: - **Pattern: Dispatcher & Specialized Helpers**:
+59:     - Complex `match` or `if/else` chains should be refactored into a **Dispatcher** function that coordinates control flow.
+60:     - Each branch of the logic should be extracted into a **Specialized Helper** (often private) that handles exactly one responsibility (e.g., `write_string_obj`, `write_array_obj`).
+61: - **Pattern: State Structs**:
+62:     - Functions with excessive arguments resulting from splitting should group related parameters into a **State Struct** (e.g., `LinState` for linearization) to improve readability and type safety.
+63: - **Goal**: Ensure that code remains readable and "context-complete" even when modularized.

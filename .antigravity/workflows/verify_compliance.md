@@ -2,15 +2,16 @@
 description: Automated verification workflow for RR-15 compliance.
 ---
 
-# [Workflow] Verify Compliance
+# [Workflow] Verify Compliance & Structural Audit
 
-Audit compliance with [RR-15](../rules/hardening.md) from both the "skill" and "script" perspectives to maintain absolute quality.
+This workflow serves as the **Standard Procedure for Codebase Audit and Refactoring**. It ensures both structural integrity via semantic analysis and logical compliance via the RR-15 hardening standards.
 
 ## Procedure
 
 // turbo
-1. **AI Audit**: Follow the [verify_rr15](../skills/verify_rr15.md) skill to self-check the current codebase for any logical or structural violations.
-2. **Automated Audit**: Execute the following and confirm that all items PASS mechanically.
+1. **Semantic Audit (ccc)**: Run `ccc status` and `ccc index` to update the map, then use `ccc search` to detect architectural inconsistencies or implementation gaps (e.g., missed variant updates).
+2. **AI Logic Audit (RR-15)**: Follow the [verify_rr15](../skills/verify_rr15.md) skill to self-check for logical violations of the [Hardening Rules](../rules/hardening.md).
+3. **Automated Mechanical Audit**: Execute the following and confirm that all items PASS.
 // turbo
    - `./scripts/verify_compliance.sh` (Convention compliance)
 // turbo

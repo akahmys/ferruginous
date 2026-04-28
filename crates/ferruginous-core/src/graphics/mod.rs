@@ -167,6 +167,7 @@ pub struct TextState {
     pub word_spacing: f64,
     pub horizontal_scaling: f64,
     pub leading: f64,
+    pub wmode: u8,
     pub font: Option<crate::object::PdfName>,
     pub font_size: f64,
     pub rendering_mode: TextRenderingMode,

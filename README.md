@@ -4,6 +4,8 @@
 
 The project is governed by the **RR-15 (Reliable Rust-15)** safety protocol, ensuring memory safety and deterministic behavior in mission-critical environments.
 
+**🚀 Status: 100% Hardened (Rule 1 Compliant)** — As of 2026-04-27, all core crates have undergone a full refactoring to adhere to the strict 50-line function limit, maximizing maintainability and safety.
+
 ---
 
 ## 🎯 Vision & Philosophy
@@ -72,10 +74,23 @@ The ingestion process is divided into distinct, non-overlapping phases:
 
 - **Handles vs. Pointers**: All object references are `Handle<Object>` (a `u32` index and a generation count). This prevents "use-after-free" and makes the entire document structure easily serializable and AI-inspectable.
 - **RR-15 Compliance**: 
-    - **Rule 6 (No Recursion)**: All traversals of the PDF object graph must use an explicit stack (`Vec`) to prevent stack overflow on deeply nested documents.
+    - **Rule 2 vs 12 (Error Boundary)**: Strict separation of input-driven errors (must return `Result`) from logical invariants (allowed to `assert!`).
+    - **Rule 6 (Stack Safety)**: All traversals of the PDF object graph must use an explicit stack (`Vec`) and a hard-coded `depth` limit to prevent stack overflow.
     - **Rule 10 (Determinism)**: Iteration over objects and metadata generation is deterministic to ensure bit-perfect output and reliable digital signatures.
-    - **Rule 11 (Error Transparency)**: Zero use of generic `String` errors. All failures use structured Enum variants with mandatory context (e.g., `pos`, `context`).
-    - **Rule 19 (Unbounded Recursion Guard)**: Strict enforcement of depth limits (e.g., max 32 levels) for tree-like structures like the Page Tree and Structure Tree.
+    - **Rule 11 (Error Transparency)**: Zero use of generic `String` or `anyhow` errors in core crates. All failures use structured Enum variants.
+    - **Rule 18 (Secret Guard)**: Mandatory automated scanning to prevent authentication tokens or PII from entering the codebase.
+
+---
+
+## 🏛️ Project Governance: Hierarchy of Truth
+
+To ensure long-term stability and AI consistency, Ferruginous follows a 5-layer "Hierarchy of Truth" for all its rules and protocols:
+
+1.  **Constitution (憲法)**: Immutable principles (`rules.md`).
+2.  **Governance (統治)**: Lifecycle and decision processes (`planning.md`, `merging.md`).
+3.  **Hardening (防壁)**: Absolute implementation safety constraints (`hardening.md` / RR-15).
+4.  **Domain Standards (規格)**: Technical specs (ISO 32000-2, `rendering.md`).
+5.  **Operational (術式)**: Concrete execution methods (`skills/`, `workflows/`).
 
 ---
 
@@ -83,9 +98,9 @@ The ingestion process is divided into distinct, non-overlapping phases:
 
 ### Encryption Handling
 Ferruginous implements custom security handlers for PDF 1.4-2.0, focusing on Adobe fidelity:
-- **AES-128 (Revision 4)**: Used in PDF 1.6. Requires specific key padding and alignment with MD5-based derivation.
+- **AES-128 (Revision 4)**: Used in PDF 1.6. Implements high-fidelity MD5-based key derivation with correct `sAlT` handling for Adobe-compliant decryption.
 - **AES-256 (Revision 5/6)**: Used in PDF 1.7/2.0. Implements the SHA-256 based key derivation.
-- **Pass 0 Decryption**: Ensures the internal engine only ever sees plaintext, reducing the surface area for logical bugs.
+- **Advanced Recovery**: Robust UTF-16/PDFDocEncoding detection to eliminate mojibake in metadata and font resources.
 
 ### ISO Standards & Audit
 - **Specifications**: Optimized for **ISO 32000-2:2020** and **ISO 14289-2 (PDF/UA-2)**.

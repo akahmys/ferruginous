@@ -4,53 +4,59 @@ The "Rebirth" project aims to achieve the world's most robust and ISO-compliant 
 
 ---
 
-## [COMPLETED] Phase 1 - 20: Foundation & Unified Architecture
-- [x] **M1 - M31**: Core engine development, Vello rendering, CJK font hardening, and security integration.
-- [x] **M60-M62: Ferruginous Unified Architecture (FUA)**: Consolidated `core` engine and established the SDK/App/CLI hierarchy.
+## [COMPLETED] Phase 1 - 22: Foundation, Refinery & UA-2 Bridge
+**Goal**: Build the world's highest purity PDF 2.0 data model and diagnostic engine.
 
-## [COMPLETED] Phase 21: The Refinery Evolution
-**Goal**: Establish position as a "Strict PDF 2.0 Translator" and build the highest purity data model.
+- [x] **Core Engine (M1-M62)**: Established Vello rendering, CJK hardening, and the Ferruginous Unified Architecture (FUA).
+- [x] **The Refinery (M63-M65)**: High-speed, parallel ingestion pipeline with Typed Arena and Handle system.
+- [x] **UA-2 Engine (M66-M67)**: Full logical structure tree traversal and Matterhorn Protocol auditing.
 
-- [x] **M63: Ingestion Gateway**: Adopt `lopdf` as the physical parsing gateway and implement high-speed ownership transfer to `PdfArena`. [COMPLETED]
-- [x] **M64: Concurrent Refinery Pipeline**: Parallelized text/color/metadata normalization via `rayon`. [COMPLETED]
-- [x] **M65: Typed Arena & Handle System**: Maximize memory efficiency and safety. [COMPLETED]
+## [COMPLETED] Phase 23: fepdf Deployment & Rendering Hardening
+**Goal**: Achieve ISO-compliant rendering stability and finalize CLI utilities.
 
-## [COMPLETED] Phase 22: fepdf & UA-2 Bridge (CLI Hardening)
-**Goal**: Transform `fepdf` into a world-class diagnostic and accessibility tool.
+- [x] **Rendering Stability**: Robust coordinate mapping, CMap v2 engine, and strict ICC profiling for Japanese PDFs.
+- [x] **Active Refinement**: Unicode-native normalization and unified font mapping during ingestion.
+- [x] **Governance & Security**: 100% compliance with Rule 1 (RR-15) and integrated PII/Secret scanning.
 
-- [x] **M66: UA-2 Structure Engine**:
-    - [x] **Structure Tree**: Implement full traversal and validation of the logical structure tree (Clause 14.7). [COMPLETED]
-    - [x] **Matterhorn Protocol**: Detailed auditor based on the failure conditions for UA-2. [COMPLETED]
-    - [x] **Alt-Text Audit**: Diagnostic logic for non-textual content descriptions. [COMPLETED]
-- [x] **M67: fepdf Readiness (M67 Prep)**:
-    - [x] **Core Restoration**: Stabilized RefCell-based Arena and modernized SDK interpreter. [COMPLETED]
-    - [x] **Font & CMap Engine**: Functional Unicode mapping for structural auditing. [COMPLETED]
-    - [x] **Build Integrity**: 100% clean check across all crates. [COMPLETED]
+## Phase 24: High-Performance Interactive Canvas (The Glass Phase)
+**Goal**: Build a butter-smooth PDF viewing experience that feels "alive" on modern hardware.
 
-## [IN PROGRESS] Phase 23: fepdf Field Deployment & Rendering Hardening
-**Goal**: Finalize command-line utilities and achieve ISO-compliant CJK rendering stability.
+- [ ] **M68: Vello-Native egui Integration**:
+    - [ ] **Direct Paint Callbacks**: Move from headless texture blitting to direct egui-wgpu paint callbacks for 120fps interaction.
+    - [ ] **Retained Mode Rendering**: Implement scene caching to minimize GPU redraws for static pages.
+- [ ] **M68b: Infinite Scroll & Virtualization**:
+    - [ ] **Adaptive Tiling**: Tiled rendering for large documents and high zoom levels.
+    - [ ] **Viewport Management**: Viewport-aware page loading and unloading for low memory footprint.
+- [ ] **M68c: Selection Engine**:
+    - [ ] **Sub-pixel Precision**: Accurate text selection with visual feedback and hit testing.
+    - [ ] **Semantic Highlighting**: Highlighting links, annotations, and search results.
 
-- [x] **M67: Rendering Engine Hardening**:
-    - [x] **Coordinate Mapping**: Implemented robust non-zero MediaBox origin handling and coordinate space inversion. [COMPLETED]
-    - [x] **CMap Engine v2**: Smart byte-length detection and support for complex `beginbfrange` mappings. [COMPLETED]
-    - [x] **Text Matrix Advancement**: Implemented strict Tm/TLM synchronization for multi-line layout. [COMPLETED]
-- [x] **M67d: Unicode-Native Arena & Color Hardening**:
-    - [x] **Restructuring Ingest**: Implement 2-pass "能動的精製" (Active Refinement) to normalize content streams to UTF-8. [COMPLETED]
-    - [x] **Unified Font Mapping**: Construct authoritative Unicode-to-GID maps during ingest. [COMPLETED]
-    - [x] **Strict ICC Profiling**: Implement full `ICCBased` color space support using `moxcms`. [COMPLETED]
-    - [x] **Operator Coverage**: Complete implementation of `g`, `G`, `k`, `K`, `Do` (Form), and Marked Content. [COMPLETED]
-- [x] **M67e: fepdf Release Features (Rich Reporting & Refinery Controls)**:
-    - [x] **Ingestion Options**: Expose `active_refinement`, `metadata_sublimation`, and `color_policy` controls. [COMPLETED]
-    - [x] **Rich Reporting**: Exportable JSON/Markdown compliance reports, including **Embedded Font Audit**. [COMPLETED]
-    - [x] **Metadata Recovery**: Implement full Document Info to XMP sublimation. [COMPLETED]
-- [x] **M67f: Antigravity Standard Ruleset**: Reorganized all project protocols and agent rules into the standardized `.antigravity/` tiered structure and unified project language to English. [COMPLETED]
+## Phase 25: The Semantic Forge (The Structure Phase)
+**Goal**: Treatment of PDF as a logical structure tree first, visual representation second.
 
-## Phase 24: Ferruginous Flagship GUI (Application)
-**Goal**: Provide the world's best PDF 2.0 editing experience using the hardened UA-2 library.
+- [ ] **M69: Universal Structure Tree (UST)**:
+    - [ ] **Visual Tree Side Panel**: Traversable and editable view of the logical structure (Tags).
+    - [ ] **Direct Hierarchy Manipulation**: UI for re-ordering and re-tagging (e.g., Paragraph -> Heading).
+- [ ] **M69b: Remediation Assistant**:
+    - [ ] **Matterhorn Dashboard**: Real-time accessibility audit (UA-2) with visual pointers to errors.
+    - [ ] **Alt-Text Studio**: dedicated interface for managing alternative descriptions for complex figures.
+- [ ] **M69c: Reflow & Accessibility Views**:
+    - [ ] **Reflow Mode**: Extracting and re-rendering text for responsive reading.
+    - [ ] **Screen Reader Sync**: Ensuring the GUI focus follows the logical structure tree.
 
-- [ ] **M68: High-Fidelity Workspace**: Vello-accelerated rendering and asynchronous status visualization.
-- [ ] **M69: Semantic Structure Editor**: Direct manipulation of the logical structure tree (Tags).
-- [x] **M70: The Forge (Export & Security)**: PAdES-compliant signatures, **Full Linearization (Fast Web View)** with Hint Table generation, and optimized PDF 2.0 save engine. [COMPLETED]
+## Phase 26: Professional Production & Security (The Finality Phase)
+**Goal**: Industrial-strength output and document integrity.
+
+- [x] **M70: The Forge Core**: PAdES-compliant signatures, **Full Linearization** with Hint Table generation, and optimized save engine. [COMPLETED]
+- [ ] **M70b: Save Studio GUI**: Visual controls for Linearization, Vacuum, and Standard Compliance (PDF/UA-2, A-4).
+- [ ] **M70c: Digital Signature Studio**: Visual signature placement and LTV (Long-Term Validation) management.
+- [ ] **M70d: Atomic Redaction**: Secure visual redaction that physically destroys stream data.
+
+## Phase 27: Workspace & Ecosystem
+**Goal**: Making Ferruginous the center of the professional PDF workflow.
+
+- [ ] **M71: Multi-Document Workspace**: Tabbed interface and cross-document page drag-and-drop.
+- [ ] **M72: WASM Plugin API**: Allowing third-party extensions for custom auditing and transformations.
 
 ---
 
@@ -69,4 +75,4 @@ The "Rebirth" project aims to achieve the world's most robust and ISO-compliant 
 ... (Previous Phases 1 - 20 summarized)
 
 ---
-*Roadmap updated: 2026-04-25 (M67 Advanced Metadata & Optimization Hardening Completed)*
+*Roadmap updated: 2026-04-28 (Phase 24-27 GUI Expansion)*

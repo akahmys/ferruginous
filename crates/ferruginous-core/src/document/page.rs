@@ -1,11 +1,27 @@
-//! PDF Page Representation (ISO 32000-2:2020 Clause 7.7.3)
-
-use crate::arena::PdfArena;
+use crate::{FromPdfObject, Object, PdfName, PdfArena};
 use crate::handle::Handle;
-use crate::object::{Object, PdfName};
 use std::collections::BTreeMap;
 
 /// A high-level representation of a PDF page.
+///
+/// PDF Page Dictionary (ISO 32000-2:2020 Clause 7.7.3.3)
+#[derive(Debug, Clone, FromPdfObject)]
+#[pdf_dict(clause = "7.7.3.3")]
+pub struct PdfPageDict {
+    #[pdf_key("Type")]
+    pub kind: PdfName,
+    #[pdf_key("Parent")]
+    pub parent: Handle<crate::Object>,
+    #[pdf_key("Contents")]
+    pub contents: Option<crate::Object>, // Single stream or array
+    #[pdf_key("Resources")]
+    pub resources: Option<crate::Object>,
+    #[pdf_key("MediaBox")]
+    pub media_box: Option<crate::graphics::Rect>,
+    #[pdf_key("Annots")]
+    pub annots: Option<Handle<Vec<crate::Object>>>,
+}
+
 pub struct Page<'a> {
     arena: &'a PdfArena,
     dict_handle: Handle<BTreeMap<Handle<PdfName>, Object>>,
@@ -48,4 +64,23 @@ impl<'a> Page<'a> {
     pub fn dict_handle(&self) -> Handle<BTreeMap<Handle<PdfName>, Object>> {
         self.dict_handle
     }
+}
+
+/// PDF Annotation Dictionary (ISO 32000-2:2020 Clause 12.5)
+#[derive(Debug, Clone, FromPdfObject)]
+#[pdf_dict(clause = "12.5")]
+pub struct PdfAnnotation {
+    pub kind: Option<PdfName>,
+    #[pdf_key("Subtype")]
+    pub subtype: PdfName,
+    #[pdf_key("Rect")]
+    pub rect: crate::graphics::Rect,
+    #[pdf_key("Contents")]
+    pub contents: Option<String>,
+    #[pdf_key("P")]
+    pub page: Option<Handle<crate::Object>>,
+    #[pdf_key("NM")]
+    pub name: Option<String>,
+    #[pdf_key("F")]
+    pub flags: Option<i64>,
 }

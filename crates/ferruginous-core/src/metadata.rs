@@ -1,4 +1,4 @@
-use crate::{Document, FromPdfObject, Object};
+use crate::{Document, FromPdfObject, Handle, Object, PdfArena};
 use std::collections::BTreeMap;
 
 /// Refined PDF Info Dictionary (ISO 32000-2:2020 Clause 14.3.3)
@@ -75,7 +75,7 @@ pub fn update_document_metadata(
     doc: &crate::Document,
     info: &MetadataInfo,
 ) -> crate::PdfResult<()> {
-    let arena = doc.arena();
+    let _arena = doc.arena();
 
     // 1. Update legacy Info dictionary (if it exists)
     update_legacy_info(doc, info)?;
@@ -141,31 +141,31 @@ fn build_refined_metadata_map(info: &MetadataInfo) -> BTreeMap<crate::object::Pd
     if let Some(v) = &info.title {
         refined_map.insert(
             crate::object::PdfName::new("Title"),
-            crate::refine::RefinedObject::String(v.as_bytes().to_vec().into()),
+            crate::refine::RefinedObject::Text(v.clone()),
         );
     }
     if let Some(v) = &info.author {
         refined_map.insert(
             crate::object::PdfName::new("Author"),
-            crate::refine::RefinedObject::String(v.as_bytes().to_vec().into()),
+            crate::refine::RefinedObject::Text(v.clone()),
         );
     }
     if let Some(v) = &info.subject {
         refined_map.insert(
             crate::object::PdfName::new("Subject"),
-            crate::refine::RefinedObject::String(v.as_bytes().to_vec().into()),
+            crate::refine::RefinedObject::Text(v.clone()),
         );
     }
     if let Some(v) = &info.keywords {
         refined_map.insert(
             crate::object::PdfName::new("Keywords"),
-            crate::refine::RefinedObject::String(v.as_bytes().to_vec().into()),
+            crate::refine::RefinedObject::Text(v.clone()),
         );
     }
     if let Some(v) = &info.producer {
         refined_map.insert(
             crate::object::PdfName::new("Producer"),
-            crate::refine::RefinedObject::String(v.as_bytes().to_vec().into()),
+            crate::refine::RefinedObject::Text(v.clone()),
         );
     }
     refined_map
@@ -183,7 +183,7 @@ fn commit_metadata_stream(
         }
     }
     let sdh = arena.alloc_dict(stream_dict);
-    arena.alloc_object(Object::Stream(sdh, data))
+    arena.alloc_object(Object::Stream(sdh, std::sync::Arc::new(crate::object::SublimatedData::Raw(data))))
 }
 
 fn apply_xmp_metadata(doc: &roxmltree::Document, info: &mut MetadataInfo) {

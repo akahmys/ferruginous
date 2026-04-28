@@ -401,6 +401,16 @@ fn render_summary_markdown(
     audit: bool,
 ) -> Result<()> {
     println!("# Document Summary: {:?}", input.file_name().unwrap_or_default());
+    render_general_info(summary);
+    render_font_audit(summary);
+
+    if audit {
+        render_compliance_markdown(summary)?;
+    }
+    Ok(())
+}
+
+fn render_general_info(summary: &ferruginous_sdk::DocumentSummary) {
     println!("\n## General Information");
     println!("\n| Property | Value |");
     println!("| :--- | :--- |");
@@ -424,7 +434,9 @@ fn render_summary_markdown(
     if let Some(v) = &summary.metadata.producer {
         println!("| Producer | {} |", v);
     }
+}
 
+fn render_font_audit(summary: &ferruginous_sdk::DocumentSummary) {
     let embedded_count = summary.fonts.iter().filter(|f| f.is_embedded).count();
     let total_fonts = summary.fonts.len();
 
@@ -443,11 +455,6 @@ fn render_summary_markdown(
             );
         }
     }
-
-    if audit {
-        render_compliance_markdown(summary)?;
-    }
-    Ok(())
 }
 
 fn render_compliance_markdown(summary: &ferruginous_sdk::DocumentSummary) -> Result<()> {
@@ -503,59 +510,16 @@ fn render_summary_text(
     audit: bool,
     structure: bool,
 ) -> Result<()> {
-    println!("\n--- [ DOCUMENT SUMMARY ] ---");
-    println!("Version:    {}", summary.version);
-    println!("Pages:      {}", summary.page_count);
-    if let Some(v) = &summary.metadata.title {
-        println!("Title:      {}", v);
-    }
-    if let Some(v) = &summary.metadata.author {
-        println!("Author:     {}", v);
-    }
-
-    println!("\n--- [ FONT AUDIT ] ---");
-    let embedded_count = summary.fonts.iter().filter(|f| f.is_embedded).count();
-    println!("Total Fonts: {} (Embedded: {})", summary.fonts.len(), embedded_count);
-
-    if summary.fonts.is_empty() {
-        println!("No fonts detected.");
-    } else {
-        println!(
-            "{:<30} | {:<10} | {:<4} | {:<4} | {:<10}",
-            "Font Name", "Type", "Emb", "Sub", "Encoding"
-        );
-        println!("{:-<30}-+-{:-<10}-+-{:-<4}-+-{:-<4}-+-{:-<10}", "", "", "", "", "");
-        for f in &summary.fonts {
-            println!(
-                "{:<30} | {:<10} | {:<4} | {:<4} | {:<10}",
-                f.name,
-                f.font_type,
-                if f.is_embedded { "✅" } else { "❌" },
-                if f.is_subset { "✅" } else { "−" },
-                f.encoding
-            );
-        }
-    }
+    render_general_text(summary);
+    render_font_text(summary);
 
     if audit {
-        println!("\n--- [ COMPLIANCE AUDIT ] ---");
-        if summary.compliance.issues.is_empty() {
-            println!("SUCCESS: No major issues found.");
-        } else {
-            for issue in &summary.compliance.issues {
-                println!("[{:?}] {:<10} | {}", issue.severity, issue.standard, issue.message);
-            }
-        }
-        
-        if !summary.compliance.iso_clauses.is_empty() {
-            println!("\n--- [ ISO 32000-2 COMPLIANCE ] ---");
-            println!("Validated Clauses: {}", summary.compliance.iso_clauses.join(", "));
-        }
+        render_audit_text(summary);
     }
 
     if structure {
         let tree = doc.print_structure().map_err(|e| anyhow::anyhow!("{:?}", e))?;
-        println!("\n{}", tree);
+        println!("\n--- [ DOCUMENT STRUCTURE ] ---\n{}", tree);
     }
     Ok(())
 }
@@ -857,4 +821,44 @@ fn parse_page_range(range_str: &str, max_pages: usize) -> Result<Vec<usize>> {
     pages.sort();
     pages.dedup();
     Ok(pages)
+}
+
+fn render_general_text(summary: &ferruginous_sdk::DocumentSummary) {
+    println!("\n--- [ DOCUMENT SUMMARY ] ---");
+    println!("Version:    {}", summary.version);
+    println!("Pages:      {}", summary.page_count);
+    if let Some(v) = &summary.metadata.title { println!("Title:      {}", v); }
+    if let Some(v) = &summary.metadata.author { println!("Author:     {}", v); }
+}
+
+fn render_font_text(summary: &ferruginous_sdk::DocumentSummary) {
+    println!("\n--- [ FONT AUDIT ] ---");
+    let embedded_count = summary.fonts.iter().filter(|f| f.is_embedded).count();
+    println!("Total Fonts: {} (Embedded: {})", summary.fonts.len(), embedded_count);
+
+    if summary.fonts.is_empty() {
+        println!("No fonts detected.");
+    } else {
+        println!("{:<30} | {:<10} | {:<4} | {:<4} | {:<10}", "Font Name", "Type", "Emb", "Sub", "Encoding");
+        println!("{:-<30}-+-{:-<10}-+-{:-<4}-+-{:-<4}-+-{:-<10}", "", "", "", "", "");
+        for f in &summary.fonts {
+            println!("{:<30} | {:<10} | {:<4} | {:<4} | {:<10}", f.name, f.font_type,
+                if f.is_embedded { "✅" } else { "❌" }, if f.is_subset { "✅" } else { "−" }, f.encoding);
+        }
+    }
+}
+
+fn render_audit_text(summary: &ferruginous_sdk::DocumentSummary) {
+    println!("\n--- [ COMPLIANCE AUDIT ] ---");
+    if summary.compliance.issues.is_empty() {
+        println!("SUCCESS: No major issues found.");
+    } else {
+        for issue in &summary.compliance.issues {
+            println!("[{:?}] {:<10} | {}", issue.severity, issue.standard, issue.message);
+        }
+    }
+    if !summary.compliance.iso_clauses.is_empty() {
+        println!("\n--- [ ISO 32000-2 COMPLIANCE ] ---");
+        println!("Validated Clauses: {}", summary.compliance.iso_clauses.join(", "));
+    }
 }
