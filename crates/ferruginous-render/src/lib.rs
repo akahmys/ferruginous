@@ -1,66 +1,83 @@
-//! Ferruginous Render: Graphics Bridging for PDF.
-//!
-//! (ISO 32000-2:2020 Clause 8)
-
-pub mod ctm;
 pub mod headless;
 pub mod path;
 pub mod text;
 
-#[cfg(test)]
-mod path_tests;
-#[cfg(test)]
-mod text_tests;
-
-use ferruginous_core::graphics::{Color, LineCap, LineJoin, PixelFormat, StrokeStyle, WindingRule};
+use ferruginous_core::graphics::TextRenderingMode;
+pub use ferruginous_core::graphics::WindingRule;
+use ferruginous_core::{BlendMode, Color, LineCap, LineJoin, PixelFormat, StrokeStyle};
 use kurbo::{Affine, BezPath, Cap, Join, Stroke};
-use skrifa::raw::FileRef;
 use std::sync::Arc;
 use vello::Scene;
 
-pub trait RenderBackend: Send {
+// Re-export core types for convenience
+pub use ferruginous_core::font::FallbackFontType;
+
+pub trait RenderBackend {
+    fn transform(&mut self, transform: Affine);
+    fn set_transform(&mut self, transform: Affine);
     fn push_state(&mut self);
     fn pop_state(&mut self);
-    fn transform(&mut self, affine: Affine);
-
     fn fill_path(&mut self, path: &BezPath, color: &Color, rule: WindingRule);
     fn stroke_path(&mut self, path: &BezPath, color: &Color, style: &StrokeStyle);
-
     fn push_clip(&mut self, path: &BezPath, rule: WindingRule);
     fn pop_clip(&mut self);
-    fn draw_image(&mut self, data: &[u8], width: u32, height: u32, format: PixelFormat);
-
-    // Transparency Support
     fn set_fill_alpha(&mut self, alpha: f64);
     fn set_stroke_alpha(&mut self, alpha: f64);
-    fn set_blend_mode(&mut self, mode: ferruginous_core::graphics::BlendMode);
-
-    // Color Support
     fn set_fill_color(&mut self, color: Color);
     fn set_stroke_color(&mut self, color: Color);
-
+    fn set_blend_mode(&mut self, mode: BlendMode);
+    fn draw_image(&mut self, image: &[u8], width: u32, height: u32, format: PixelFormat);
     fn define_font(
         &mut self,
         name: &str,
         base_name: Option<&str>,
-        data: Option<std::sync::Arc<Vec<u8>>>,
+        data: Option<Arc<Vec<u8>>>,
         index: Option<usize>,
         cid_to_gid_map: Option<Vec<u16>>,
+        fallback_type: FallbackFontType,
     );
     fn set_font(&mut self, name: &str);
-    fn show_text(
-        &mut self,
-        text: &str,
-        size: f64,
-        transform: kurbo::Affine,
-        is_vertical: bool,
-    );
-    fn set_text_render_mode(&mut self, mode: ferruginous_core::graphics::TextRenderingMode);
+    fn set_text_render_mode(&mut self, mode: TextRenderingMode);
     fn set_char_spacing(&mut self, spacing: f64);
     fn set_word_spacing(&mut self, spacing: f64);
+    fn show_text(
+        &mut self,
+        glyphs: &[TextGlyph],
+        size: f64,
+        transform: kurbo::Affine,
+        state: TextState,
+        op_index: usize,
+    );
 }
 
-/// Internal graphics state for VelloBackend.
+#[derive(Debug, Clone)]
+pub struct TextGlyph {
+    pub gid: u32,
+    pub char_code: u32,
+    pub unicode: String,
+    pub width: f32,
+    pub vx: f32,
+    pub vy: f32,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TextState {
+    pub tc: f64,
+    pub tw: f64,
+    pub th: f64,
+    pub is_vertical: bool,
+}
+
+pub struct VelloBackend {
+    scene: Scene,
+    state: VelloState,
+    state_stack: Vec<VelloState>,
+    font_cache: std::collections::BTreeMap<String, FontCacheEntry>,
+    system_fonts: Arc<std::collections::BTreeMap<FallbackFontType, Arc<Vec<u8>>>>,
+    skrifa_bridge: crate::text::SkrifaBridge,
+    next_font_id: u64,
+}
+
 #[derive(Clone)]
 struct VelloState {
     transform: Affine,
@@ -68,44 +85,54 @@ struct VelloState {
     stroke_color: Color,
     fill_alpha: f64,
     stroke_alpha: f64,
-    blend_mode: ferruginous_core::graphics::BlendMode,
-    clip_count: usize,
-    font_data: Option<std::sync::Arc<Vec<u8>>>,
+    blend_mode: BlendMode,
+    clip_count: u32,
+    font_data: Option<Arc<Vec<u8>>>,
     font_index: Option<usize>,
     cid_to_gid_map: Option<Vec<u16>>,
     text_render_mode: i32,
     char_spacing: f64,
     word_spacing: f64,
     font_name: Option<String>,
+    font_id: u64,
 }
 
-/// Cached font information to satisfy clippy complexity rules.
 struct FontCacheEntry {
-    data: Option<std::sync::Arc<Vec<u8>>>,
-    sfnt_data: Option<std::sync::Arc<Vec<u8>>>,
+    font_id: u64,
+    data: Option<Arc<Vec<u8>>>,
     collection_index: Option<usize>,
     cid_to_gid_map: Option<Vec<u16>>,
     base_name: Option<String>,
-}
-
-/// Vello-based implementation of [RenderBackend].
-pub struct VelloBackend {
-    scene: Scene,
-    state: VelloState,
-    state_stack: Vec<VelloState>,
-    font_cache: std::collections::BTreeMap<String, FontCacheEntry>,
-    pub system_fonts: std::collections::BTreeMap<String, Arc<Vec<u8>>>,
-    skrifa_bridge: crate::text::SkrifaBridge,
-}
-
-impl Default for VelloBackend {
-    fn default() -> Self {
-        Self::new()
-    }
+    fallback_type: FallbackFontType,
 }
 
 impl VelloBackend {
-    pub fn new() -> Self {
+    pub fn load_system_fonts() -> Arc<std::collections::BTreeMap<FallbackFontType, Arc<Vec<u8>>>> {
+        let mut fonts = std::collections::BTreeMap::new();
+        let resource_dir =
+            std::env::var("FERRUGINOUS_RESOURCES").unwrap_or_else(|_| "resources".to_string());
+        let base_path = std::path::Path::new(&resource_dir).join("fonts");
+
+        let mappings = [
+            (FallbackFontType::Serif, "serif.ttf"),
+            (FallbackFontType::SansSerif, "sans.ttf"),
+            (FallbackFontType::Monospace, "mono.ttf"),
+            (FallbackFontType::JapaneseSerif, "mincho.ttf"),
+            (FallbackFontType::JapaneseSans, "gothic.ttf"),
+        ];
+
+        for (ftype, filename) in mappings {
+            let path = base_path.join(filename);
+            if let Ok(data) = std::fs::read(path) {
+                fonts.insert(ftype, Arc::new(data));
+            }
+        }
+        Arc::new(fonts)
+    }
+
+    pub fn new(
+        system_fonts: Arc<std::collections::BTreeMap<FallbackFontType, Arc<Vec<u8>>>>,
+    ) -> Self {
         Self {
             scene: Scene::new(),
             state: VelloState {
@@ -114,7 +141,7 @@ impl VelloBackend {
                 stroke_color: Color::Gray(0.0),
                 fill_alpha: 1.0,
                 stroke_alpha: 1.0,
-                blend_mode: ferruginous_core::graphics::BlendMode::Normal,
+                blend_mode: BlendMode::Normal,
                 clip_count: 0,
                 font_data: None,
                 font_index: None,
@@ -123,252 +150,194 @@ impl VelloBackend {
                 char_spacing: 0.0,
                 word_spacing: 0.0,
                 font_name: None,
+                font_id: 0,
             },
             state_stack: Vec::new(),
             font_cache: std::collections::BTreeMap::new(),
-            system_fonts: {
-                let mut fonts = std::collections::BTreeMap::new();
-                let font_path = "/System/Library/Fonts/ヒラギノ明朝 ProN.ttc";
-                if let Ok(data) = std::fs::read(font_path) {
-                    fonts.insert("ヒラギノ明朝 ProN".to_string(), Arc::new(data));
-                }
-                fonts
-            },
-            skrifa_bridge: crate::text::SkrifaBridge::new(None),
+            system_fonts: system_fonts,
+            skrifa_bridge: crate::text::SkrifaBridge::new(),
+            next_font_id: 1,
         }
-    }
-
-    pub fn set_transform(&mut self, transform: Affine) {
-        self.state.transform = transform;
-    }
-
-    pub fn define_font(
-        &mut self,
-        name: &str,
-        data: Option<&std::sync::Arc<Vec<u8>>>,
-        index: usize,
-        cid_to_gid_map: Option<&[u16]>,
-        base_name: Option<&str>,
-    ) {
-        eprintln!("fepdf: define_font name={} data_present={} base_name={:?}", name, data.is_some(), base_name);
-        self.font_cache.insert(
-            name.to_string(),
-            FontCacheEntry {
-                data: data.cloned(),
-                sfnt_data: None,
-                collection_index: Some(index),
-                cid_to_gid_map: cid_to_gid_map.map(|m| m.to_vec()),
-                base_name: base_name.map(|s| s.to_string()),
-            },
-        );
     }
 
     pub fn scene(&self) -> &Scene {
         &self.scene
     }
 
-    fn to_rgba8(&self, data: &[u8], width: u32, height: u32, format: PixelFormat) -> Vec<u8> {
-        let expected_len = width as usize * height as usize;
-        let mut rgba = Vec::with_capacity(expected_len * 4);
-        match format {
-            PixelFormat::Gray8 => {
-                for i in 0..expected_len {
-                    let g = data.get(i).copied().unwrap_or(0);
-                    rgba.extend_from_slice(&[g, g, g, 255]);
-                }
-            }
-            PixelFormat::Rgb8 => {
-                for i in 0..expected_len {
-                    let (r, g, b) = (
-                        data.get(i * 3).copied().unwrap_or(0),
-                        data.get(i * 3 + 1).copied().unwrap_or(0),
-                        data.get(i * 3 + 2).copied().unwrap_or(0)
-                    );
-                    rgba.extend_from_slice(&[r, g, b, 255]);
-                }
-            }
-            PixelFormat::Cmyk8 => {
-                for i in 0..expected_len {
-                    let (c, m, y, k) = (
-                        data.get(i * 4).copied().map(|v| v as f32 / 255.0).unwrap_or(0.0),
-                        data.get(i * 4 + 1).copied().map(|v| v as f32 / 255.0).unwrap_or(0.0),
-                        data.get(i * 4 + 2).copied().map(|v| v as f32 / 255.0).unwrap_or(0.0),
-                        data.get(i * 4 + 3).copied().map(|v| v as f32 / 255.0).unwrap_or(0.0)
-                    );
-                    let (r, g, b) = ((1.0 - c) * (1.0 - k), (1.0 - m) * (1.0 - k), (1.0 - y) * (1.0 - k));
-                    rgba.extend_from_slice(&[(r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8, 255]);
-                }
-            }
-        }
-        rgba
-    }
-
-    fn prepare_font_data_arc(&mut self) -> Option<Arc<Vec<u8>>> {
-        let font_data_arc = self.state.font_data.clone();
-        
-        if let Some(font_name) = &self.state.font_name
-            && let Some(entry) = self.font_cache.get_mut(font_name)
-        {
-            if entry.sfnt_data.is_none() {
-                let r = entry.data.as_deref().map(|d| d.as_slice()).unwrap_or(&[]);
-                if let Some(sfnt) = crate::text::ensure_sfnt(r) {
-                    entry.sfnt_data = Some(Arc::new(sfnt));
-                }
-            }
-            if let Some(sfnt_arc) = &entry.sfnt_data {
-                return Some(sfnt_arc.clone());
-            }
-        }
-        font_data_arc
-    }
-
-
-    #[allow(clippy::too_many_arguments)]
-    fn render_single_glyph<'a>(
+    /// Renders a single glyph to the Vello scene.
+    ///
+    /// Handles both horizontal and vertical writing modes, correctly interpreting
+    /// signed vertical advances (where negative moves characters DOWN).
+    fn render_single_glyph(
         scene: &mut Scene,
         skrifa_bridge: &mut crate::text::SkrifaBridge,
         state: &VelloState,
-        gid: u32,
-        width: f64,
-        vx: f32,
-        vy: f32,
-        char_code: u32,
-        char_iter: &mut std::str::Chars<'_>,
+        glyph: &TextGlyph,
+        ctx: &GlyphRenderContext,
+    ) -> (f64, bool) {
+        let is_cid = state.cid_to_gid_map.is_some();
+        let is_japanese =
+            state.font_name.as_ref().map(|n| n.to_lowercase().contains("mincho")).unwrap_or(false);
+
+        let skrifa_ctx = crate::text::GlyphExtractionContext {
+            font_id: state.font_id,
+            data: ctx.data_ref,
+            gid: glyph.gid,
+            char_code: glyph.char_code,
+            cid_to_gid_map: state.cid_to_gid_map.as_deref(),
+            is_vertical: ctx.is_vertical,
+            unicode_fallback: glyph.unicode.chars().next(),
+            is_japanese,
+            is_cid,
+            collection_index: state.font_index.unwrap_or(0) as u32,
+        };
+
+        if let Some(path) = skrifa_bridge.extract_path(&skrifa_ctx) {
+            let upem = skrifa_bridge.get_units_per_em(ctx.data_ref).unwrap_or(1000);
+            let scale = ctx.size / upem as f64;
+            let h_scale = if ctx.is_vertical { 1.0 } else { ctx.th };
+
+            // local_to_pt: Align glyph in EM box and scale to point size
+            let local_to_pt = Affine::scale_non_uniform(scale * h_scale, scale)
+                * Affine::translate(kurbo::Vec2::new(-glyph.vx as f64, -glyph.vy as f64));
+
+            // pt_to_page: Move to text advance and apply page transform
+            let adv_vec = if ctx.is_vertical {
+                kurbo::Vec2::new(0.0, ctx.advance_offset)
+            } else {
+                kurbo::Vec2::new(ctx.advance_offset, 0.0)
+            };
+
+            let t = ctx.transform * Affine::translate(adv_vec) * local_to_pt;
+
+            scene.fill(vello::peniko::Fill::NonZero, t, ctx.brush, None, &path);
+            (
+                Self::calculate_next_advance(
+                    glyph,
+                    ctx.size,
+                    ctx.advance_offset,
+                    ctx.tc,
+                    ctx.tw,
+                    ctx.th,
+                    ctx.is_vertical,
+                ),
+                true,
+            )
+        } else {
+            (
+                Self::calculate_next_advance(
+                    glyph,
+                    ctx.size,
+                    ctx.advance_offset,
+                    ctx.tc,
+                    ctx.tw,
+                    ctx.th,
+                    ctx.is_vertical,
+                ),
+                false,
+            )
+        }
+    }
+
+    /// Calculates the next cumulative advance after rendering a glyph.
+    ///
+    /// For vertical writing mode, positive character/word spacing is subtracted
+    /// from the natively negative vertical advance to move characters further DOWN.
+    fn calculate_next_advance(
+        glyph: &TextGlyph,
         size: f64,
-        transform: Affine,
+        current_advance: f64,
         tc: f64,
         tw: f64,
-        is_vertical: bool,
-        mut advance_offset: f64,
-        data_ref: &[u8],
-        brush: &vello::peniko::Brush,
-        sys_ref: Option<&skrifa::FontRef<'a>>,
-        prim_ref: Option<&skrifa::FontRef<'a>>,
         th: f64,
-    ) -> (f64, bool) {
-        let unicode_fallback = char_iter.next();
-        let is_japanese = state.font_name.as_ref().map(|n| {
-            let nl = n.to_lowercase();
-            nl.contains("hira") || nl.contains("mincho") || nl.contains("gothic") || nl.contains("koz") || nl.contains("aj1") || nl.contains("ipa") || nl.contains("ms-")
-        }).unwrap_or(false);
-
-        let is_repurposed_japanese = char_code == 0x20 && unicode_fallback.map(|c| (c as u32) >= 0x2E80).unwrap_or(false);
-
-        if state.text_render_mode == 3 || (char_code == 0x20 && !is_repurposed_japanese) {
-            advance_offset += if is_vertical {
-                width * (size / 1000.0)
-            } else {
-                width * (size / 1000.0) * th
-            } + tc + if char_code == 0x20 { tw } else { 0.0 };
-            return (advance_offset, false);
-        }
-
-        let path_opt = skrifa_bridge.extract_path(
-            data_ref, gid, char_code, state.cid_to_gid_map.as_deref(),
-            is_vertical, unicode_fallback, is_japanese, false, sys_ref, prim_ref,
-        );
-
-        if let Some(mut path) = path_opt {
-            let units_per_em = skrifa_bridge.get_units_per_em(data_ref).unwrap_or(1000) as f64;
-            let glyph_scale = size / units_per_em;
-            let writing_line_advance = if is_vertical { Affine::translate((0.0, -advance_offset)) } else { Affine::translate((advance_offset, 0.0)) };
-
-            let glyph_transform = state.transform * transform * writing_line_advance * Affine::scale_non_uniform(glyph_scale * th, glyph_scale) * Affine::translate((-vx as f64, -vy as f64));
-            path.apply_affine(glyph_transform);
-            scene.fill(vello::peniko::Fill::NonZero, Affine::IDENTITY, brush, None, &path);
-
-            let char_width = width * (size / 1000.0);
-            let new_advance = advance_offset + if is_vertical { char_width } else { char_width * th } + tc + if char_code == 0x20 { tw } else { 0.0 };
-            (new_advance, true)
+        is_vertical: bool,
+    ) -> f64 {
+        let mut advance = f64::from(glyph.width) / 1000.0 * size;
+        if !is_vertical {
+            advance *= th;
+            advance += tc * th;
+            if glyph.char_code == 0x20 {
+                advance += tw * th;
+            }
         } else {
-            let char_width = width * (size / 1000.0);
-            let new_advance = advance_offset + if is_vertical { char_width } else { char_width * th } + tc + if char_code == 0x20 { tw } else { 0.0 };
-            (new_advance, false)
+            advance -= tc;
+            if glyph.char_code == 0x20 {
+                advance -= tw;
+            }
         }
+        current_advance + advance
     }
 }
 
+struct GlyphRenderContext<'a> {
+    size: f64,
+    transform: Affine,
+    tc: f64,
+    tw: f64,
+    th: f64,
+    is_vertical: bool,
+    advance_offset: f64,
+    data_ref: &'a [u8],
+    brush: &'a vello::peniko::Brush,
+}
+
 impl RenderBackend for VelloBackend {
+    fn transform(&mut self, transform: Affine) {
+        self.state.transform = self.state.transform * transform;
+    }
+    fn set_transform(&mut self, transform: Affine) {
+        self.state.transform = transform;
+    }
     fn push_state(&mut self) {
         self.state_stack.push(self.state.clone());
-        self.state.clip_count = 0; // Reset clip count for the new level
     }
-
     fn pop_state(&mut self) {
-        if let Some(old_state) = self.state_stack.pop() {
-            while self.state.clip_count > old_state.clip_count {
-                self.pop_clip();
-            }
-            self.state = old_state;
+        if let Some(s) = self.state_stack.pop() {
+            self.state = s;
         }
-    }
-
-    fn transform(&mut self, affine: Affine) {
-        self.state.transform *= affine;
     }
 
     fn fill_path(&mut self, path: &BezPath, color: &Color, rule: WindingRule) {
-        // Resource Limit: Prevention of OOM from overly complex paths
-        if path.segments().count() > 100_000 {
-            eprintln!("WARNING: Path complexity limit exceeded, skipping fill.");
-            return;
-        }
-
         let brush = to_vello_brush(color, self.state.fill_alpha as f32);
-        let fill = match rule {
+        let vello_rule = match rule {
             WindingRule::NonZero => vello::peniko::Fill::NonZero,
             WindingRule::EvenOdd => vello::peniko::Fill::EvenOdd,
         };
-        self.scene.fill(fill, self.state.transform, &brush, None, path);
+        self.scene.fill(vello_rule, self.state.transform, &brush, None, path);
     }
 
     fn stroke_path(&mut self, path: &BezPath, color: &Color, style: &StrokeStyle) {
-        // Resource Limit: Prevention of OOM from overly complex paths
-        if path.segments().count() > 100_000 {
-            eprintln!("WARNING: Path complexity limit exceeded, skipping stroke.");
-            return;
-        }
-
         let brush = to_vello_brush(color, self.state.stroke_alpha as f32);
+        let mut stroke = Stroke::new(style.width);
         let cap = match style.cap {
             LineCap::Butt => Cap::Butt,
             LineCap::Round => Cap::Round,
             LineCap::Square => Cap::Square,
         };
-        let join = match style.join {
+        stroke.start_cap = cap;
+        stroke.end_cap = cap;
+        stroke.join = match style.join {
             LineJoin::Miter => Join::Miter,
             LineJoin::Round => Join::Round,
             LineJoin::Bevel => Join::Bevel,
         };
-
-        let (dash_offset, is_dashed) =
-            if let Some((_, phase)) = &style.dash_pattern { (*phase, true) } else { (0.0, false) };
-
-        // Use a more robust way to create Stroke to avoid field mismatch
-        let mut stroke = kurbo::Stroke::new(style.width);
-        stroke.start_cap = cap;
-        stroke.end_cap = cap;
-        stroke.join = join;
         stroke.miter_limit = style.miter_limit;
-        stroke.dash_offset = dash_offset;
-
-        if is_dashed {
-            if let Some((pattern, phase)) = &style.dash_pattern {
-                let dashed: BezPath = kurbo::dash(path.iter(), *phase, pattern).collect();
-                self.scene.stroke(&stroke, self.state.transform, &brush, None, &dashed);
-            }
-        } else {
-            self.scene.stroke(&stroke, self.state.transform, &brush, None, path);
-        }
+        self.scene.stroke(&stroke, self.state.transform, &brush, None, path);
     }
 
     fn push_clip(&mut self, path: &BezPath, rule: WindingRule) {
-        let fill = match rule {
+        let vello_rule = match rule {
             WindingRule::NonZero => vello::peniko::Fill::NonZero,
             WindingRule::EvenOdd => vello::peniko::Fill::EvenOdd,
         };
-        // Use push_layer for clipping with proper fill
-        self.scene.push_layer(fill, vello::peniko::Mix::Normal, 1.0, self.state.transform, path);
+
+        self.scene.push_layer(
+            vello_rule,
+            vello::peniko::Mix::Normal,
+            1.0f32,
+            self.state.transform,
+            path,
+        );
         self.state.clip_count += 1;
     }
 
@@ -379,214 +348,128 @@ impl RenderBackend for VelloBackend {
         }
     }
 
-    fn draw_image(&mut self, data: &[u8], width: u32, height: u32, format: PixelFormat) {
-        use vello::peniko::{Blob, ImageAlphaType, ImageData, ImageFormat};
-
-        let rgba_data = self.to_rgba8(data, width, height, format);
-        let blob_data: std::sync::Arc<dyn AsRef<[u8]> + Send + Sync> = std::sync::Arc::new(rgba_data);
-        
-        let image = ImageData {
-            data: Blob::new(blob_data),
-            format: ImageFormat::Rgba8,
-            alpha_type: ImageAlphaType::Alpha,
-            width,
-            height,
-        };
-
-        self.scene.draw_image(&image, self.state.transform);
-    }
-
     fn set_fill_alpha(&mut self, alpha: f64) {
         self.state.fill_alpha = alpha;
     }
-
     fn set_stroke_alpha(&mut self, alpha: f64) {
         self.state.stroke_alpha = alpha;
     }
-
-    fn set_blend_mode(&mut self, mode: ferruginous_core::graphics::BlendMode) {
-        self.state.blend_mode = mode;
-    }
-
     fn set_fill_color(&mut self, color: Color) {
         self.state.fill_color = color;
     }
-
     fn set_stroke_color(&mut self, color: Color) {
         self.state.stroke_color = color;
     }
+    fn set_blend_mode(&mut self, mode: BlendMode) {
+        self.state.blend_mode = mode;
+    }
+
+    fn draw_image(&mut self, _image: &[u8], _width: u32, _height: u32, _format: PixelFormat) {}
 
     fn define_font(
         &mut self,
         name: &str,
         base_name: Option<&str>,
-        data: Option<std::sync::Arc<Vec<u8>>>,
+        data: Option<Arc<Vec<u8>>>,
         index: Option<usize>,
         cid_to_gid_map: Option<Vec<u16>>,
+        fallback_type: FallbackFontType,
     ) {
-        // Resolve font index if not provided (for collections)
-        let resolved_index = if index.is_none() {
-            if let Some(data_arc) = data.as_ref() {
-                if let Ok(file_ref) = skrifa::raw::FileRef::new(data_arc) {
-                    match file_ref {
-                        skrifa::raw::FileRef::Font(_) => None,
-                        skrifa::raw::FileRef::Collection(c) => {
-                            let mut best = 0;
-                            for i in 0..c.len() {
-                                if c.get(i).is_ok() {
-                                    best = i;
-                                    break;
-                                }
-                            }
-                            Some(best as usize)
-                        }
-                    }
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        } else {
-            index
-        };
-
         self.font_cache.insert(
             name.to_string(),
             FontCacheEntry {
+                font_id: self.next_font_id,
                 data,
-                sfnt_data: None,
-                collection_index: resolved_index,
+                collection_index: index,
                 cid_to_gid_map,
                 base_name: base_name.map(|s| s.to_string()),
+                fallback_type: fallback_type,
             },
         );
+        self.next_font_id += 1;
     }
 
     fn set_font(&mut self, name: &str) {
         if let Some(entry) = self.font_cache.get(name) {
-            self.state.font_data = entry.data.clone();
+            self.state.font_data = entry.data.clone().or_else(|| {
+                // Fallback to system font if no embedded data
+                self.system_fonts.get(&entry.fallback_type).cloned()
+            });
             self.state.font_index = entry.collection_index;
             self.state.cid_to_gid_map = entry.cid_to_gid_map.clone();
             self.state.font_name = entry.base_name.clone();
-        } else {
-            self.state.font_data = None;
-            self.state.font_index = None;
-            self.state.cid_to_gid_map = None;
-            self.state.font_name = None;
+            self.state.font_id = entry.font_id;
         }
     }
 
-    fn set_text_render_mode(&mut self, mode: ferruginous_core::graphics::TextRenderingMode) {
+    fn set_text_render_mode(&mut self, mode: TextRenderingMode) {
         self.state.text_render_mode = mode as i32;
     }
-
     fn set_char_spacing(&mut self, spacing: f64) {
         self.state.char_spacing = spacing;
     }
-
     fn set_word_spacing(&mut self, spacing: f64) {
         self.state.word_spacing = spacing;
     }
 
     fn show_text(
         &mut self,
-        text: &str,
+        glyphs: &[TextGlyph],
         size: f64,
         transform: kurbo::Affine,
-        is_vertical: bool,
+        text_state: TextState,
+        _op_index: usize,
     ) {
-        let prim_arc = self.prepare_font_data_arc();
-        let prim_ref_owned = prim_arc.as_ref().and_then(|a| FileRef::new(a.as_slice()).ok());
-        let prim_ref = prim_ref_owned.as_ref().and_then(|f| match f {
-            FileRef::Font(font) => Some(font.clone()),
-            FileRef::Collection(c) => c.get(self.state.font_index.unwrap_or(0) as u32).ok(),
-        });
-
-        let mut advance_offset = 0.0;
+        let data_arc = self.state.font_data.clone();
+        let data_ref = data_arc.as_deref().map(|v| v.as_slice()).unwrap_or(&[]);
         let brush = to_vello_brush(&self.state.fill_color, self.state.fill_alpha as f32);
-        let data_ref = prim_arc.as_deref().map(|v| v.as_slice()).unwrap_or(&[]);
-
-        for c in text.chars() {
-            // For normalized fonts, GID == Unicode or GID is mapped via simple cmap
-            let gid = prim_ref.as_ref().map(|f| f.charmap().map(c).unwrap_or(skrifa::GlyphId::new(0))).unwrap_or(skrifa::GlyphId::new(0));
-            
-            // Simplified rendering using skrifa_bridge
-            if let Some(mut path) = self.skrifa_bridge.extract_path(data_ref, gid.to_u32(), c as u32, None, is_vertical, None) {
-                let units_per_em = self.skrifa_bridge.get_units_per_em(data_ref).unwrap_or(1000) as f64;
-                let glyph_scale = size / units_per_em;
-                let writing_line_advance = if is_vertical { Affine::translate((0.0, -advance_offset)) } else { Affine::translate((advance_offset, 0.0)) };
-                
-                let glyph_transform = self.state.transform * transform * writing_line_advance * Affine::scale(glyph_scale);
-                path.apply_affine(glyph_transform);
-                self.scene.fill(vello::peniko::Fill::NonZero, Affine::IDENTITY, &brush, None, &path);
-                
-                // Advance (Stub: use font metrics)
-                advance_offset += size * 0.6; // FIXME: Use real metrics
-            }
+        let mut advance_offset = 0.0;
+        for glyph in glyphs {
+            let ctx = GlyphRenderContext {
+                size,
+                transform: self.state.transform * transform,
+                tc: text_state.tc,
+                tw: text_state.tw,
+                th: text_state.th,
+                is_vertical: text_state.is_vertical,
+                advance_offset,
+                data_ref,
+                brush: &brush,
+            };
+            let (new_advance, _success) = Self::render_single_glyph(
+                &mut self.scene,
+                &mut self.skrifa_bridge,
+                &self.state,
+                glyph,
+                &ctx,
+            );
+            advance_offset = new_advance;
         }
     }
-}
-
-#[allow(dead_code)]
-fn to_kurbo_stroke(style: &StrokeStyle) -> kurbo::Stroke {
-    let mut stroke = Stroke::new(style.width);
-    let cap = match style.cap {
-        LineCap::Butt => Cap::Butt,
-        LineCap::Round => Cap::Round,
-        LineCap::Square => Cap::Square,
-    };
-    stroke.start_cap = cap;
-    stroke.end_cap = cap;
-
-    stroke.join = match style.join {
-        LineJoin::Miter => Join::Miter,
-        LineJoin::Round => Join::Round,
-        LineJoin::Bevel => Join::Bevel,
-    };
-    stroke.miter_limit = style.miter_limit;
-    stroke
 }
 
 fn to_vello_brush(color: &Color, alpha: f32) -> vello::peniko::Brush {
+    let a = (alpha.clamp(0.0, 1.0) * 255.0) as u8;
     match color {
-        Color::Gray(g) => vello::peniko::Brush::Solid(vello::peniko::Color::new([
-            *g as f32, *g as f32, *g as f32, alpha,
-        ])),
-        Color::Rgb(r, g, b) => vello::peniko::Brush::Solid(vello::peniko::Color::new([
-            *r as f32, *g as f32, *b as f32, alpha,
-        ])),
+        Color::Gray(g) => {
+            let v = (g.clamp(0.0, 1.0) * 255.0) as u8;
+            vello::peniko::Brush::Solid(vello::peniko::Color::from_rgba8(v, v, v, a))
+        }
+        Color::Rgb(r, g, b) => {
+            let r_u8 = (r.clamp(0.0, 1.0) * 255.0) as u8;
+            let g_u8 = (g.clamp(0.0, 1.0) * 255.0) as u8;
+            let b_u8 = (b.clamp(0.0, 1.0) * 255.0) as u8;
+            vello::peniko::Brush::Solid(vello::peniko::Color::from_rgba8(r_u8, g_u8, b_u8, a))
+        }
         Color::Cmyk(c, m, y, k) => {
+            // Simple CMYK to RGB conversion
             let r = (1.0 - c) * (1.0 - k);
             let g = (1.0 - m) * (1.0 - k);
             let b = (1.0 - y) * (1.0 - k);
-            vello::peniko::Brush::Solid(vello::peniko::Color::new([
-                r as f32, g as f32, b as f32, alpha,
-            ]))
+            let r_u8 = (r.clamp(0.0, 1.0) * 255.0) as u8;
+            let g_u8 = (g.clamp(0.0, 1.0) * 255.0) as u8;
+            let b_u8 = (b.clamp(0.0, 1.0) * 255.0) as u8;
+            vello::peniko::Brush::Solid(vello::peniko::Color::from_rgba8(r_u8, g_u8, b_u8, a))
         }
-    }
-}
-
-#[allow(dead_code)]
-fn to_vello_mix(mode: ferruginous_core::graphics::BlendMode) -> vello::peniko::Mix {
-    use ferruginous_core::graphics::BlendMode;
-    use vello::peniko::Mix;
-    match mode {
-        BlendMode::Normal => Mix::Normal,
-        BlendMode::Multiply => Mix::Multiply,
-        BlendMode::Screen => Mix::Screen,
-        BlendMode::Overlay => Mix::Overlay,
-        BlendMode::Darken => Mix::Darken,
-        BlendMode::Lighten => Mix::Lighten,
-        BlendMode::ColorDodge => Mix::ColorDodge,
-        BlendMode::ColorBurn => Mix::ColorBurn,
-        BlendMode::HardLight => Mix::HardLight,
-        BlendMode::SoftLight => Mix::SoftLight,
-        BlendMode::Difference => Mix::Difference,
-        BlendMode::Exclusion => Mix::Exclusion,
-        BlendMode::Hue => Mix::Hue,
-        BlendMode::Saturation => Mix::Saturation,
-        BlendMode::Color => Mix::Color,
-        BlendMode::Luminosity => Mix::Luminosity,
     }
 }

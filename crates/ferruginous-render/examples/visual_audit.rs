@@ -7,7 +7,8 @@ use std::path::Path;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let pdf_path = "samples/bokutokitan.v20.pdf";
+    let args: Vec<String> = std::env::args().collect();
+    let pdf_path = if args.len() > 1 { &args[1] } else { "samples/nihonkokukenpou.pdf" };
     let output_dir = "artifacts";
     std::fs::create_dir_all(output_dir)?;
     let output_path = "artifacts/debug_render_output.png";
@@ -18,7 +19,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let page_index = 0;
 
-    let mut backend = ferruginous_render::VelloBackend::new();
+    let mut backend = ferruginous_render::VelloBackend::new(
+        ferruginous_render::VelloBackend::load_system_fonts(),
+    );
     let (p_w, p_h) = doc.get_page_size(page_index).unwrap_or((595.0, 842.0));
 
     // High-resolution render (200 DPI approx)

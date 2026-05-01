@@ -10,6 +10,7 @@ repository.workspace = true
 [dependencies]
 # Workspace managed
 ferruginous-macros = { path = "../ferruginous-macros" }
+log.workspace = true
 bytes.workspace = true
 serde.workspace = true
 thiserror.workspace = true

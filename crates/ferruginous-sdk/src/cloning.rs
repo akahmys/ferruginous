@@ -2,7 +2,7 @@ use ferruginous_core::{Handle, Object, PdfArena, PdfResult};
 use std::collections::BTreeMap;
 
 /// Utility for cloning PDF objects and migrating them between arenas or contexts.
-/// 
+///
 /// RR-15 COMPLIANT: This implementation is iterative to prevent stack overflow
 /// and uses BTreeMap for deterministic output.
 pub struct ObjectCloner<'a> {
@@ -24,12 +24,7 @@ enum CloningTask {
 impl<'a> ObjectCloner<'a> {
     /// Creates a new object cloner for migrating objects between source and target arenas.
     pub fn new(source: &'a PdfArena, target: &'a PdfArena) -> Self {
-        Self {
-            source,
-            target,
-            handle_map: BTreeMap::new(),
-            stack: Vec::new(),
-        }
+        Self { source, target, handle_map: BTreeMap::new(), stack: Vec::new() }
     }
 
     /// Clones a specific handle's object and returns the new handle.
@@ -111,8 +106,9 @@ impl<'a> ObjectCloner<'a> {
         while let Some(task) = self.stack.pop() {
             match task {
                 CloningTask::CloneHandle(source_h, target_h) => {
-                    let source_obj = self.source.get_object(source_h)
-                        .ok_or_else(|| ferruginous_core::PdfError::Other("Dangling reference in source".into()))?;
+                    let source_obj = self.source.get_object(source_h).ok_or_else(|| {
+                        ferruginous_core::PdfError::Other("Dangling reference in source".into())
+                    })?;
 
                     let target_obj = self.clone_object(&source_obj)?;
                     self.target.set_object(target_h, target_obj);
@@ -135,9 +131,7 @@ impl<'a> ObjectCloner<'a> {
                 let name_str = self.source.get_name_str(*h).unwrap_or_default();
                 Object::Name(self.target.name(&name_str))
             }
-            Object::Reference(h) => {
-                Object::Reference(self.queue_clone(*h))
-            }
+            Object::Reference(h) => Object::Reference(self.queue_clone(*h)),
             Object::Array(h) => {
                 let source_arr = self.source.get_array(*h).unwrap_or_default();
                 let mut target_arr = Vec::with_capacity(source_arr.len());

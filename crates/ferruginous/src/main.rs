@@ -1,6 +1,6 @@
 mod app;
-mod view;
 mod vello_egui;
+mod view;
 mod worker;
 
 use app::FerruginousApp;

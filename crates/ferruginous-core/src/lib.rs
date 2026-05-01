@@ -7,12 +7,12 @@
 
 extern crate self as ferruginous_core;
 
-pub mod audit;
-pub mod error;
 pub mod arena;
+pub mod audit;
 pub mod color;
 pub mod content;
 pub mod document;
+pub mod error;
 pub mod filters;
 pub mod font;
 pub mod graphics;
@@ -23,9 +23,9 @@ pub mod metadata;
 pub mod object;
 pub mod parser;
 pub mod refine;
-pub mod security;
 #[cfg(test)]
 mod schema_tests;
+pub mod security;
 
 extern crate chardetng;
 
@@ -34,12 +34,12 @@ pub use arena::{PdfArena, RemappingTable};
 pub use document::Document;
 pub use document::page::Page;
 
+pub use ferruginous_macros::FromPdfObject;
 pub use graphics::{
     BlendMode, Color, LineCap, LineJoin, Matrix, PixelFormat, StrokeStyle, WindingRule,
 };
 pub use handle::Handle;
 pub use ingest::Ingestor;
-pub use object::{FromPdfObject, Object, PdfName, PdfSchema, Reference};
-pub use ferruginous_macros::FromPdfObject;
+pub use object::{FromPdfObject, Object, PdfName, PdfSchema, Reference, SublimatedData};
 
 pub use error::{PdfError, PdfResult};

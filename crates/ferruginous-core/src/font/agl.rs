@@ -4,26 +4,33 @@
 
 /// Maps a glyph name to its corresponding Unicode string.
 pub fn lookup(name: &str) -> Option<String> {
-    if let Some(s) = lookup_pattern(name) { return Some(s); }
+    if let Some(s) = lookup_pattern(name) {
+        return Some(s);
+    }
     lookup_agl(name)
 }
 
 fn lookup_pattern(name: &str) -> Option<String> {
     if name.starts_with("uni") && name.len() >= 7 {
         if let Ok(val) = u32::from_str_radix(&name[3..7], 16)
-            && let Some(c) = std::char::from_u32(val) {
+            && let Some(c) = std::char::from_u32(val)
+        {
             return Some(c.to_string());
         }
-    } else if name.starts_with('u') && name.len() >= 5
+    } else if name.starts_with('u')
+        && name.len() >= 5
         && let Ok(val) = u32::from_str_radix(&name[1..], 16)
-        && let Some(c) = std::char::from_u32(val) {
+        && let Some(c) = std::char::from_u32(val)
+    {
         return Some(c.to_string());
     }
     None
 }
 
 fn lookup_agl(name: &str) -> Option<String> {
-    if let Some(s) = lookup_agl_standard(name) { return Some(s); }
+    if let Some(s) = lookup_agl_standard(name) {
+        return Some(s);
+    }
     lookup_agl_extended(name)
 }
 
@@ -96,6 +103,12 @@ fn lookup_agl_extended(name: &str) -> Option<String> {
         "quotehook" => Some("\u{02BB}".to_string()),
         "trademark" => Some("\u{2122}".to_string()),
         "euro" => Some("\u{20AC}".to_string()),
-        _ => if name.len() == 1 { Some(name.to_string()) } else { None }
+        _ => {
+            if name.len() == 1 {
+                Some(name.to_string())
+            } else {
+                None
+            }
+        }
     }
 }

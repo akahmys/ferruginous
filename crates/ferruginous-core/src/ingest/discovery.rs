@@ -1,9 +1,9 @@
-use crate::arena::PdfArena;
-use crate::handle::Handle;
-use crate::object::Object;
-use crate::font::FontResource;
 use crate::Document;
 use crate::PdfName;
+use crate::arena::PdfArena;
+use crate::font::FontResource;
+use crate::handle::Handle;
+use crate::object::Object;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -16,11 +16,11 @@ pub fn discover_fonts(arena: &PdfArena, doc: &Document) -> BTreeMap<u32, Arc<Fon
 
     for handle in arena.all_dict_handles() {
         if let Some(dict) = arena.get_dict(handle) {
-            let is_font = dict.get(&type_key).and_then(|o| o.resolve(arena).as_name()) == Some(font_val)
+            let is_font = dict.get(&type_key).and_then(|o| o.resolve(arena).as_name())
+                == Some(font_val)
                 || (dict.contains_key(&base_font_key) && dict.contains_key(&subtype_key));
-            
-            if is_font
-                && let Ok(font_res) = FontResource::load(&dict, doc) {
+
+            if is_font && let Ok(font_res) = FontResource::load(&dict, doc) {
                 cache.insert(handle.index(), Arc::new(font_res));
             }
         }
@@ -28,7 +28,10 @@ pub fn discover_fonts(arena: &PdfArena, doc: &Document) -> BTreeMap<u32, Arc<Fon
     cache
 }
 
-pub fn map_stream_contexts(arena: &PdfArena, fonts: &BTreeMap<u32, Arc<FontResource>>) -> BTreeMap<u32, BTreeMap<String, Arc<FontResource>>> {
+pub fn map_stream_contexts(
+    arena: &PdfArena,
+    fonts: &BTreeMap<u32, Arc<FontResource>>,
+) -> BTreeMap<u32, BTreeMap<String, Arc<FontResource>>> {
     let mut contexts = BTreeMap::new();
     let type_key = arena.name("Type");
     let page_val = arena.name("Page");
@@ -40,9 +43,11 @@ pub fn map_stream_contexts(arena: &PdfArena, fonts: &BTreeMap<u32, Arc<FontResou
 
     for handle in arena.all_dict_handles() {
         if let Some(dict) = arena.get_dict(handle) {
-            let is_page = dict.get(&type_key).and_then(|o| o.resolve(arena).as_name()) == Some(page_val);
-            let is_form = dict.get(&subtype_key).and_then(|o| o.resolve(arena).as_name()) == Some(form_val);
-            
+            let is_page =
+                dict.get(&type_key).and_then(|o| o.resolve(arena).as_name()) == Some(page_val);
+            let is_form =
+                dict.get(&subtype_key).and_then(|o| o.resolve(arena).as_name()) == Some(form_val);
+
             if (is_page || is_form)
                 && let Some(res_obj) = dict.get(&resources_key)
                 && let Some(res_dict_h) = res_obj.resolve(arena).as_dict_handle()
@@ -55,13 +60,20 @@ pub fn map_stream_contexts(arena: &PdfArena, fonts: &BTreeMap<u32, Arc<FontResou
                 for (res_name_h, font_obj) in f_dict {
                     if let Some(res_name) = arena.get_name(res_name_h)
                         && let Some(font_dict_h) = font_obj.resolve(arena).as_dict_handle()
-                        && let Some(font_res) = fonts.get(&font_dict_h.index()) {
+                        && let Some(font_res) = fonts.get(&font_dict_h.index())
+                    {
                         context_fonts.insert(res_name.as_str().to_string(), font_res.clone());
                     }
                 }
-                
+
                 if is_page {
-                    associate_page_streams(arena, &dict, &contents_key, context_fonts, &mut contexts);
+                    associate_page_streams(
+                        arena,
+                        &dict,
+                        &contents_key,
+                        context_fonts,
+                        &mut contexts,
+                    );
                 } else {
                     associate_form_stream(arena, handle, context_fonts, &mut contexts);
                 }
@@ -81,15 +93,23 @@ fn associate_page_streams(
     if let Some(contents) = dict.get(contents_key) {
         let resolved = contents.resolve(arena);
         match resolved {
-            Object::Reference(h) => { contexts.insert(h.index(), context_fonts); }
-            Object::Stream(h, _) => { contexts.insert(h.index(), context_fonts); }
+            Object::Reference(h) => {
+                contexts.insert(h.index(), context_fonts);
+            }
+            Object::Stream(h, _) => {
+                contexts.insert(h.index(), context_fonts);
+            }
             Object::Array(ah) => {
                 if let Some(arr) = arena.get_array(ah) {
                     for item in arr {
                         let res_item = item.resolve(arena);
                         match res_item {
-                            Object::Reference(h) => { contexts.insert(h.index(), context_fonts.clone()); }
-                            Object::Stream(h, _) => { contexts.insert(h.index(), context_fonts.clone()); }
+                            Object::Reference(h) => {
+                                contexts.insert(h.index(), context_fonts.clone());
+                            }
+                            Object::Stream(h, _) => {
+                                contexts.insert(h.index(), context_fonts.clone());
+                            }
                             _ => {}
                         }
                     }
@@ -109,7 +129,8 @@ fn associate_form_stream(
     for i in 0..arena.object_count() {
         let h = Handle::new(i);
         if let Some(Object::Stream(dh, _)) = arena.get_object(h)
-            && dh.index() == dict_handle.index() {
+            && dh.index() == dict_handle.index()
+        {
             contexts.insert(h.index(), context_fonts.clone());
         }
     }

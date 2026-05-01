@@ -1,5 +1,5 @@
-use crate::{FromPdfObject, Object};
 use crate::graphics::{BlendMode, LineCap, LineJoin};
+use crate::{FromPdfObject, Object};
 
 /// PDF External Graphics State (ISO 32000-2:2020 Clause 8.4.5)
 #[derive(Debug, Clone, FromPdfObject)]

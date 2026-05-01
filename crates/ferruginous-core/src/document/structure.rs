@@ -17,10 +17,12 @@ pub struct StructTreeRoot {
 #[derive(Debug, Clone, FromPdfObject)]
 #[pdf_dict(clause = "14.7.3")]
 pub struct StructElement {
+    /// The structure type (/S key). Optional here because malformed real-world PDFs
+    /// may omit /S or /P — the auditor skips such elements gracefully.
     #[pdf_key("S")]
-    pub subtype: Handle<PdfName>,
+    pub subtype: Option<Handle<PdfName>>,
     #[pdf_key("P")]
-    pub parent: Handle<BTreeMap<Handle<PdfName>, Object>>,
+    pub parent: Option<Handle<BTreeMap<Handle<PdfName>, Object>>>,
     #[pdf_key("K")]
     pub kids: Option<Object>,
     #[pdf_key("Alt")]

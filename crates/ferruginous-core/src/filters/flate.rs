@@ -16,12 +16,10 @@ impl DecodingFilter for FlateFilter {
         let mut decoder = ZlibDecoder::new(input);
         let mut decoded = Vec::new();
 
-        decoder
-            .read_to_end(&mut decoded)
-            .map_err(|e| PdfError::Filter {
-                filter: "FlateDecode".into(),
-                message: format!("Flate decompression failed: {}", e).into(),
-            })?;
+        decoder.read_to_end(&mut decoded).map_err(|e| PdfError::Filter {
+            filter: "FlateDecode".into(),
+            message: format!("Flate decompression failed: {}", e).into(),
+        })?;
 
         // Apply predictors if present in DecodeParms
         if let Some(p) = params {

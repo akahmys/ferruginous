@@ -4,16 +4,14 @@
 //! allowing downstream components to render or analyze documents without parsing
 //! raw PostScript-style tokens.
 
-use kurbo::{Affine, BezPath, Point};
+use kurbo::{Affine, Point};
 use serde::{Deserialize, Serialize};
 pub mod parser;
-use crate::graphics::{Color, WindingRule, StrokeStyle, TextRenderingMode};
-use crate::handle::Handle;
+use crate::graphics::{Color, StrokeStyle, TextRenderingMode, WindingRule};
 use crate::object::{Object, PdfName};
-use crate::font::FontResource;
 
 /// A high-level, normalized drawing command.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Command {
     // --- Graphics State ---
     /// Push the current graphics state onto the stack (q).
@@ -22,7 +20,7 @@ pub enum Command {
     PopState,
     /// Concatenate a transformation matrix (cm).
     Transform(Affine),
-    
+
     // --- Path Construction ---
     /// Begin a new subpath (m).
     MoveTo(Point),
@@ -57,9 +55,14 @@ pub enum Command {
         /// Optical size in points.
         size: f64,
     },
-    /// Show a string of text (Tj, TJ).
-    /// The string is GUARANTEED to be UTF-8 normalized.
-    ShowText(String),
+    /// Show a string of text (Tj, ', ").
+    /// Holds the RAW bytes from the PDF content stream.
+    ShowText(bytes::Bytes),
+    /// Show an array of text strings and numeric offsets (TJ).
+    ///
+    /// Preserving these offsets is critical for correct vertical text layout and
+    /// ruby character positioning in Japanese documents.
+    ShowTextArray(Vec<TextArrayItem>),
     /// Move the text position (Td, TD, T*).
     MoveText(Point),
     /// Set the text matrix (Tm).
@@ -87,12 +90,7 @@ pub enum Command {
     /// Draw an external object (Do).
     DrawXObject(String),
     /// Define an inline image (BI...ID...EI).
-    DrawInlineImage {
-        width: u32,
-        height: u32,
-        format: crate::graphics::PixelFormat,
-        data: Vec<u8>,
-    },
+    DrawInlineImage { width: u32, height: u32, format: crate::graphics::PixelFormat, data: Vec<u8> },
 
     // --- Compatibility & Extensions ---
     /// Begin a marked-content sequence (BMC, BDC).
@@ -102,10 +100,19 @@ pub enum Command {
     },
     /// End a marked-content sequence (EMC).
     EndMarkedContent,
-    
+
     /// A raw PDF operator that could not be sublimated.
-    RawOperator {
-        name: String,
-        operands: Vec<Object>,
-    },
+    RawOperator { name: String, operands: Vec<Object> },
+}
+
+/// An item in a text array (TJ).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum TextArrayItem {
+    /// A string of text (bytes).
+    Text(bytes::Bytes),
+    /// A numeric offset for kerning or precise positioning.
+    ///
+    /// Positive values move characters closer (UP in vertical mode),
+    /// negative values move them further apart (DOWN in vertical mode).
+    Offset(f64),
 }

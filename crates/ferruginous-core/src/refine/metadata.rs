@@ -13,43 +13,63 @@ pub fn info_to_xmp(info: &BTreeMap<PdfName, RefinedObject>) -> String {
     if let Some(obj) = info.get(&PdfName::new("Title")) {
         let val = match obj {
             RefinedObject::Text(s) => s.clone(),
-            RefinedObject::String(s) | RefinedObject::Hex(s) => crate::refine::text::recover_string(s),
+            RefinedObject::String(s) | RefinedObject::Hex(s) => {
+                crate::refine::text::recover_string(s)
+            }
             _ => "".into(),
         };
-        if !val.is_empty() { writer.title([(None, val.as_str())]); }
+        if !val.is_empty() {
+            writer.title([(None, val.as_str())]);
+        }
     }
     if let Some(obj) = info.get(&PdfName::new("Author")) {
         let val = match obj {
             RefinedObject::Text(s) => s.clone(),
-            RefinedObject::String(s) | RefinedObject::Hex(s) => crate::refine::text::recover_string(s),
+            RefinedObject::String(s) | RefinedObject::Hex(s) => {
+                crate::refine::text::recover_string(s)
+            }
             _ => "".into(),
         };
-        if !val.is_empty() { writer.creator([val.as_str()]); }
+        if !val.is_empty() {
+            writer.creator([val.as_str()]);
+        }
     }
     if let Some(obj) = info.get(&PdfName::new("Subject")) {
         let val = match obj {
             RefinedObject::Text(s) => s.clone(),
-            RefinedObject::String(s) | RefinedObject::Hex(s) => crate::refine::text::recover_string(s),
+            RefinedObject::String(s) | RefinedObject::Hex(s) => {
+                crate::refine::text::recover_string(s)
+            }
             _ => "".into(),
         };
-        if !val.is_empty() { writer.description([(None, val.as_str())]); }
+        if !val.is_empty() {
+            writer.description([(None, val.as_str())]);
+        }
     }
 
     if let Some(obj) = info.get(&PdfName::new("Keywords")) {
         let val = match obj {
             RefinedObject::Text(s) => s.clone(),
-            RefinedObject::String(s) | RefinedObject::Hex(s) => crate::refine::text::recover_string(s),
+            RefinedObject::String(s) | RefinedObject::Hex(s) => {
+                crate::refine::text::recover_string(s)
+            }
             _ => "".into(),
         };
-        if !val.is_empty() { writer.pdf_keywords(val.as_str()); }
+        if !val.is_empty() {
+            writer.pdf_keywords(val.as_str());
+        }
     }
     if let Some(obj) = info.get(&PdfName::new("Producer")) {
         let val = match obj {
             RefinedObject::Text(s) => s.clone(),
-            RefinedObject::String(s) | RefinedObject::Hex(s) => crate::refine::text::recover_string(s),
+            RefinedObject::String(s) | RefinedObject::Hex(s) => {
+                crate::refine::text::recover_string(s)
+            }
             _ => "".into(),
         };
-        if !val.is_empty() { writer.producer(val.as_str()); }
+        if !val.is_empty() {
+            writer.producer(val.as_str());
+        }
     }
 
     writer.finish(None)

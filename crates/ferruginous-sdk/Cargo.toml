@@ -14,11 +14,14 @@ kurbo = { workspace = true }
 thiserror.workspace = true
 serde.workspace = true
 bytes = { workspace = true }
+ttf-parser = { workspace = true }
+skrifa = { workspace = true }
 roxmltree = { workspace = true }
 image = "0.25"
 tokio = { workspace = true }
 pollster = "0.3"
 flate2 = { workspace = true }
+lopdf = { workspace = true }
 chrono = { workspace = true }
 
 [dev-dependencies]

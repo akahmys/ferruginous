@@ -59,6 +59,7 @@ impl Interpreter<'_> {
             && let Some(rule) = self.pending_clip.take()
         {
             self.backend.push_clip(&p, rule);
+            self.state.clip_count += 1;
         }
 
         Ok(())

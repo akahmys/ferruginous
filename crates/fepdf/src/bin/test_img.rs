@@ -1,30 +1,65 @@
-use ferruginous_core::{Document, PdfName, Object};
+use ferruginous_core::Object;
+use ferruginous_sdk::PdfDocument;
 use std::fs;
 
 fn main() {
-    let data = fs::read("/Users/jun/Downloads/converted/bokutokitan.pdf").unwrap();
-    let doc = Document::parse(&data).unwrap();
-    let pages = doc.pages().unwrap();
-    let page2 = doc.arena().get_dict(pages[1]).unwrap();
-    let res_key = doc.arena().intern_name(PdfName::new("Resources"));
-    let xobj_key = doc.arena().intern_name(PdfName::new("XObject"));
-    if let Some(res) = page2.get(&res_key).and_then(|o| o.resolve(doc.arena()).as_dict(doc.arena())) {
-        if let Some(xobj) = res.get(&xobj_key).and_then(|o| o.resolve(doc.arena()).as_dict(doc.arena())) {
-            for (k, v) in xobj.iter() {
-                let name = doc.arena().get_name(*k).unwrap().as_str();
-                println!("XObject: {}", name);
-                let obj = v.resolve(doc.arena());
-                if let Object::Stream(dh, _) = obj {
-                    let dict = doc.arena().get_dict(dh).unwrap();
-                    for (dk, dv) in dict.iter() {
-                        let dv_res = dv.resolve(doc.arena());
-                        let val_str = match dv_res {
-                            Object::Integer(i) => i.to_string(),
-                            Object::Name(n) => doc.arena().get_name(n).unwrap().as_str().to_string(),
-                            Object::Array(a) => format!("Array of len {}", doc.arena().get_array(a).unwrap().len()),
-                            _ => format!("{:?}", dv_res),
-                        };
-                        println!("  {} = {}", doc.arena().get_name(*dk).unwrap().as_str(), val_str);
+    let data = fs::read("samples/nihonkokukenpou.pdf").expect("Failed to read sample PDF");
+    let doc = PdfDocument::open(bytes::Bytes::from(data)).unwrap();
+    let page_count = doc.page_count().unwrap();
+
+    // Test page 2 (index 1)
+    if page_count < 2 {
+        println!("Document has only {} pages", page_count);
+        return;
+    }
+
+    let page = doc.inner().get_page(1).unwrap();
+    let arena = doc.inner().arena();
+
+    let res_obj = page.resolve_attribute("Resources");
+    let xobj_key = arena.name("XObject");
+
+    if let Some(Object::Dictionary(rh)) = res_obj {
+        if let Some(res_dict) = arena.get_dict(rh) {
+            if let Some(xobj_val) = res_dict.get(&xobj_key) {
+                let xobj_resolved = xobj_val.resolve(arena);
+                if let Object::Dictionary(xh) = xobj_resolved {
+                    if let Some(xobj_dict) = arena.get_dict(xh) {
+                        for (k, v) in xobj_dict {
+                            let name = arena
+                                .get_name(k.clone())
+                                .map(|n| n.as_str().to_string())
+                                .unwrap_or_default();
+                            println!("XObject: {}", name);
+                            let obj = v.resolve(arena);
+                            if let Object::Stream(dh, _) = obj {
+                                if let Some(dict) = arena.get_dict(dh) {
+                                    for (dk, dv) in dict {
+                                        let dv_res = dv.resolve(arena);
+                                        let dk_name = arena
+                                            .get_name(dk.clone())
+                                            .map(|n| n.as_str().to_string())
+                                            .unwrap_or_default();
+                                        let val_str = match dv_res {
+                                            Object::Integer(i) => i.to_string(),
+                                            Object::Name(n) => arena
+                                                .get_name(n)
+                                                .map(|name| name.as_str().to_string())
+                                                .unwrap_or_default(),
+                                            Object::Array(a) => format!(
+                                                "Array of len {}",
+                                                arena
+                                                    .get_array(a)
+                                                    .map(|arr| arr.len())
+                                                    .unwrap_or(0)
+                                            ),
+                                            _ => format!("{:?}", dv_res),
+                                        };
+                                        println!("  {} = {}", dk_name, val_str);
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }

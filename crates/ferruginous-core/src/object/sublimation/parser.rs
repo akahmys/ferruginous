@@ -1,9 +1,9 @@
 //! Sublimation parser for PDF Content Streams.
 
-use crate::lexer::{Lexer, Token};
-use crate::sublimation::Command;
-use crate::graphics::{Color, WindingRule, StrokeStyle, LineCap, LineJoin, TextRenderingMode};
+use super::Command;
 use crate::font::FontResource;
+use crate::graphics::{Color, LineCap, LineJoin, StrokeStyle, TextRenderingMode, WindingRule};
+use crate::lexer::{Lexer, Token};
 use crate::object::{Object, PdfName};
 use kurbo::{Affine, Point, Rect};
 use std::collections::BTreeMap;
@@ -17,14 +17,8 @@ pub struct Sublimator<'a> {
 }
 
 impl<'a> Sublimator<'a> {
-    pub fn new(
-        fonts: &'a BTreeMap<String, Arc<FontResource>>,
-    ) -> Self {
-        Self {
-            fonts,
-            stack: Vec::new(),
-            current_font: None,
-        }
+    pub fn new(fonts: &'a BTreeMap<String, Arc<FontResource>>) -> Self {
+        Self { fonts, stack: Vec::new(), current_font: None }
     }
 
     pub fn sublimate(&mut self, data: &[u8]) -> Vec<Command> {
@@ -32,7 +26,9 @@ impl<'a> Sublimator<'a> {
         let mut lexer = Lexer::new(bytes::Bytes::copy_from_slice(data));
 
         while let Ok(token) = lexer.next_token() {
-            if token == Token::EOF { break; }
+            if token == Token::EOF {
+                break;
+            }
 
             match token {
                 Token::Keyword(kw) => {
@@ -45,13 +41,28 @@ impl<'a> Sublimator<'a> {
         }
 
         if let Some(res) = &self.current_font {
-            commands.insert(0, Command::SetWritingMode(res.wmode));
+            commands.insert(0, Command::SetWritingMode(res.wmode as u8));
         }
 
         commands
     }
 
     fn handle_operator(&mut self, op: &str) -> Option<Command> {
+        match op {
+            "q" | "Q" | "cm" | "m" | "l" | "c" | "h" | "re" | "f" | "F" | "f*" | "S" | "s"
+            | "B" | "B*" | "b" | "b*" | "W" | "W*" | "Do" => self.handle_graphics_op(op),
+            "BT" | "ET" | "Tf" | "Tj" | "'" | "\"" | "TJ" | "Td" | "TD" | "Tm" | "Tc" | "Tw"
+            | "Tz" | "Tr" | "Ts" => self.handle_text_op(op),
+            "rg" | "RG" | "k" | "K" | "g" | "G" => self.handle_color_op(op),
+            "BMC" | "BDC" | "EMC" => self.handle_marked_content_op(op),
+            _ => {
+                let operands = self.stack.drain(..).map(token_to_object).collect();
+                Some(Command::RawOperator { name: op.to_string(), operands })
+            }
+        }
+    }
+
+    fn handle_graphics_op(&mut self, op: &str) -> Option<Command> {
         match op {
             "q" => Some(Command::PushState),
             "Q" => Some(Command::PopState),
@@ -65,7 +76,6 @@ impl<'a> Sublimator<'a> {
             "f*" => Some(Command::Fill(WindingRule::EvenOdd)),
             "S" => self.create_stroke().map(Command::Stroke),
             "s" => {
-                // close and stroke
                 self.handle_operator("h");
                 self.create_stroke().map(Command::Stroke)
             }
@@ -81,33 +91,50 @@ impl<'a> Sublimator<'a> {
             }
             "W" => Some(Command::Clip(WindingRule::NonZero)),
             "W*" => Some(Command::Clip(WindingRule::EvenOdd)),
+            "Do" => self.pop_name().map(|n| Command::DrawXObject(n.as_str().to_string())),
+            _ => None,
+        }
+    }
+
+    fn handle_text_op(&mut self, op: &str) -> Option<Command> {
+        match op {
             "BT" => Some(Command::BeginText),
             "ET" => Some(Command::EndText),
             "Tf" => self.handle_font_selection(),
             "Tj" | "'" | "\"" => self.handle_show_text(),
             "TJ" => self.handle_show_text_array(),
             "Td" => self.pop_point().map(Command::MoveText),
-            "TD" => self.pop_point().map(Command::MoveText), // Note: TD also sets leading, simplified here
+            "TD" => self.pop_point().map(Command::MoveText),
             "Tm" => self.pop_affine().map(Command::SetTextMatrix),
             "Tc" => self.pop_f64().map(Command::SetCharSpacing),
             "Tw" => self.pop_f64().map(Command::SetWordSpacing),
             "Tz" => self.pop_f64().map(Command::SetHorizontalScaling),
             "Tr" => self.pop_i64().map(|i| Command::SetTextRenderMode(TextRenderingMode::from(i))),
             "Ts" => self.pop_f64().map(Command::SetTextRise),
+            _ => None,
+        }
+    }
+
+    fn handle_color_op(&mut self, op: &str) -> Option<Command> {
+        match op {
             "rg" => self.pop_rgb().map(Command::SetFillColor),
             "RG" => self.pop_rgb().map(Command::SetStrokeColor),
             "k" => self.pop_cmyk().map(Command::SetFillColor),
             "K" => self.pop_cmyk().map(Command::SetStrokeColor),
             "g" => self.pop_f64().map(|g| Command::SetFillColor(Color::Gray(g))),
             "G" => self.pop_f64().map(|g| Command::SetStrokeColor(Color::Gray(g))),
-            "Do" => self.pop_name().map(|n| Command::DrawXObject(n.as_str().to_string())),
-            "BMC" => self.pop_name().map(|n| Command::BeginMarkedContent { tag: n, properties: None }),
+            _ => None,
+        }
+    }
+
+    fn handle_marked_content_op(&mut self, op: &str) -> Option<Command> {
+        match op {
+            "BMC" => {
+                self.pop_name().map(|n| Command::BeginMarkedContent { tag: n, properties: None })
+            }
             "BDC" => self.handle_bdc(),
             "EMC" => Some(Command::EndMarkedContent),
-            _ => {
-                let operands = self.stack.drain(..).map(token_to_object).collect();
-                Some(Command::RawOperator { name: op.to_string(), operands })
-            }
+            _ => None,
         }
     }
 
@@ -177,7 +204,7 @@ impl<'a> Sublimator<'a> {
 
     fn pop_name(&mut self) -> Option<PdfName> {
         match self.stack.pop() {
-            Some(Token::Name(b)) => Some(PdfName(b)),
+            Some(Token::Name(b)) => Some(PdfName::from_bytes(&b)),
             _ => None,
         }
     }
@@ -196,7 +223,7 @@ impl<'a> Sublimator<'a> {
         let size = self.pop_f64()?;
         let name = self.pop_name()?;
         let name_str = name.as_str();
-        
+
         if let Some(font_res) = self.fonts.get(name_str) {
             self.current_font = Some(font_res.clone());
             Some(Command::SetFont { font: name_str.to_string(), size })
@@ -207,44 +234,54 @@ impl<'a> Sublimator<'a> {
 
     fn handle_show_text(&mut self) -> Option<Command> {
         let token = self.stack.pop()?;
-        let font = self.current_font.as_ref()?;
-        let utf8 = self.decode_text_token(&token, font);
-        Some(Command::ShowText(utf8))
+        match token {
+            Token::String(b) | Token::Hex(b) => Some(Command::ShowText(b)),
+            _ => None,
+        }
     }
 
     fn handle_show_text_array(&mut self) -> Option<Command> {
-        let mut result = String::new();
-        let font = self.current_font.as_ref()?;
-        
         let mut items = Vec::new();
         while let Some(t) = self.stack.pop() {
-            if t == Token::LeftArray { break; }
+            if t == Token::LeftArray {
+                break;
+            }
             items.push(t);
         }
         items.reverse();
 
+        let mut array_items = Vec::new();
         for t in items {
             match t {
-                Token::String(_) | Token::Hex(_) => {
-                    result.push_str(&self.decode_text_token(&t, font));
+                Token::String(b) | Token::Hex(b) => {
+                    array_items.push(super::TextArrayItem::Text(b));
+                }
+                Token::Integer(i) => {
+                    array_items.push(super::TextArrayItem::Offset(i as f64));
+                }
+                Token::Real(f) => {
+                    array_items.push(super::TextArrayItem::Offset(f));
                 }
                 _ => {}
             }
         }
-        Some(Command::ShowText(result))
+        Some(Command::ShowTextArray(array_items))
     }
 
+    #[allow(dead_code)]
     fn decode_text_token(&self, token: &Token, font: &FontResource) -> String {
         let bytes = match token {
             Token::String(b) | Token::Hex(b) => b,
             _ => return String::new(),
         };
-        
+
         let mut result = String::new();
         let mut i = 0;
         while i < bytes.len() {
             let (consumed, unicode) = font.decode_next(&bytes[i..]);
-            if consumed == 0 { break; }
+            if consumed == 0 {
+                break;
+            }
             if let Some(u) = unicode {
                 result.push_str(&u);
             }
@@ -254,7 +291,7 @@ impl<'a> Sublimator<'a> {
     }
 
     fn handle_bdc(&mut self) -> Option<Command> {
-        let _props = self.stack.pop(); 
+        let _props = self.stack.pop();
         let tag = self.pop_name()?;
         Some(Command::BeginMarkedContent { tag, properties: None })
     }
@@ -267,7 +304,7 @@ fn token_to_object(token: Token) -> Object {
         Token::Real(f) => Object::Real(f),
         Token::String(b) => Object::String(b),
         Token::Hex(b) => Object::Hex(b),
-        Token::Name(b) => Object::Name(crate::handle::Handle::new(0)), // Names are placeholders in IR operands
+        Token::Name(_b) => Object::Name(crate::handle::Handle::new(0)), // Names are placeholders in IR operands
         Token::Null => Object::Null,
         _ => Object::Null,
     }

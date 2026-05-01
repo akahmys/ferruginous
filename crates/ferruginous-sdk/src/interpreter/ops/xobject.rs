@@ -21,9 +21,15 @@ impl Interpreter<'_> {
                     .get_name(sub)
                     .ok_or_else(|| PdfError::Other("Subtype name not found".into()))?;
                 let sub_str = sub_name.as_str();
+                let sd = if let Object::Stream(_, ref sd) = xobj {
+                    sd
+                } else {
+                    return Ok(());
+                };
+                let bytes = self.doc.arena().get_stream_bytes(sd)?;
                 match sub_str {
-                    "Image" => self.render_image_xobject(&dict, &data)?,
-                    "Form" => self.render_form_xobject(&dict, &data)?,
+                    "Image" => self.render_image_xobject(&dict, &bytes)?,
+                    "Form" => self.render_form_xobject(&dict, &bytes)?,
                     _ => {}
                 }
             }
@@ -69,7 +75,7 @@ impl Interpreter<'_> {
         }
 
         // 4. Recursive Execute
-        self.execute(&decoded)?;
+        self.execute_raw(&decoded)?;
 
         // 5. Cleanup
         if pushed {
@@ -103,7 +109,26 @@ impl Interpreter<'_> {
         )
         .unwrap_or(0);
         let decoded = self.doc.arena().process_filters(data, dict)?;
-        self.backend.draw_image(&decoded, w, h, ferruginous_core::graphics::PixelFormat::Rgb8);
+
+        let cs_key = self.doc.arena().intern_name(PdfName::new("ColorSpace"));
+        let format = match dict.get(&cs_key).and_then(|o| o.resolve(self.doc.arena()).as_name()) {
+            Some(h) => {
+                let name = self
+                    .doc
+                    .arena()
+                    .get_name(h)
+                    .map(|n| n.as_str().to_string())
+                    .unwrap_or_default();
+                match name.as_str() {
+                    "DeviceGray" => ferruginous_core::graphics::PixelFormat::Gray8,
+                    "DeviceCMYK" => ferruginous_core::graphics::PixelFormat::Cmyk8,
+                    _ => ferruginous_core::graphics::PixelFormat::Rgb8,
+                }
+            }
+            _ => ferruginous_core::graphics::PixelFormat::Rgb8,
+        };
+
+        self.backend.draw_image(&decoded, w, h, format);
         Ok(())
     }
 }

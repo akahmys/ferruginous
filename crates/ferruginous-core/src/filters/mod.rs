@@ -22,10 +22,45 @@ pub fn decode_stream(
     params: Option<&Object>,
     arena: &PdfArena,
 ) -> PdfResult<Bytes> {
+    // Heuristic: Check for Zstd magic number (28 B5 2F FD)
+    // This handles "Lie Filters" where the dict says Flate but the data is Zstd.
+    if input.starts_with(&[0x28, 0xB5, 0x2F, 0xFD]) {
+        let decoded = zstd::decode_all(input).map_err(|e| PdfError::Filter {
+            filter: "Zstd(Heuristic)".into(),
+            message: e.to_string().into(),
+        })?;
+        return Ok(Bytes::from(decoded));
+    }
+
     match filter_name {
         "FlateDecode" | "Fl" => {
             let decoder = flate::FlateFilter;
             decoder.decode(input, params, arena)
+        }
+        "ZstandardDecode" | "Zstd" => {
+            let decoded = zstd::decode_all(input).map_err(|e| PdfError::Filter {
+                filter: filter_name.to_string().into(),
+                message: e.to_string().into(),
+            })?;
+            Ok(Bytes::from(decoded))
+        }
+        "DCTDecode" | "DCT" => {
+            use image::ImageReader;
+            use std::io::Cursor;
+            let img = ImageReader::new(Cursor::new(input))
+                .with_guessed_format()
+                .map_err(|e| PdfError::Filter {
+                    filter: "DCTDecode".into(),
+                    message: format!("Failed to read JPEG: {}", e).into(),
+                })?
+                .decode()
+                .map_err(|e| PdfError::Filter {
+                    filter: "DCTDecode".into(),
+                    message: format!("Failed to decode JPEG: {}", e).into(),
+                })?;
+
+            let bytes = img.to_rgb8().into_raw();
+            Ok(Bytes::from(bytes))
         }
         _ => Err(PdfError::Filter {
             filter: filter_name.to_string().into(),

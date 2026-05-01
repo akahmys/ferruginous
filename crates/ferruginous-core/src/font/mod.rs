@@ -4,8 +4,20 @@ pub mod agl;
 pub mod cmap;
 pub mod reconstruction;
 pub use reconstruction::FontReconstructor;
-pub mod subset;
 pub mod schema;
+pub mod subset;
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
+pub enum FallbackFontType {
+    Default,
+    SansSerif,
+    Serif,
+    Monospace,
+    JapaneseSans,
+    JapaneseSerif,
+}
 
 use crate::{Document, Object, PdfArena, PdfError, PdfName, PdfResult};
 use std::collections::BTreeMap;
@@ -29,6 +41,7 @@ pub struct FontResource {
     pub cid_to_gid_map: Option<Vec<u16>>,
     pub data: Option<Arc<Vec<u8>>>,
     pub font_descriptor: Option<Handle<Object>>,
+    pub font_file_handle: Option<Handle<Object>>,
     pub is_legacy_distiller: bool,
     /// Unified mapping: UTF-8 String -> GID
     /// This is used during Arena Expansion for restructuring content streams.
@@ -38,6 +51,8 @@ pub struct FontResource {
     pub reverse_adj1_mapping: Option<BTreeMap<String, u32>>,
     /// Mapping discovered during content stream scanning (Original Bytes -> Unicode)
     pub discovered_mappings: Arc<std::sync::Mutex<BTreeMap<Vec<u8>, String>>>,
+    /// Mapping from Unicode characters to internal Glyph IDs (GIDs) from the font file
+    pub fallback_type: Option<FallbackFontType>,
     /// Mapping from Unicode characters to internal Glyph IDs (GIDs) from the font file
     pub unicode_to_gid: BTreeMap<char, u32>,
     /// Reconstructed SFNT data with injected metrics.
@@ -58,6 +73,7 @@ struct DescendantResult {
     base_font: Option<PdfName>,
     font_data: Option<Vec<u8>>,
     font_descriptor: Option<Handle<Object>>,
+    font_file_handle: Option<Handle<Object>>,
     cid_to_gid_map: Option<Vec<u16>>,
     metrics: FontMetrics,
 }
@@ -75,6 +91,8 @@ pub struct FontSummary {
     pub is_subset: bool,
     /// The character encoding used by the font.
     pub encoding: String,
+    /// Whether the font has a ToUnicode mapping.
+    pub has_to_unicode: bool,
 }
 
 impl FontResource {
@@ -84,33 +102,48 @@ impl FontResource {
         let subtype = Self::extract_subtype(dict, arena)?;
         let mut base_font = Self::extract_base_font(dict, arena);
 
-        let font_data = dict.get(&arena.name("FontDescriptor")).and_then(|o| Self::extract_font_data(o, doc));
+        let font_data =
+            dict.get(&arena.name("FontDescriptor")).and_then(|o| Self::extract_font_data(o, doc));
         let to_unicode = Self::parse_to_unicode(dict, doc);
         let encoding = Self::parse_encoding(dict, doc);
 
-        let mut metrics = FontMetrics::default();
-        let mut font_descriptor = dict.get(&arena.name("FontDescriptor")).and_then(|o| o.as_reference());
+        let metrics;
+        let mut font_descriptor =
+            dict.get(&arena.name("FontDescriptor")).and_then(|o| o.as_reference());
+        let mut font_file_handle = None;
         let mut cid_to_gid_map = None;
-        let mut font_data_final = font_data;
+        let font_data_final;
 
-        if subtype.as_str() == "Type0" || subtype.as_str() == "CIDFontType0" || subtype.as_str() == "CIDFontType2" {
+        if subtype.as_str() == "Type0"
+            || subtype.as_str() == "CIDFontType0"
+            || subtype.as_str() == "CIDFontType2"
+        {
             if let Some(res) = Self::parse_descendant_font(dict, doc) {
-                if base_font.as_str() == "Untitled" && let Some(bf) = res.base_font { base_font = bf; }
-                if font_data_final.is_none() { font_data_final = res.font_data; }
-                if font_descriptor.is_none() { font_descriptor = res.font_descriptor; }
+                if base_font.as_str() == "Untitled"
+                    && let Some(bf) = res.base_font
+                {
+                    base_font = bf;
+                }
+                font_data_final = if font_data.is_none() { res.font_data } else { font_data };
+                if font_descriptor.is_none() {
+                    font_descriptor = res.font_descriptor;
+                }
+                font_file_handle = res.font_file_handle;
                 cid_to_gid_map = res.cid_to_gid_map;
                 metrics = res.metrics;
             } else {
                 // If it's a CIDFont directly (not wrapped in Type0), parse its metrics
+                font_data_final = font_data;
                 metrics = Self::parse_cid_metrics(dict, arena);
             }
         } else {
+            font_data_final = font_data;
             metrics = Self::parse_standard_widths(dict, arena);
         }
 
         let mut resource = Self {
-            subtype,
-            base_font,
+            subtype: subtype.clone(),
+            base_font: base_font.clone(),
             first_char: metrics.first,
             last_char: metrics.last,
             widths: metrics.widths,
@@ -122,42 +155,126 @@ impl FontResource {
             cid_to_gid_map,
             data: font_data_final.map(Arc::new),
             font_descriptor,
+            font_file_handle,
             is_legacy_distiller: Self::detect_legacy_distiller(&to_unicode),
             unified_map: BTreeMap::new(),
             adj1_mapping: None,
             reverse_adj1_mapping: None,
             discovered_mappings: Arc::new(std::sync::Mutex::new(BTreeMap::new())),
             unicode_to_gid: BTreeMap::new(),
+            fallback_type: None,
+            reconstructed_data: None,
         };
 
+        resource.fallback_type = Some(resource.infer_fallback_type());
         resource.init_adj1_mapping();
         resource.build_unified_map();
         resource.populate_embedded_unicode_map();
         let _ = resource.perform_reconstruction();
-        
+
         Ok(resource)
+    }
+
+    fn infer_fallback_type(&self) -> FallbackFontType {
+        let name = self.base_font.as_str().to_lowercase();
+        let subtype = self.subtype.as_str();
+        let is_multibyte =
+            subtype == "Type0" || subtype == "CIDFontType0" || subtype == "CIDFontType2";
+
+        if is_multibyte
+            || name.contains("mincho")
+            || name.contains("gothic")
+            || name.contains("hira")
+            || name.contains("koz")
+        {
+            if name.contains("mincho") || name.contains("serif") {
+                return FallbackFontType::JapaneseSerif;
+            }
+            return FallbackFontType::JapaneseSans;
+        }
+
+        if name.contains("mono") || name.contains("courier") {
+            return FallbackFontType::Monospace;
+        }
+        if name.contains("serif")
+            || name.contains("times")
+            || name.contains("century")
+            || name.contains("georgia")
+        {
+            return FallbackFontType::Serif;
+        }
+        if name.contains("sans")
+            || name.contains("arial")
+            || name.contains("helvetica")
+            || name.contains("verdana")
+        {
+            return FallbackFontType::SansSerif;
+        }
+
+        FallbackFontType::Default
     }
 
     /// Surgically patches the embedded font data with PDF metrics.
     pub fn perform_reconstruction(&mut self) -> PdfResult<()> {
         if let Some(ref raw_data) = self.data {
-            let patched = FontReconstructor::reconstruct(self, raw_data)?;
+            let (patched, discovered_map) = FontReconstructor::reconstruct(self, raw_data)?;
             self.reconstructed_data = Some(Arc::new(patched));
+
+            // If the PDF didn't provide a CIDToGIDMap, use the one discovered from the font itself
+            if self.cid_to_gid_map.is_none() && discovered_map.is_some() {
+                self.cid_to_gid_map = discovered_map;
+            }
         }
         Ok(())
     }
 
-    fn populate_embedded_unicode_map(&mut self) {
-        // HARDENING: Populate unicode_to_gid from embedded font data if available
+    pub fn build_unified_map(&mut self) {
+        let mut map: BTreeMap<String, u32> = BTreeMap::new();
+
+        if self.subtype.as_str() != "Type0" {
+            for code in 0..=255 {
+                let (_, uni) = self.decode_via_heuristics(&[code as u8]);
+                if let Some(u) = uni {
+                    map.insert(u, code as u32);
+                }
+            }
+        }
+
+        if let Some(ref tu) = self.to_unicode {
+            for (code, uni) in tu.mappings.iter() {
+                let cid = if code.len() == 2 {
+                    (u32::from(code[0]) << 8) | u32::from(code[1])
+                } else {
+                    code[0] as u32
+                };
+                map.insert(uni.clone(), cid);
+            }
+        }
+
+        self.unified_map = map;
+    }
+
+    pub fn populate_embedded_unicode_map(&mut self) {
+        let mut u2g = BTreeMap::new();
+
+        for (uni, &cid) in &self.unified_map {
+            if let Some(c) = uni.chars().next() {
+                u2g.insert(c, self.to_gid(cid));
+            }
+        }
+
         if let Some(ref arc_data) = self.data
-            && let Ok(face) = ttf_parser::Face::parse(arc_data, 0) {
-            let mut u2g = std::collections::BTreeMap::new();
+            && let Ok(face) = ttf_parser::Face::parse(arc_data, 0)
+        {
             for table in face.tables().cmap.iter().flat_map(|t| t.subtables) {
                 if table.is_unicode() {
                     table.codepoints(|cp| {
                         if let Some(c) = std::char::from_u32(cp)
-                            && let Some(gid) = table.glyph_index(cp) {
-                            u2g.insert(c, gid.0 as u32);
+                            && let Some(gid) = table.glyph_index(cp)
+                        {
+                            // Only insert if not already present or if we are confident
+                            // For subset fonts, ToUnicode (unified_map) is usually more reliable.
+                            u2g.entry(c).or_insert(gid.0 as u32);
                         }
                     });
                 }
@@ -166,11 +283,15 @@ impl FontResource {
         }
     }
 
-    fn extract_subtype(dict: &BTreeMap<Handle<PdfName>, Object>, arena: &PdfArena) -> PdfResult<PdfName> {
-        let subtype_name = dict.get(&arena.name("Subtype"))
+    fn extract_subtype(
+        dict: &BTreeMap<Handle<PdfName>, Object>,
+        arena: &PdfArena,
+    ) -> PdfResult<PdfName> {
+        let subtype_name = dict
+            .get(&arena.name("Subtype"))
             .and_then(|o| o.resolve(arena).as_name())
             .and_then(|h| arena.get_name(h));
-        
+
         subtype_name.ok_or_else(|| PdfError::Other("Missing font subtype".into()))
     }
 
@@ -181,7 +302,10 @@ impl FontResource {
             .unwrap_or_else(|| PdfName::new("Untitled"))
     }
 
-    fn parse_to_unicode(dict: &BTreeMap<Handle<PdfName>, Object>, doc: &Document) -> Option<cmap::CMap> {
+    fn parse_to_unicode(
+        dict: &BTreeMap<Handle<PdfName>, Object>,
+        doc: &Document,
+    ) -> Option<cmap::CMap> {
         let arena = doc.arena();
         dict.get(&arena.name("ToUnicode"))
             .and_then(|tu_obj| doc.decode_stream(&tu_obj.resolve(arena)).ok())
@@ -191,11 +315,17 @@ impl FontResource {
     fn detect_legacy_distiller(to_unicode: &Option<cmap::CMap>) -> bool {
         let Some(tu) = to_unicode else { return false };
         tu.mappings.iter().any(|(code_vec, uni_str)| {
-            code_vec.len() == 1 && code_vec[0] >= 0x20 && code_vec[0] <= 0x7E && uni_str.chars().any(|c| (c as u32) > 0xFF)
+            code_vec.len() == 1
+                && code_vec[0] >= 0x20
+                && code_vec[0] <= 0x7E
+                && uni_str.chars().any(|c| (c as u32) > 0xFF)
         })
     }
 
-    fn parse_encoding(dict: &BTreeMap<Handle<PdfName>, Object>, doc: &Document) -> Option<cmap::CMap> {
+    fn parse_encoding(
+        dict: &BTreeMap<Handle<PdfName>, Object>,
+        doc: &Document,
+    ) -> Option<cmap::CMap> {
         let arena = doc.arena();
         let enc_obj = dict.get(&arena.name("Encoding"))?;
         let enc = enc_obj.resolve(arena);
@@ -203,29 +333,33 @@ impl FontResource {
             Object::Name(h) => {
                 let name = arena.get_name(h)?;
                 let name_str = name.as_str();
-                cmap::CMap::load_named(name_str).or_else(|| {
-                    match name_str {
-                        "Identity-H" => Some(cmap::CMap::identity_h()),
-                        "Identity-V" => Some(cmap::CMap::identity_v()),
-                        "90ms-RKSJ-H" => Some(cmap::CMap::rksj_h()),
-                        "UniJIS-UTF16-H" => Some(cmap::CMap::unijis_h()),
-                        _ => None
-                    }
+                cmap::CMap::load_named(name_str).or_else(|| match name_str {
+                    "Identity-H" => Some(cmap::CMap::identity_h()),
+                    "Identity-V" => Some(cmap::CMap::identity_v()),
+                    "90ms-RKSJ-H" => Some(cmap::CMap::rksj_h()),
+                    "UniJIS-UTF16-H" => Some(cmap::CMap::unijis_h()),
+                    _ => None,
                 })
             }
-            Object::Stream(_, _) => doc.decode_stream(&enc).ok().and_then(|data| cmap::CMap::parse(&data).ok()),
+            Object::Stream(_, _) => {
+                doc.decode_stream(&enc).ok().and_then(|data| cmap::CMap::parse(&data).ok())
+            }
             Object::Dictionary(h) => Self::parse_encoding_dict(h, arena),
             _ => None,
         }
     }
 
-    fn parse_encoding_dict(h: Handle<BTreeMap<Handle<PdfName>, Object>>, arena: &PdfArena) -> Option<cmap::CMap> {
+    fn parse_encoding_dict(
+        h: Handle<BTreeMap<Handle<PdfName>, Object>>,
+        arena: &PdfArena,
+    ) -> Option<cmap::CMap> {
         let enc_dict = arena.get_dict(h)?;
         let mut cmap = cmap::CMap::default();
 
-        if let Some(base_name) = enc_dict.get(&arena.name("BaseEncoding"))
+        if let Some(base_name) = enc_dict
+            .get(&arena.name("BaseEncoding"))
             .and_then(|o: &Object| o.resolve(arena).as_name())
-            .and_then(|h: Handle<PdfName>| arena.get_name(h)) 
+            .and_then(|h: Handle<PdfName>| arena.get_name(h))
         {
             let name_str: String = base_name.as_str().to_string();
             if let Some(base_cmap) = cmap::CMap::load_named(&name_str) {
@@ -233,8 +367,10 @@ impl FontResource {
             }
         }
 
-        if let Some(Object::Array(ah)) = enc_dict.get(&arena.name("Differences")).map(|o: &Object| o.resolve(arena))
-            && let Some(arr) = arena.get_array(ah) {
+        if let Some(Object::Array(ah)) =
+            enc_dict.get(&arena.name("Differences")).map(|o: &Object| o.resolve(arena))
+            && let Some(arr) = arena.get_array(ah)
+        {
             let mut new_mappings = (*cmap.mappings).clone();
             let mut current_code = 0u32;
             for item in arr {
@@ -244,7 +380,8 @@ impl FontResource {
                     Object::Name(name_h) => {
                         if let Some(glyph_name) = arena.get_name(name_h) {
                             let glyph_name_str: String = glyph_name.as_str().to_string();
-                            new_mappings.insert(vec![current_code as u8], format!("/{}", glyph_name_str));
+                            new_mappings
+                                .insert(vec![current_code as u8], format!("/{}", glyph_name_str));
                             current_code += 1;
                         }
                     }
@@ -256,14 +393,39 @@ impl FontResource {
         Some(cmap)
     }
 
-    fn parse_descendant_font(dict: &BTreeMap<Handle<PdfName>, Object>, doc: &Document) -> Option<DescendantResult> {
+    fn parse_descendant_font(
+        dict: &BTreeMap<Handle<PdfName>, Object>,
+        doc: &Document,
+    ) -> Option<DescendantResult> {
         let arena = doc.arena();
-        let df_dict_obj = dict.get(&arena.name("DescendantFonts"))?.resolve(arena).as_array().and_then(|ah| arena.get_array(ah))?.first()?.clone();
+        let df_dict_obj = dict
+            .get(&arena.name("DescendantFonts"))?
+            .resolve(arena)
+            .as_array()
+            .and_then(|ah| arena.get_array(ah))?
+            .first()?
+            .clone();
         let dfh = df_dict_obj.resolve(arena).as_dict_handle()?;
         let df_dict = arena.get_dict(dfh)?;
 
+        let mut font_file_handle = None;
+        if let Some(fd_obj) = df_dict.get(&arena.name("FontDescriptor"))
+            && let Some(fd_dict) =
+                fd_obj.resolve(arena).as_dict_handle().and_then(|dh| arena.get_dict(dh))
+        {
+            let (f1, f2, f3) =
+                (arena.name("FontFile"), arena.name("FontFile2"), arena.name("FontFile3"));
+            for k in [f1, f2, f3] {
+                if let Some(ff) = fd_dict.get(&k) {
+                    font_file_handle = ff.as_reference();
+                    break;
+                }
+            }
+        }
+
         let res = DescendantResult {
-            base_font: df_dict.get(&arena.name("BaseFont"))
+            base_font: df_dict
+                .get(&arena.name("BaseFont"))
                 .and_then(|o| o.resolve(arena).as_name())
                 .and_then(|h| arena.get_name(h)),
             font_data: if let Some(fd_obj) = df_dict.get(&arena.name("FontDescriptor")) {
@@ -276,6 +438,7 @@ impl FontResource {
             } else {
                 None
             },
+            font_file_handle,
             cid_to_gid_map: Self::parse_cid_to_gid_map(&df_dict, doc),
             metrics: Self::parse_cid_metrics(&df_dict, arena),
         };
@@ -283,25 +446,36 @@ impl FontResource {
         Some(res)
     }
 
-    fn parse_cid_to_gid_map(df_dict: &BTreeMap<Handle<PdfName>, Object>, doc: &Document) -> Option<Vec<u16>> {
+    fn parse_cid_to_gid_map(
+        df_dict: &BTreeMap<Handle<PdfName>, Object>,
+        doc: &Document,
+    ) -> Option<Vec<u16>> {
         let arena = doc.arena();
         let map_obj = df_dict.get(&arena.name("CIDToGIDMap"))?;
         let resolved = map_obj.resolve(arena);
         if let Some(name) = resolved.as_name().and_then(|h| arena.get_name(h))
-            && name.as_str() == "Identity" { return None; }
+            && name.as_str() == "Identity"
+        {
+            return None;
+        }
         let data = doc.decode_stream(&resolved).ok()?;
         Some(data.chunks_exact(2).map(|c| u16::from_be_bytes([c[0], c[1]])).collect())
     }
 
-    fn parse_cid_metrics(df_dict: &BTreeMap<Handle<PdfName>, Object>, arena: &PdfArena) -> FontMetrics {
+    fn parse_cid_metrics(
+        df_dict: &BTreeMap<Handle<PdfName>, Object>,
+        arena: &PdfArena,
+    ) -> FontMetrics {
         let mut metrics = FontMetrics::default();
         metrics.default_width = 1000.0;
         if let Some(dw_obj) = df_dict.get(&arena.name("DW")) {
             metrics.default_width = dw_obj.resolve(arena).as_f64().unwrap_or(1000.0) as f32;
         }
-        
-        if let Some(Object::Array(wah)) = df_dict.get(&arena.name("W")).map(|o: &Object| o.resolve(arena))
-            && let Some(w_arr) = arena.get_array(wah) {
+
+        if let Some(Object::Array(wah)) =
+            df_dict.get(&arena.name("W")).map(|o: &Object| o.resolve(arena))
+            && let Some(w_arr) = arena.get_array(wah)
+        {
             let mut i: usize = 0;
             while i < w_arr.len() {
                 let first_cid = w_arr[i].resolve(arena).as_integer().unwrap_or(0) as u32;
@@ -317,7 +491,9 @@ impl FontResource {
                 } else {
                     let last_cid = next_obj.as_integer().unwrap_or(0) as u32;
                     let w_val: f32 = w_arr[i + 2].resolve(arena).as_f64().unwrap_or(1000.0) as f32;
-                    for cid in first_cid..=last_cid { metrics.widths.insert(cid, w_val); }
+                    for cid in first_cid..=last_cid {
+                        metrics.widths.insert(cid, w_val);
+                    }
                     i += 3;
                 }
             }
@@ -326,11 +502,19 @@ impl FontResource {
         metrics
     }
 
-    fn parse_v2_metrics(df_dict: &BTreeMap<Handle<PdfName>, Object>, arena: &PdfArena, default_w: f32) -> BTreeMap<u32, (f32, f32, f32)> {
+    fn parse_v2_metrics(
+        df_dict: &BTreeMap<Handle<PdfName>, Object>,
+        arena: &PdfArena,
+        default_w: f32,
+    ) -> BTreeMap<u32, (f32, f32, f32)> {
         let mut v_widths = BTreeMap::new();
-        let Some(Object::Array(wah)) = df_dict.get(&arena.name("W2")).map(|o: &Object| o.resolve(arena)) else { return v_widths };
+        let Some(Object::Array(wah)) =
+            df_dict.get(&arena.name("W2")).map(|o: &Object| o.resolve(arena))
+        else {
+            return v_widths;
+        };
         let Some(w2_arr) = arena.get_array(wah) else { return v_widths };
-        
+
         let mut i: usize = 0;
         while i < w2_arr.len() {
             let first_cid = w2_arr[i].resolve(arena).as_integer().unwrap_or(0) as u32;
@@ -338,8 +522,9 @@ impl FontResource {
             if let Object::Array(iah) = next_obj {
                 if let Some(i_arr) = arena.get_array(iah) {
                     for (idx, chunk) in i_arr.chunks_exact(3).enumerate() {
-                        let w1_y = chunk[0].resolve(arena).as_f64().unwrap_or(1000.0) as f32;
-                        let v_x = chunk[1].resolve(arena).as_f64().unwrap_or(default_w as f64 / 2.0) as f32;
+                        let w1_y = chunk[0].resolve(arena).as_f64().unwrap_or(-1000.0) as f32;
+                        let v_x = chunk[1].resolve(arena).as_f64().unwrap_or(default_w as f64 / 2.0)
+                            as f32;
                         let v_y = chunk[2].resolve(arena).as_f64().unwrap_or(880.0) as f32;
                         v_widths.insert(first_cid + idx as u32, (w1_y, v_x, v_y));
                     }
@@ -347,27 +532,43 @@ impl FontResource {
                 i += 2;
             } else {
                 let last_cid = next_obj.as_integer().unwrap_or(0) as u32;
-                let w1_y = w2_arr[i + 2].resolve(arena).as_f64().unwrap_or(1000.0) as f32;
-                let v_x = w2_arr[i + 3].resolve(arena).as_f64().unwrap_or(default_w as f64 / 2.0) as f32;
+                let w1_y = w2_arr[i + 2].resolve(arena).as_f64().unwrap_or(-1000.0) as f32;
+                let v_x =
+                    w2_arr[i + 3].resolve(arena).as_f64().unwrap_or(default_w as f64 / 2.0) as f32;
                 let v_y = w2_arr[i + 4].resolve(arena).as_f64().unwrap_or(880.0) as f32;
-                for cid in first_cid..=last_cid { v_widths.insert(cid, (w1_y, v_x, v_y)); }
+                for cid in first_cid..=last_cid {
+                    v_widths.insert(cid, (w1_y, v_x, v_y));
+                }
                 i += 5;
             }
         }
         v_widths
     }
 
-    fn parse_standard_widths(dict: &BTreeMap<Handle<PdfName>, Object>, arena: &PdfArena) -> FontMetrics {
+    fn parse_standard_widths(
+        dict: &BTreeMap<Handle<PdfName>, Object>,
+        arena: &PdfArena,
+    ) -> FontMetrics {
         let mut metrics = FontMetrics {
-            first: dict.get(&arena.name("FirstChar")).and_then(|o| o.resolve(arena).as_integer()).unwrap_or(0) as i32,
-            last: dict.get(&arena.name("LastChar")).and_then(|o| o.resolve(arena).as_integer()).unwrap_or(0) as i32,
+            first: dict
+                .get(&arena.name("FirstChar"))
+                .and_then(|o| o.resolve(arena).as_integer())
+                .unwrap_or(0) as i32,
+            last: dict
+                .get(&arena.name("LastChar"))
+                .and_then(|o| o.resolve(arena).as_integer())
+                .unwrap_or(0) as i32,
             ..Default::default()
         };
-        
+
         if let Some(Object::Array(ah)) = dict.get(&arena.name("Widths")).map(|o| o.resolve(arena))
-            && let Some(arr) = arena.get_array(ah) {
+            && let Some(arr) = arena.get_array(ah)
+        {
             for (idx, w) in arr.iter().enumerate() {
-                metrics.widths.insert((metrics.first + idx as i32) as u32, w.resolve(arena).as_f64().unwrap_or(0.0) as f32);
+                metrics.widths.insert(
+                    (metrics.first + idx as i32) as u32,
+                    w.resolve(arena).as_f64().unwrap_or(0.0) as f32,
+                );
             }
         }
         metrics
@@ -379,15 +580,23 @@ impl FontResource {
             let resolved = enc.resolve(arena);
             match resolved {
                 Object::Name(h) => {
-                    if let Some(n) = arena.get_name(h)
-                        && (n.as_str().ends_with("-V") || n.as_str() == "V") { return 1; }
+                    if let Some(n) = arena.get_name(h) {
+                        let bytes = n.as_bytes();
+                        if bytes.ends_with(b"-V") || bytes == b"V" {
+                            return 1;
+                        }
+                    }
                 }
                 Object::Stream(dh, _) => {
                     if let Some(d) = arena.get_dict(dh)
-                        && let Some(n) = d.get(&arena.name("CMapName")).and_then(|o| o.resolve(arena).as_name())
-                        && let Some(name) = arena.get_name(n)
-                        && name.as_str().ends_with("-V") {
-                        return 1;
+                        && let Some(n_handle) =
+                            d.get(&arena.name("CMapName")).and_then(|o| o.resolve(arena).as_name())
+                        && let Some(n) = arena.get_name(n_handle)
+                    {
+                        let bytes = n.as_bytes();
+                        if bytes.ends_with(b"-V") || bytes == b"V" {
+                            return 1;
+                        }
                     }
                 }
                 _ => {}
@@ -395,7 +604,6 @@ impl FontResource {
         }
         0
     }
-
 
     pub fn has_any_mapping(&self) -> bool {
         (self.to_unicode.as_ref().map(|m| !m.mappings.is_empty()).unwrap_or(false))
@@ -408,35 +616,62 @@ impl FontResource {
         dict: &lopdf::Dictionary,
         doc: &lopdf::Document,
     ) -> PdfResult<Self> {
-        let subtype_raw = dict.get(b"Subtype").ok().and_then(|o| o.as_name().ok())
+        let subtype_raw = dict
+            .get(b"Subtype")
+            .ok()
+            .and_then(|o| o.as_name().ok())
             .ok_or_else(|| PdfError::Other("Missing font subtype".into()))?;
         let subtype = PdfName::new(&String::from_utf8_lossy(subtype_raw));
 
-        let base_font_raw = dict.get(b"BaseFont").ok().and_then(|o| o.as_name().ok()).unwrap_or(b"Unknown");
+        let base_font_raw =
+            dict.get(b"BaseFont").ok().and_then(|o| o.as_name().ok()).unwrap_or(b"Unknown");
         let base_font = PdfName::new(&crate::refine::text::recover_string(base_font_raw));
-
-        println!("  Loading font: {}", base_font.as_str());
 
         let to_unicode = Self::parse_to_unicode_lopdf(dict, doc);
         let encoding = Self::parse_encoding_lopdf(dict, doc);
         let mut wmode = 0;
         if let Some(enc_name) = encoding.as_ref().map(|e| e.name())
-            && (enc_name.ends_with("-V") || enc_name == "V") { wmode = 1; }
+            && (enc_name.ends_with("-V") || enc_name == "V")
+        {
+            wmode = 1;
+        }
 
         let mut resource = Self {
-            subtype, base_font, first_char: 0, last_char: 0, widths: BTreeMap::new(), vertical_widths: BTreeMap::new(),
-            default_width: 1000.0, encoding, to_unicode, wmode, cid_to_gid_map: None, data: None, font_descriptor: None,
-            is_legacy_distiller: false, unified_map: BTreeMap::new(), adj1_mapping: None, reverse_adj1_mapping: None,
-            discovered_mappings: std::sync::Arc::new(std::sync::Mutex::new(std::collections::BTreeMap::new())), unicode_to_gid: std::collections::BTreeMap::new(),
+            subtype,
+            base_font,
+            first_char: 0,
+            last_char: 0,
+            widths: BTreeMap::new(),
+            vertical_widths: BTreeMap::new(),
+            default_width: 1000.0,
+            encoding,
+            to_unicode,
+            wmode,
+            cid_to_gid_map: None,
+            data: None,
+            font_descriptor: None,
+            font_file_handle: None,
+            is_legacy_distiller: false,
+            unified_map: BTreeMap::new(),
+            adj1_mapping: None,
+            reverse_adj1_mapping: None,
+            discovered_mappings: std::sync::Arc::new(std::sync::Mutex::new(
+                std::collections::BTreeMap::new(),
+            )),
+            unicode_to_gid: std::collections::BTreeMap::new(),
+            fallback_type: None,
+            reconstructed_data: None,
         };
 
         resource.init_adj1_mapping();
         resource.build_unified_map();
-        println!("    Done building unified map for {}", resource.base_font.as_str());
         Ok(resource)
     }
 
-    fn parse_to_unicode_lopdf(dict: &lopdf::Dictionary, doc: &lopdf::Document) -> Option<cmap::CMap> {
+    fn parse_to_unicode_lopdf(
+        dict: &lopdf::Dictionary,
+        doc: &lopdf::Document,
+    ) -> Option<cmap::CMap> {
         if let Ok(to_uni_obj) = dict.get(b"ToUnicode")
             && let Ok(rid) = to_uni_obj.as_reference()
             && let Ok(to_uni_stream_obj) = doc.get_object(rid)
@@ -489,90 +724,50 @@ impl FontResource {
             || font_name_lower.contains("gothic")
             || font_name_lower.contains("ゴシック")
             || font_name_lower.contains("aj1")
+            || font_name_lower.contains("#82#6c#82#72#96#be#92#a9") // ＭＳ 明朝
+            || font_name_lower.contains("#82#6c#82#72#83#53#83#56#83#62#83#4e") // ＭＳ ゴシック
             || self
                 .encoding
                 .as_ref()
-                .map(|e| e.name().contains("UniJIS") || e.name().contains("90ms") || e.name().contains("90pv"))
+                .map(|e| {
+                    let n = e.name().to_lowercase();
+                    n.contains("unijis") || n.contains("90ms") || n.contains("90pv") || n.contains("rksj")
+                })
                 .unwrap_or(false);
 
-        if is_japanese
-            && let Some(cmap) = cmap::CMap::load_named("Adobe-Japan1-UCS2") {
-            let mut reverse = BTreeMap::new();
-            for (cid_bytes, uni) in cmap.mappings.iter() {
-                if cid_bytes.len() == 2 {
-                    let cid = ((cid_bytes[0] as u32) << 8) | (cid_bytes[1] as u32);
-                    reverse.insert(uni.clone(), cid);
+        if is_japanese {
+            if let Some(cmap) = cmap::CMap::load_named("Adobe-Japan1-UCS2") {
+                let mut reverse = BTreeMap::new();
+                for (cid_bytes, uni) in cmap.mappings.iter() {
+                    if cid_bytes.len() == 2 {
+                        let cid = ((cid_bytes[0] as u32) << 8) | (cid_bytes[1] as u32);
+                        reverse.insert(uni.clone(), cid);
+                    }
                 }
+                self.adj1_mapping = Some(cmap);
+                self.reverse_adj1_mapping = Some(reverse);
             }
-            self.adj1_mapping = Some(cmap);
-            self.reverse_adj1_mapping = Some(reverse);
         }
-        
+
         self.build_unicode_to_gid();
     }
 
     pub fn build_unicode_to_gid(&mut self) {
         if let Some(ref data) = self.data
-            && let Ok(face) = ttf_parser::Face::parse(data, 0) {
+            && let Ok(face) = ttf_parser::Face::parse(data, 0)
+        {
             for subtable in face.tables().cmap.iter().flat_map(|t| t.subtables) {
                 if subtable.is_unicode() {
                     subtable.codepoints(|cp| {
                         if let Some(gid) = subtable.glyph_index(cp)
-                            && let Some(c) = std::char::from_u32(cp) {
+                            && let Some(c) = std::char::from_u32(cp)
+                        {
                             self.unicode_to_gid.insert(c, gid.0 as u32);
                         }
                     });
                 }
             }
         }
-    }
-
-    /// Builds a deterministic mapping from Unicode strings to GIDs.
-    /// In case of collisions (multiple byte codes mapping to the same Unicode),
-    /// it ensures unique identification by using Private Use Area (PUA) codes.
-    fn build_unified_map(&mut self) {
-        println!("    Building unified map for font: {}...", self.base_font.to_string_lossy());
-        let mut map = BTreeMap::new();
-
-        // Use the encoding map as the primary source of characters described in the PDF
-        if let Some(ref enc) = self.encoding {
-            // Since we can't easily iterate an opaque CMap, we look at common characters
-            // and the ToUnicode mapping if it exists.
-            // For Identity-H/V fonts, we map CIDs directly to Unicode or PUA.
-
-            // Hardening: For Identity-H/V, the CID is usually the Unicode or at least
-            // 1:1 with it.
-            if enc.name().contains("Identity") {
-                if let Some(ref to_uni) = self.to_unicode {
-                    for (bytes, uni) in to_uni.mappings.iter() {
-                        let cid: u32 = if bytes.len() == 2 {
-                            ((u32::from(bytes[0])) << 8) | u32::from(bytes[1])
-                        } else if bytes.len() == 1 {
-                            u32::from(bytes[0])
-                        } else {
-                            continue;
-                        };
-                        map.insert(uni.clone(), cid);
-                    }
-                }
-            } else {
-                if let Some(ref enc) = self.encoding {
-                    for (bytes, uni) in enc.mappings.iter() {
-                        let cid = enc.to_cid(bytes);
-                        if cid > 0 {
-                            let unicode = if let Some(ref to_uni) = self.to_unicode {
-                                to_uni.map(bytes).unwrap_or_else(|| uni.clone())
-                            } else {
-                                uni.clone()
-                            };
-                            map.insert(unicode, cid);
-                        }
-                    }
-                }
-            }
-        }
-
-        self.unified_map = map;
     }
 
     fn extract_font_data(fd_obj: &Object, doc: &Document) -> Option<Vec<u8>> {
@@ -582,10 +777,14 @@ impl FontResource {
             && let Some(fd_dict) = arena.get_dict(fdh)
         {
             // Try FontFile3 (CFF, OpenType, etc.)
-            if let Some(ff3) = fd_dict.get(&arena.name("FontFile3"))
-                && let Ok(data) = doc.decode_stream(&ff3.resolve(arena))
-            {
-                return Some(data.to_vec());
+            if let Some(ff3) = fd_dict.get(&arena.name("FontFile3")) {
+                let resolved = ff3.resolve(arena);
+                match doc.decode_stream(&resolved) {
+                    Ok(data) => return Some(data.to_vec()),
+                    Err(_) => {
+                        // Silent failure, try fallbacks
+                    }
+                }
             }
             // Try FontFile2 (TrueType)
             if let Some(ff2) = fd_dict.get(&arena.name("FontFile2"))
@@ -624,8 +823,13 @@ impl FontResource {
         cmap.push_str("/CIDInit /ProcSet findresource begin\n");
         cmap.push_str("12 dict begin\n");
         cmap.push_str("begincmap\n");
-        cmap.push_str("/CIDSystemInfo <<\n  /Registry (Adobe)\n  /Ordering (UCS)\n  /Supplement 0\n>> def\n");
-        cmap.push_str(&format!("/CMapName /Adobe-Identity-ToUnicode-{} def\n", self.base_font.as_str()));
+        cmap.push_str(
+            "/CIDSystemInfo <<\n  /Registry (Adobe)\n  /Ordering (UCS)\n  /Supplement 0\n>> def\n",
+        );
+        cmap.push_str(&format!(
+            "/CMapName /Adobe-Identity-ToUnicode-{} def\n",
+            self.base_font.as_str()
+        ));
         cmap.push_str("/CMapType 2 def\n");
         cmap.push_str("1 begincodespacerange\n");
         cmap.push_str("<0000> <FFFF>\n");
@@ -680,14 +884,18 @@ impl FontResource {
         Some(cmap.into_bytes())
     }
 
+    /// Returns the vertical metrics for a CID: (w1_y, v_x, v_y).
+    ///
+    /// w1_y is the vertical advance (natively negative in PDF spec).
+    /// (v_x, v_y) is the position of the glyph origin relative to the horizontal origin.
     pub fn glyph_vertical_metrics(&self, cid: u32) -> (f32, f32, f32) {
         if let Some(&metrics) = self.vertical_widths.get(&cid) {
             return metrics;
         }
         // Default values: (w1_y, v_x, v_y)
-        // From PDF spec: Default v = (w0/2, 880)
+        // From PDF spec: Default w1 = (0, -1000), Default v = (w0/2, 880)
         let w0 = *self.widths.get(&cid).unwrap_or(&self.default_width);
-        (1000.0, w0 / 2.0, 880.0)
+        (-1000.0, w0 / 2.0, 880.0)
     }
 
     pub fn to_unicode(&self, code: &[u8]) -> Option<String> {
@@ -696,12 +904,14 @@ impl FontResource {
 
     fn to_unicode_inner(&self, code: &[u8]) -> Option<String> {
         if let Some(ref map) = self.to_unicode
-            && let Some(res) = map.map(code) {
+            && let Some(res) = map.map(code)
+        {
             return Some(res);
         }
 
         if let Some(ref enc) = self.encoding
-            && let Some(res) = enc.map(code) {
+            && let Some(res) = enc.map(code)
+        {
             if res.starts_with('/') {
                 return Some(cmap::glyph_name_to_unicode(res.as_bytes()));
             }
@@ -766,41 +976,64 @@ impl FontResource {
         cid
     }
 
+    pub fn resolve_gid(&self, cid: u32, unicode_char: Option<char>) -> u32 {
+        if let Some(c) = unicode_char {
+            if let Some(&gid) = self.unicode_to_gid.get(&c) {
+                return gid;
+            }
+        }
+        self.to_gid(cid)
+    }
+
     pub fn decode_next(&self, data: &[u8]) -> (usize, Option<String>) {
-        if data.is_empty() { return (0, None); }
+        if data.is_empty() {
+            return (0, None);
+        }
         let min_len = self.get_min_len();
 
-        if let Some(res) = self.decode_via_to_unicode(data, min_len) { return res; }
-        if let Some(res) = self.decode_via_encoding(data, min_len) { return res; }
+        if let Some(res) = self.decode_via_to_unicode(data, min_len) {
+            if res.1.is_some() {
+                return res;
+            }
+        }
+        if let Some(res) = self.decode_via_encoding(data, min_len) {
+            if res.1.is_some() {
+                return res;
+            }
+        }
         self.decode_via_heuristics(data)
     }
 
     fn get_min_len(&self) -> Option<usize> {
         let subtype = self.subtype.as_str();
-        let is_multibyte = subtype == "Type0" || subtype == "CIDFontType0" || subtype == "CIDFontType2";
-        let is_identity = self.encoding.as_ref().map(|e| e.name.contains("Identity")).unwrap_or(false);
+        let is_multibyte =
+            subtype == "Type0" || subtype == "CIDFontType0" || subtype == "CIDFontType2";
+        let is_identity =
+            self.encoding.as_ref().map(|e| e.name.contains("Identity")).unwrap_or(false);
         if is_multibyte || is_identity { Some(2) } else { None }
     }
 
-    fn decode_via_to_unicode(&self, data: &[u8], min_len: Option<usize>) -> Option<(usize, Option<String>)> {
+    fn decode_via_to_unicode(
+        &self,
+        data: &[u8],
+        min_len: Option<usize>,
+    ) -> Option<(usize, Option<String>)> {
         let tu = self.to_unicode.as_ref()?;
         let (len, u) = tu.decode_next_with_min_len(data, min_len)?;
         if let Some(u_str) = u {
-            if u_str == "\u{FFFD}" {
-                println!("      [DEBUG] ToUnicode returned FFFD for bytes: {:02X?}", &data[..len]);
-            }
             return Some((len, Some(u_str)));
         }
         Some((len, None))
     }
 
-    fn decode_via_encoding(&self, data: &[u8], min_len: Option<usize>) -> Option<(usize, Option<String>)> {
+    fn decode_via_encoding(
+        &self,
+        data: &[u8],
+        min_len: Option<usize>,
+    ) -> Option<(usize, Option<String>)> {
         let enc = self.encoding.as_ref()?;
         let (len, u) = enc.decode_next_with_min_len(data, min_len)?;
         if let Some(u_str) = u {
-            if u_str == "\u{FFFD}" {
-                println!("      [DEBUG] Encoding returned FFFD for bytes: {:02X?}", &data[..len]);
-            }
             if u_str.starts_with('/') {
                 return Some((len, Some(cmap::glyph_name_to_unicode(u_str.as_bytes()))));
             }
@@ -811,8 +1044,31 @@ impl FontResource {
 
     fn decode_via_heuristics(&self, data: &[u8]) -> (usize, Option<String>) {
         let subtype = self.subtype.as_str();
-        let is_multibyte = subtype == "Type0" || subtype == "CIDFontType0" || subtype == "CIDFontType2";
-        let is_identity = self.encoding.as_ref().map(|e| e.name.contains("Identity")).unwrap_or(false);
+        let is_multibyte =
+            subtype == "Type0" || subtype == "CIDFontType0" || subtype == "CIDFontType2";
+        let is_identity =
+            self.encoding.as_ref().map(|e| e.name.contains("Identity")).unwrap_or(false);
+
+        let consumed = if is_multibyte || is_identity { 2 } else { 1 };
+        if data.len() < consumed {
+            return (data.len(), None);
+        }
+        let code_bytes = &data[..consumed];
+
+        // 1. Try Adobe-Japan1 (AJ1) mapping for Japanese CIDFonts
+        // CRITICAL: Only apply if this is a multibyte font or identity encoded,
+        // otherwise we risk "evaporating" the next byte of a simple font.
+        if (is_multibyte || is_identity)
+            && let Some(ref aj1) = self.adj1_mapping
+        {
+            let consumed_aj1 = 2; // AJ1 CIDs are always 2 bytes in our mapping
+            if data.len() >= consumed_aj1 {
+                let code_bytes = &data[..consumed_aj1];
+                if let Some(u) = aj1.map(code_bytes) {
+                    return (consumed_aj1, Some(u));
+                }
+            }
+        }
 
         if !is_multibyte && !is_identity && !self.is_legacy_distiller && !data.is_empty() {
             let code = data[0];
@@ -821,14 +1077,15 @@ impl FontResource {
             }
         }
 
-        let consumed = if is_multibyte || is_identity { 2 } else { 1 };
-        if data.len() < consumed { return (data.len(), None); }
-        let code_bytes = &data[..consumed];
-        
         let is_simple = subtype == "Type1" || subtype == "TrueType" || subtype == "Type3";
         let has_reliable_map = self.to_unicode.is_some() || self.encoding.is_some();
 
-        if is_simple && !self.is_legacy_distiller && !has_reliable_map && consumed == 1 && (0x20..=0x7E).contains(&code_bytes[0]) {
+        if is_simple
+            && !self.is_legacy_distiller
+            && !has_reliable_map
+            && consumed == 1
+            && (0x20..=0x7E).contains(&code_bytes[0])
+        {
             return (consumed, Some((code_bytes[0] as char).to_string()));
         }
 
@@ -840,8 +1097,13 @@ impl FontResource {
         cmap.push_str("/CIDInit /ProcSet findresource begin\n");
         cmap.push_str("12 dict begin\n");
         cmap.push_str("begincmap\n");
-        cmap.push_str("/CIDSystemInfo <<\n  /Registry (Adobe)\n  /Ordering (UCS)\n  /Supplement 0\n>> def\n");
-        cmap.push_str(&format!("/CMapName /Adobe-UTF8-ToUnicode-{} def\n", self.base_font.as_str()));
+        cmap.push_str(
+            "/CIDSystemInfo <<\n  /Registry (Adobe)\n  /Ordering (UCS)\n  /Supplement 0\n>> def\n",
+        );
+        cmap.push_str(&format!(
+            "/CMapName /Adobe-UTF8-ToUnicode-{} def\n",
+            self.base_font.as_str()
+        ));
         cmap.push_str("/CMapType 2 def\n");
         cmap.push_str("4 begincodespacerange\n");
         cmap.push_str("<00> <7F>\n");
@@ -903,7 +1165,8 @@ fn extract_font_summary(
 ) -> Option<FontSummary> {
     let name = extract_font_name(arena, dict, fv);
     let subtype_key = arena.get_name_by_str("Subtype");
-    let font_type = dict.get(&subtype_key.unwrap_or(fv))
+    let font_type = dict
+        .get(&subtype_key.unwrap_or(fv))
         .and_then(|o| o.resolve(arena).as_name())
         .and_then(|n| arena.get_name_str(n))
         .unwrap_or_else(|| "Type1".to_string());
@@ -918,8 +1181,9 @@ fn extract_font_summary(
 
     let is_embedded = check_font_embedding(arena, dict, fv);
     let is_subset = name.len() > 7 && name.as_bytes().get(6).copied() == Some(b'+');
+    let has_to_unicode = dict.contains_key(&arena.name("ToUnicode"));
 
-    Some(FontSummary { name, font_type, is_embedded, is_subset, encoding })
+    Some(FontSummary { name, font_type, is_embedded, is_subset, encoding, has_to_unicode })
 }
 
 fn extract_font_name(
@@ -928,15 +1192,22 @@ fn extract_font_name(
     fv: crate::handle::Handle<crate::object::PdfName>,
 ) -> String {
     let base_font_key = arena.get_name_by_str("BaseFont").unwrap_or(fv);
-    let mut name = dict.get(&base_font_key).and_then(|o| resolve_name_or_string(arena, o))
+    let mut name = dict
+        .get(&base_font_key)
+        .and_then(|o| resolve_name_or_string(arena, o))
         .unwrap_or_else(|| "Untitled".to_string());
 
     if (name == "Untitled" || name.is_empty() || name.contains('\u{FFFD}'))
         && let Some(fd_obj) = dict.get(&arena.name("FontDescriptor"))
-        && let Some(fd_dict) = fd_obj.resolve(arena).as_dict_handle().and_then(|dh| arena.get_dict(dh))
-        && let Some(fn_val) = fd_dict.get(&arena.name("FontName")).and_then(|o| o.resolve(arena).as_name())
+        && let Some(fd_dict) =
+            fd_obj.resolve(arena).as_dict_handle().and_then(|dh| arena.get_dict(dh))
+        && let Some(fn_val) =
+            fd_dict.get(&arena.name("FontName")).and_then(|o| o.resolve(arena).as_name())
     {
-        name = arena.get_name(fn_val).map(|n| crate::refine::text::recover_string(n.as_bytes())).unwrap_or(name);
+        name = arena
+            .get_name(fn_val)
+            .map(|n| crate::refine::text::recover_string(n.as_bytes()))
+            .unwrap_or(name);
     }
 
     if (name == "Untitled" || name.is_empty())
@@ -955,7 +1226,9 @@ fn extract_font_name(
 
 fn resolve_name_or_string(arena: &PdfArena, o: &Object) -> Option<String> {
     match o.resolve(arena) {
-        Object::Name(h) => arena.get_name(h).map(|n| crate::refine::text::recover_string(n.as_bytes())),
+        Object::Name(h) => {
+            arena.get_name(h).map(|n| crate::refine::text::recover_string(n.as_bytes()))
+        }
         Object::String(s) => Some(crate::refine::text::recover_string(&s)),
         _ => None,
     }
@@ -967,13 +1240,35 @@ fn check_font_embedding(
     fv: crate::handle::Handle<crate::object::PdfName>,
 ) -> bool {
     let desc_key = arena.get_name_by_str("FontDescriptor").unwrap_or(fv);
-    let (f1, f2, f3) = (arena.get_name_by_str("FontFile"), arena.get_name_by_str("FontFile2"), arena.get_name_by_str("FontFile3"));
+    let (f1, f2, f3) = (
+        arena.get_name_by_str("FontFile"),
+        arena.get_name_by_str("FontFile2"),
+        arena.get_name_by_str("FontFile3"),
+    );
 
     if let Some(desc_handle) = dict.get(&desc_key).and_then(|o| o.resolve(arena).as_dict_handle())
         && let Some(desc_dict) = arena.get_dict(desc_handle)
         && [f1, f2, f3].iter().flatten().any(|k| desc_dict.contains_key(k))
     {
         return true;
+    }
+
+    // Check descendant fonts for Type0
+    let df_key = arena.get_name_by_str("DescendantFonts").unwrap_or(fv);
+    if let Some(df_obj) = dict.get(&df_key) {
+        if let Object::Array(ah) = df_obj.resolve(arena) {
+            if let Some(arr) = arena.get_array(ah) {
+                for item in arr {
+                    if let Some(dh) = item.resolve(arena).as_dict_handle() {
+                        if let Some(dd) = arena.get_dict(dh) {
+                            if check_font_embedding(arena, &dd, fv) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
     false
 }

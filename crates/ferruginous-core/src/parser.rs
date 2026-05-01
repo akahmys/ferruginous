@@ -50,14 +50,19 @@ impl<'a> Parser<'a> {
             Token::String(s) => Ok(Object::String(s)),
             Token::Hex(s) => Ok(Object::Hex(s)),
             Token::Name(n) => {
-                let name_h = self.arena.intern_name(PdfName(n));
+                let name_h = self.arena.intern_name(PdfName::from_bytes(&n));
                 Ok(Object::Name(name_h))
             }
             Token::Null => Ok(Object::Null),
             Token::LeftArray => self.parse_array(),
             Token::LeftDict => self.parse_dict(),
-            Token::EOF => Err(PdfError::Parse { pos: self.lexer.pos(), message: "Unexpected EOF".into() }),
-            _ => Err(PdfError::Parse { pos: self.lexer.pos(), message: format!("Unexpected token: {:?}", token).into() }),
+            Token::EOF => {
+                Err(PdfError::Parse { pos: self.lexer.pos(), message: "Unexpected EOF".into() })
+            }
+            _ => Err(PdfError::Parse {
+                pos: self.lexer.pos(),
+                message: format!("Unexpected token: {:?}", token).into(),
+            }),
         }
     }
 
@@ -76,14 +81,12 @@ impl<'a> Parser<'a> {
         while self.lexer.peek()? != Token::RightDict && self.lexer.peek()? != Token::EOF {
             let key_token = self.lexer.next_token()?;
             let key_handle = match key_token {
-                Token::Name(n) => self.arena.intern_name(PdfName(n)),
+                Token::Name(n) => self.arena.intern_name(PdfName::from_bytes(&n)),
                 _ => {
                     return Err(PdfError::Parse {
                         pos: self.lexer.pos(),
-                        message: format!(
-                            "Expected name as dictionary key, found {:?}",
-                            key_token
-                        ).into()
+                        message: format!("Expected name as dictionary key, found {:?}", key_token)
+                            .into(),
                     });
                 }
             };

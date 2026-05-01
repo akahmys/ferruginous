@@ -140,14 +140,20 @@ impl<'a, W: Write> PdfWriter<'a, W> {
         let a = self.arena.get_array(h).ok_or_else(|| PdfError::Other("Array not found".into()))?;
         self.write_all(b"[")?;
         for (i, item) in a.iter().enumerate() {
-            if i > 0 { self.write_all(b" ")?; }
+            if i > 0 {
+                self.write_all(b" ")?;
+            }
             self.write_object(item)?;
         }
         self.write_all(b"]")
     }
 
-    fn write_dictionary_obj(&mut self, h: Handle<BTreeMap<Handle<PdfName>, Object>>) -> PdfResult<()> {
-        let d = self.arena.get_dict(h).ok_or_else(|| PdfError::Other("Dictionary not found".into()))?;
+    fn write_dictionary_obj(
+        &mut self,
+        h: Handle<BTreeMap<Handle<PdfName>, Object>>,
+    ) -> PdfResult<()> {
+        let d =
+            self.arena.get_dict(h).ok_or_else(|| PdfError::Other("Dictionary not found".into()))?;
         self.write_dict(&d)
     }
 
@@ -156,19 +162,30 @@ impl<'a, W: Write> PdfWriter<'a, W> {
         self.write_all(format!("{id} 0 R").as_bytes())
     }
 
-    fn write_stream_obj(&mut self, dh: Handle<BTreeMap<Handle<PdfName>, Object>>, data: &std::sync::Arc<ferruginous_core::object::SublimatedData>) -> PdfResult<()> {
-        let d = self.arena.get_dict(dh).ok_or_else(|| PdfError::Other("Dictionary not found".into()))?;
+    fn write_stream_obj(
+        &mut self,
+        dh: Handle<BTreeMap<Handle<PdfName>, Object>>,
+        data: &std::sync::Arc<ferruginous_core::object::SublimatedData>,
+    ) -> PdfResult<()> {
+        let d = self
+            .arena
+            .get_dict(dh)
+            .ok_or_else(|| PdfError::Other("Dictionary not found".into()))?;
         let filter_key = self.arena.get_name_by_str("Filter");
         let length_key = self.arena.get_name_by_str("Length");
 
         let stream_bytes = self.arena.get_stream_bytes(data)?;
-        let (stream_data, already_filtered) = self.prepare_stream_data(&stream_bytes, &d, filter_key);
+        let (stream_data, already_filtered) =
+            self.prepare_stream_data(&stream_bytes, &d, filter_key);
         let mut final_data = stream_data.to_vec();
         let applied_new_compression = self.try_compress_stream(&mut final_data, already_filtered);
 
         self.write_all(b"<<")?;
         for (k, v) in &d {
-            if Some(k) == length_key.as_ref() || (Some(k) == filter_key.as_ref() && (applied_new_compression || !already_filtered)) {
+            if Some(k) == length_key.as_ref()
+                || (Some(k) == filter_key.as_ref()
+                    && (applied_new_compression || !already_filtered))
+            {
                 continue;
             }
             self.write_all(b"\r\n")?;
@@ -177,12 +194,22 @@ impl<'a, W: Write> PdfWriter<'a, W> {
             self.write_object(v)?;
         }
 
-        if applied_new_compression { self.write_all(b"\r\n/Filter /FlateDecode")?; }
-        
+        if applied_new_compression {
+            self.write_all(b"\r\n/Filter /FlateDecode")?;
+        }
+
         let type_key = self.arena.get_name_by_str("Type");
-        let is_metadata = type_key.and_then(|tk| d.get(&tk)).and_then(|o| o.as_name()).and_then(|nh| self.arena.get_name_str(nh)).as_deref() == Some("Metadata");
-        if let Some(sh) = &self.security_handler && (!is_metadata || sh.should_decrypt_metadata()) {
-            final_data = sh.encrypt_stream(&final_data, self.current_obj_id, self.current_obj_gen)?;
+        let is_metadata = type_key
+            .and_then(|tk| d.get(&tk))
+            .and_then(|o| o.as_name())
+            .and_then(|nh| self.arena.get_name_str(nh))
+            .as_deref()
+            == Some("Metadata");
+        if let Some(sh) = &self.security_handler
+            && (!is_metadata || sh.should_decrypt_metadata())
+        {
+            final_data =
+                sh.encrypt_stream(&final_data, self.current_obj_id, self.current_obj_gen)?;
         }
 
         self.write_all(format!("\r\n/Length {}", final_data.len()).as_bytes())?;
@@ -191,8 +218,15 @@ impl<'a, W: Write> PdfWriter<'a, W> {
         self.write_all(b"\r\nendstream")
     }
 
-    fn prepare_stream_data(&self, data: &bytes::Bytes, d: &BTreeMap<Handle<PdfName>, Object>, filter_key: Option<Handle<PdfName>>) -> (bytes::Bytes, bool) {
-        if let Some(fk) = filter_key && d.contains_key(&fk) {
+    fn prepare_stream_data(
+        &self,
+        data: &bytes::Bytes,
+        d: &BTreeMap<Handle<PdfName>, Object>,
+        filter_key: Option<Handle<PdfName>>,
+    ) -> (bytes::Bytes, bool) {
+        if let Some(fk) = filter_key
+            && d.contains_key(&fk)
+        {
             if let Ok(decompressed) = self.arena.process_filters(data, d) {
                 return (decompressed, false);
             }
@@ -205,7 +239,9 @@ impl<'a, W: Write> PdfWriter<'a, W> {
         if !already_filtered && let Some(level) = self.compression_level {
             use flate2::{Compression, write::ZlibEncoder};
             let mut encoder = ZlibEncoder::new(Vec::new(), Compression::new(level));
-            if std::io::Write::write_all(&mut encoder, data).is_ok() && let Ok(compressed) = encoder.finish() {
+            if std::io::Write::write_all(&mut encoder, data).is_ok()
+                && let Ok(compressed) = encoder.finish()
+            {
                 *data = compressed;
                 return true;
             }
@@ -229,7 +265,20 @@ impl<'a, W: Write> PdfWriter<'a, W> {
             self.arena.get_name(*n).ok_or_else(|| PdfError::Other("Name not found".into()))?;
         self.write_all(b"/")?;
         for &b in name.as_ref() {
-            if b == b'#' || b <= 32 || b >= 127 || b == b'(' || b == b')' || b == b'<' || b == b'>' || b == b'[' || b == b']' || b == b'{' || b == b'}' || b == b'/' || b == b'%' {
+            if b == b'#'
+                || b <= 32
+                || b >= 127
+                || b == b'('
+                || b == b')'
+                || b == b'<'
+                || b == b'>'
+                || b == b'['
+                || b == b']'
+                || b == b'{'
+                || b == b'}'
+                || b == b'/'
+                || b == b'%'
+            {
                 self.write_all(format!("#{b:02X}").as_bytes())?;
             } else {
                 self.write_all(&[b])?;
@@ -259,12 +308,20 @@ impl<'a, W: Write> PdfWriter<'a, W> {
         self.write_all(b">")
     }
 
-    fn write_indirect_object(&mut self, id: u32, generation: u16, handle: Handle<Object>) -> PdfResult<()> {
+    fn write_indirect_object(
+        &mut self,
+        id: u32,
+        generation: u16,
+        handle: Handle<Object>,
+    ) -> PdfResult<()> {
         self.xref.insert(id, self.current_offset());
         self.current_obj_id = id;
         self.current_obj_gen = generation;
         self.write_all(format!("{id} {generation} obj\r\n").as_bytes())?;
-        let obj = self.arena.get_object(handle).ok_or_else(|| PdfError::Other(format!("Object {id} missing").into()))?;
+        let obj = self
+            .arena
+            .get_object(handle)
+            .ok_or_else(|| PdfError::Other(format!("Object {id} missing").into()))?;
         self.write_object(&obj)?;
         self.write_all(b"\r\nendobj\r\n")?;
         Ok(())
@@ -310,7 +367,7 @@ impl<'a, W: Write> PdfWriter<'a, W> {
 
         let id_hex = "f00baa42f00baa42f00baa42f00baa42";
         self.write_all(format!("trailer\r\n<< /Size {total_objects} /Prev {prev_xref} /Root 2 0 R /ID [<{id_hex}> <{id_hex}>] >>\r\nstartxref\r\n{xref_offset}\r\n%%EOF\r\n").as_bytes())?;
-        
+
         self.inner.write_all(&self.buffer[update_start..]).map_err(PdfError::Io)?;
         self.inner.flush().map_err(PdfError::Io)?;
         Ok(())
@@ -318,18 +375,29 @@ impl<'a, W: Write> PdfWriter<'a, W> {
 
     fn patch_signatures(&mut self) -> PdfResult<()> {
         let Some(sig_h) = self.sig_handle else { return Ok(()) };
-        let id = *self.id_map.get(&sig_h).ok_or_else(|| PdfError::Other("Sig object missing".into()))?;
-        let off = *self.xref.get(&id).ok_or_else(|| PdfError::Other("Sig offset missing".into()))?;
-        
+        let id =
+            *self.id_map.get(&sig_h).ok_or_else(|| PdfError::Other("Sig object missing".into()))?;
+        let off =
+            *self.xref.get(&id).ok_or_else(|| PdfError::Other("Sig offset missing".into()))?;
+
         let end = self.find_obj_end(off);
         let (c_start, c_end) = self.find_contents_offsets(off, end)?;
         let (br_start, br_end) = self.find_byte_range_offsets(off, end)?;
-        
-        let br_str = format!("0 {:010} {:010} {:010}", c_start - 1, c_end + 1, self.buffer.len() - (c_end + 1));
+
+        let br_str = format!(
+            "0 {:010} {:010} {:010}",
+            c_start - 1,
+            c_end + 1,
+            self.buffer.len() - (c_end + 1)
+        );
         let br_bytes = br_str.as_bytes();
-        if br_bytes.len() > (br_end - br_start) { return Err(PdfError::Other("ByteRange overflow".into())); }
-        
-        for i in br_start..br_end { self.buffer[i] = b' '; }
+        if br_bytes.len() > (br_end - br_start) {
+            return Err(PdfError::Other("ByteRange overflow".into()));
+        }
+
+        for i in br_start..br_end {
+            self.buffer[i] = b' ';
+        }
         self.buffer[br_start..br_start + br_bytes.len()].copy_from_slice(br_bytes);
         Ok(())
     }
@@ -337,7 +405,9 @@ impl<'a, W: Write> PdfWriter<'a, W> {
     fn find_obj_end(&self, start: usize) -> usize {
         let mut end = start;
         while end + 6 <= self.buffer.len() {
-            if &self.buffer[end..end + 6] == b"endobj" { return end + 6; }
+            if &self.buffer[end..end + 6] == b"endobj" {
+                return end + 6;
+            }
             end += 1;
         }
         end
@@ -345,17 +415,29 @@ impl<'a, W: Write> PdfWriter<'a, W> {
 
     fn find_contents_offsets(&self, start: usize, end: usize) -> PdfResult<(usize, usize)> {
         let key = b"/Contents <";
-        let pos = self.buffer[start..end].windows(key.len()).position(|w| w == key).ok_or_else(|| PdfError::Other("Missing /Contents".into()))?;
+        let pos = self.buffer[start..end]
+            .windows(key.len())
+            .position(|w| w == key)
+            .ok_or_else(|| PdfError::Other("Missing /Contents".into()))?;
         let c_start = start + pos + 11;
-        let c_end_pos = self.buffer[c_start..end].iter().position(|&b| b == b'>').ok_or_else(|| PdfError::Other("Missing end of /Contents".into()))?;
+        let c_end_pos = self.buffer[c_start..end]
+            .iter()
+            .position(|&b| b == b'>')
+            .ok_or_else(|| PdfError::Other("Missing end of /Contents".into()))?;
         Ok((c_start, c_start + c_end_pos))
     }
 
     fn find_byte_range_offsets(&self, start: usize, end: usize) -> PdfResult<(usize, usize)> {
         let key = b"/ByteRange [";
-        let pos = self.buffer[start..end].windows(key.len()).position(|w| w == key).ok_or_else(|| PdfError::Other("Missing /ByteRange".into()))?;
+        let pos = self.buffer[start..end]
+            .windows(key.len())
+            .position(|w| w == key)
+            .ok_or_else(|| PdfError::Other("Missing /ByteRange".into()))?;
         let br_start = start + pos + 12;
-        let br_end_pos = self.buffer[br_start..end].iter().position(|&b| b == b']').ok_or_else(|| PdfError::Other("Missing end of /ByteRange".into()))?;
+        let br_end_pos = self.buffer[br_start..end]
+            .iter()
+            .position(|&b| b == b']')
+            .ok_or_else(|| PdfError::Other("Missing end of /ByteRange".into()))?;
         Ok((br_start, br_start + br_end_pos))
     }
 
@@ -410,7 +492,11 @@ impl<'a, W: Write> PdfWriter<'a, W> {
     }
 
     #[allow(clippy::cast_possible_truncation)]
-    fn finish_linearized(&mut self, root: Handle<Object>, info: Option<Handle<Object>>) -> PdfResult<()> {
+    fn finish_linearized(
+        &mut self,
+        root: Handle<Object>,
+        info: Option<Handle<Object>>,
+    ) -> PdfResult<()> {
         let (pages, shared, others, counts) = self.collect_lin_objects(root, info)?;
         let total_size = self.assign_lin_ids(root, &pages, &shared, &others);
         let primary_count = 5 + pages.len() as u32 + shared.len() as u32;
@@ -421,27 +507,49 @@ impl<'a, W: Write> PdfWriter<'a, W> {
         let (hint_pos, _h_stream_start, h_len, s_h_len) = self.reserve_hint_stream(pages.len());
 
         let p1_start = self.current_offset();
-        if !pages.is_empty() { self.write_indirect_object(4, 0, pages[0])?; }
+        if !pages.is_empty() {
+            self.write_indirect_object(4, 0, pages[0])?;
+        }
         self.write_lin_objects(&pages, &shared, &others)?;
-        
+
         let p1_end = *self.xref.get(&(primary_count - 1)).unwrap_or(&self.buffer.len());
         let main_xref_off = self.write_lin_main_xref(total_size)?;
         let state = LinState {
-            d_pos: dict_pos, px_pos: p_xref_pos, h_pos: hint_pos, h_len, sh_len: s_h_len,
-            p1_s: p1_start, p1_e: p1_end, mx_off: main_xref_off,
-            pages, shared, counts, total: total_size, prim: primary_count,
+            d_pos: dict_pos,
+            px_pos: p_xref_pos,
+            h_pos: hint_pos,
+            h_len,
+            sh_len: s_h_len,
+            p1_s: p1_start,
+            p1_e: p1_end,
+            mx_off: main_xref_off,
+            pages,
+            shared,
+            counts,
+            total: total_size,
+            prim: primary_count,
         };
         self.finalize_lin_headers(state)?;
         Ok(())
     }
 
-    fn collect_lin_objects(&self, root: Handle<Object>, info: Option<Handle<Object>>) -> PdfResult<(Vec<Handle<Object>>, Vec<Handle<Object>>, Vec<Handle<Object>>, Vec<u32>)> {
+    fn collect_lin_objects(
+        &self,
+        root: Handle<Object>,
+        info: Option<Handle<Object>>,
+    ) -> PdfResult<(Vec<Handle<Object>>, Vec<Handle<Object>>, Vec<Handle<Object>>, Vec<u32>)> {
         let mut all = BTreeSet::new();
         self.trace_reachable(Object::Reference(root), &mut all);
-        if let Some(ih) = info { self.trace_reachable(Object::Reference(ih), &mut all); }
+        if let Some(ih) = info {
+            self.trace_reachable(Object::Reference(ih), &mut all);
+        }
 
         let mut pages = Vec::new();
-        if let Some(dh) = self.arena.get_object(root).and_then(|o| o.as_dict_handle()) && let Some(dict) = self.arena.get_dict(dh) && let Some(Object::Reference(ph)) = dict.get(&self.arena.name("Pages")) && let Some(pdh) = self.arena.get_object(*ph).and_then(|o| o.as_dict_handle()) {
+        if let Some(dh) = self.arena.get_object(root).and_then(|o| o.as_dict_handle())
+            && let Some(dict) = self.arena.get_dict(dh)
+            && let Some(Object::Reference(ph)) = dict.get(&self.arena.name("Pages"))
+            && let Some(pdh) = self.arena.get_object(*ph).and_then(|o| o.as_dict_handle())
+        {
             self.collect_pages_recursive(pdh, &mut pages)?;
         }
 
@@ -453,16 +561,38 @@ impl<'a, W: Write> PdfWriter<'a, W> {
             let mut stack = vec![ph];
             let mut seen = BTreeSet::new();
             while let Some(h) = stack.pop() {
-                if !seen.insert(h) { continue; }
-                if let Some(&first) = visited.get(&h) { if first != idx { shared_set.insert(h); } } else { visited.insert(h, idx); }
+                if !seen.insert(h) {
+                    continue;
+                }
+                if let Some(&first) = visited.get(&h) {
+                    if first != idx {
+                        shared_set.insert(h);
+                    }
+                } else {
+                    visited.insert(h, idx);
+                }
                 if let Some(inner) = self.arena.get_object(h) {
                     match inner {
-                        Object::Array(ah) => if let Some(a) = self.arena.get_array(ah) { for item in a { if let Object::Reference(rh) = item { stack.push(rh); } } }
-                        Object::Dictionary(dh) | Object::Stream(dh, _) => if let Some(d) = self.arena.get_dict(dh) {
-                            for (k, v) in d {
-                                let name = self.arena.get_name_str(k).unwrap_or_default();
-                                if name == "Parent" || name == "Prev" || name == "Next" { continue; }
-                                if let Object::Reference(rh) = v { stack.push(rh); }
+                        Object::Array(ah) => {
+                            if let Some(a) = self.arena.get_array(ah) {
+                                for item in a {
+                                    if let Object::Reference(rh) = item {
+                                        stack.push(rh);
+                                    }
+                                }
+                            }
+                        }
+                        Object::Dictionary(dh) | Object::Stream(dh, _) => {
+                            if let Some(d) = self.arena.get_dict(dh) {
+                                for (k, v) in d {
+                                    let name = self.arena.get_name_str(k).unwrap_or_default();
+                                    if name == "Parent" || name == "Prev" || name == "Next" {
+                                        continue;
+                                    }
+                                    if let Object::Reference(rh) = v {
+                                        stack.push(rh);
+                                    }
+                                }
                             }
                         }
                         _ => {}
@@ -472,21 +602,41 @@ impl<'a, W: Write> PdfWriter<'a, W> {
             #[allow(clippy::cast_possible_truncation)]
             counts.push(seen.len() as u32);
         }
-        let shared: Vec<_> = shared_set.into_iter().filter(|&h| !pages.contains(&h) && h != root).collect();
+        let shared: Vec<_> =
+            shared_set.into_iter().filter(|&h| !pages.contains(&h) && h != root).collect();
         let mut assigned = BTreeSet::new();
         assigned.insert(root);
-        for &h in &pages { assigned.insert(h); }
-        for &h in &shared { assigned.insert(h); }
+        for &h in &pages {
+            assigned.insert(h);
+        }
+        for &h in &shared {
+            assigned.insert(h);
+        }
         let mut others: Vec<_> = all.into_iter().filter(|h| !assigned.contains(h)).collect();
         others.sort_by_key(|h| h.index());
         Ok((pages, shared, others, counts))
     }
 
-    fn assign_lin_ids(&mut self, _root: Handle<Object>, pages: &[Handle<Object>], shared: &[Handle<Object>], others: &[Handle<Object>]) -> u32 {
-        let mut next_id = 3;
-        for &h in pages { self.id_map.insert(h, next_id); next_id += 1; }
-        for &h in shared { self.id_map.insert(h, next_id); next_id += 1; }
-        for &h in others { self.id_map.insert(h, next_id); next_id += 1; }
+    fn assign_lin_ids(
+        &mut self,
+        _root: Handle<Object>,
+        pages: &[Handle<Object>],
+        shared: &[Handle<Object>],
+        others: &[Handle<Object>],
+    ) -> u32 {
+        let mut next_id = 4;
+        for &h in pages {
+            self.id_map.insert(h, next_id);
+            next_id += 1;
+        }
+        for &h in shared {
+            self.id_map.insert(h, next_id);
+            next_id += 1;
+        }
+        for &h in others {
+            self.id_map.insert(h, next_id);
+            next_id += 1;
+        }
         next_id
     }
 
@@ -516,12 +666,35 @@ impl<'a, W: Write> PdfWriter<'a, W> {
         (pos, pos + 25, data_len, s_len) // Approximation for h_stream_start
     }
 
-    fn write_lin_objects(&mut self, pages: &[Handle<Object>], shared: &[Handle<Object>], others: &[Handle<Object>]) -> PdfResult<()> {
+    fn write_lin_objects(
+        &mut self,
+        pages: &[Handle<Object>],
+        shared: &[Handle<Object>],
+        others: &[Handle<Object>],
+    ) -> PdfResult<()> {
         let mut ordered = Vec::new();
         let mut seen = BTreeSet::new();
-        for &h in pages { if seen.insert(h) { ordered.push(h); } }
-        for &h in shared { if seen.insert(h) { ordered.push(h); } }
-        for &h in others { if seen.insert(h) { ordered.push(h); } }
+
+        // Skip pages[0] as it was already written in reserve_hint_stream/write_indirect_object(4)
+        if !pages.is_empty() {
+            seen.insert(pages[0]);
+        }
+
+        for &h in pages {
+            if seen.insert(h) {
+                ordered.push(h);
+            }
+        }
+        for &h in shared {
+            if seen.insert(h) {
+                ordered.push(h);
+            }
+        }
+        for &h in others {
+            if seen.insert(h) {
+                ordered.push(h);
+            }
+        }
         for h in ordered {
             let id = self.id_map[&h];
             self.write_indirect_object(id, 0, h)?;
@@ -545,26 +718,60 @@ impl<'a, W: Write> PdfWriter<'a, W> {
         let p_len = s.h_len - s.sh_len;
         let id_hex = "f00baa42f00baa42f00baa42f00baa42";
         let h_dict = format!("3 0 obj\r\n<< /Length {} /S {p_len} >>\r\nstream\r\n", s.h_len);
-        let h_data = self.generate_hint_tables(&s.pages, &s.shared.iter().map(|h| self.id_map[h]).collect::<Vec<_>>(), s.p1_s, s.mx_off, &s.counts);
-        let h_full = format!("{h_dict}{}\r\nendstream\r\nendobj\r\n", std::str::from_utf8(&h_data).unwrap_or(""));
+        let h_data = self.generate_hint_tables(
+            &s.pages,
+            &s.shared.iter().map(|h| self.id_map[h]).collect::<Vec<_>>(),
+            s.p1_s,
+            s.mx_off,
+            &s.counts,
+        );
+        let h_full = format!(
+            "{h_dict}{}\r\nendstream\r\nendobj\r\n",
+            std::str::from_utf8(&h_data).unwrap_or("")
+        );
         self.buffer[s.h_pos..s.h_pos + h_full.len()].copy_from_slice(h_full.as_bytes());
 
-        let d_str = format!("1 0 obj\r\n<< /Linearized 1 /L {} /P 0 /O 4 /E {} /N {} /T {} /H [{} {} {} {}] >>\r\nendobj\r\n", self.buffer.len(), s.p1_e, s.pages.len(), s.mx_off, s.h_pos + h_dict.len(), p_len, s.h_pos + h_dict.len() + p_len, s.sh_len);
+        let d_str = format!(
+            "1 0 obj\r\n<< /Linearized 1 /L {} /P 0 /O 4 /E {} /N {} /T {} /H [{} {} {} {}] >>\r\nendobj\r\n",
+            self.buffer.len(),
+            s.p1_e,
+            s.pages.len(),
+            s.mx_off,
+            s.h_pos + h_dict.len(),
+            p_len,
+            s.h_pos + h_dict.len() + p_len,
+            s.sh_len
+        );
         self.buffer[s.d_pos..s.d_pos + d_str.len()].copy_from_slice(d_str.as_bytes());
 
         let mut px = format!("xref\r\n0 {}\r\n0000000000 65535 f\r\n", s.prim);
-        for id in 1..s.prim { let _ = write!(px, "{:010} 00000 n\r\n", self.xref.get(&id).unwrap_or(&0)); }
-        let _ = write!(px, "trailer\r\n<< /Size {} /Prev {} /Root 2 0 R /ID [<{id_hex}> <{id_hex}>] >>\r\n", s.total, s.mx_off);
+        for id in 1..s.prim {
+            let _ = write!(px, "{:010} 00000 n\r\n", self.xref.get(&id).unwrap_or(&0));
+        }
+        let _ = write!(
+            px,
+            "trailer\r\n<< /Size {} /Prev {} /Root 2 0 R /ID [<{id_hex}> <{id_hex}>] >>\r\n",
+            s.total, s.mx_off
+        );
         self.buffer[s.px_pos..s.px_pos + px.len()].copy_from_slice(px.as_bytes());
         Ok(())
     }
 }
 
 struct LinState {
-    d_pos: usize, px_pos: usize, h_pos: usize, h_len: usize, sh_len: usize,
-    p1_s: usize, p1_e: usize, mx_off: usize,
-    pages: Vec<Handle<Object>>, shared: Vec<Handle<Object>>, counts: Vec<u32>,
-    total: u32, prim: u32,
+    d_pos: usize,
+    px_pos: usize,
+    h_pos: usize,
+    h_len: usize,
+    sh_len: usize,
+    p1_s: usize,
+    p1_e: usize,
+    mx_off: usize,
+    pages: Vec<Handle<Object>>,
+    shared: Vec<Handle<Object>>,
+    counts: Vec<u32>,
+    total: u32,
+    prim: u32,
 }
 
 impl<W: std::io::Write> PdfWriter<'_, W> {
@@ -611,26 +818,23 @@ impl<W: std::io::Write> PdfWriter<'_, W> {
         writer.write_u16(32);
         writer.write_u16(0);
         writer.write_u16(0);
-        
+
         for &id in shared_ids {
             let offset = self.xref.get(&id).unwrap_or(&0);
             writer.write_bits(*offset as u32, 32);
         }
-        
+
         writer.finish()
     }
 
-    fn trace_reachable(
-        &self,
-        initial_obj: Object,
-        reachable: &mut BTreeSet<Handle<Object>>,
-    ) {
+    fn trace_reachable(&self, initial_obj: Object, reachable: &mut BTreeSet<Handle<Object>>) {
         let mut stack = vec![initial_obj];
         while let Some(obj) = stack.pop() {
             match obj {
                 Object::Reference(h) => {
                     if reachable.insert(h)
-                        && let Some(inner) = self.arena.get_object(h) {
+                        && let Some(inner) = self.arena.get_object(h)
+                    {
                         stack.push(inner.clone());
                     }
                 }
@@ -655,34 +859,35 @@ impl<W: std::io::Write> PdfWriter<'_, W> {
 
     fn collect_pages_recursive(
         &self,
-        root_pages_dh: Handle<BTreeMap<Handle<PdfName>, Object>>,
+        dh: Handle<BTreeMap<Handle<PdfName>, Object>>,
         pages: &mut Vec<Handle<Object>>,
     ) -> PdfResult<()> {
-        let mut stack = vec![root_pages_dh];
         let type_key = self.arena.name("Type");
         let pages_n = self.arena.name("Pages");
         let page_n = self.arena.name("Page");
         let kids_k = self.arena.name("Kids");
 
-        while let Some(dh) = stack.pop() {
-            let Some(dict) = self.arena.get_dict(dh) else { continue };
-            
-            let Some(kids_obj) = dict.get(&kids_k) else { continue };
-            let Some(kids_handle) = kids_obj.as_array() else { continue };
-            let Some(kids) = self.arena.get_array(kids_handle) else { continue };
+        let Some(dict) = self.arena.get_dict(dh) else { return Ok(()) };
 
-            for kid_obj in kids.iter().rev() {
-                if let Object::Reference(h) = kid_obj
-                    && let Some(Object::Dictionary(kdh)) = self.arena.get_object(*h) {
-                        let kdict = self.arena.get_dict(kdh).ok_or_else(|| PdfError::Other("Kid dict missing".into()))?;
-                        let ktype = kdict.get(&type_key).and_then(|o| o.as_name());
-                        
-                        if ktype == Some(pages_n) {
-                            stack.push(kdh);
-                        } else if ktype == Some(page_n) {
-                            pages.push(*h);
-                        }
-                    }
+        let Some(kids_obj) = dict.get(&kids_k) else { return Ok(()) };
+        let Some(kids_handle) = kids_obj.as_array() else { return Ok(()) };
+        let Some(kids) = self.arena.get_array(kids_handle) else { return Ok(()) };
+
+        for kid_obj in kids {
+            if let Object::Reference(h) = kid_obj
+                && let Some(Object::Dictionary(kdh)) = self.arena.get_object(h)
+            {
+                let kdict = self
+                    .arena
+                    .get_dict(kdh)
+                    .ok_or_else(|| PdfError::Other("Kid dict missing".into()))?;
+                let ktype = kdict.get(&type_key).and_then(|o| o.as_name());
+
+                if ktype == Some(pages_n) {
+                    self.collect_pages_recursive(kdh, pages)?;
+                } else if ktype == Some(page_n) {
+                    pages.push(h);
+                }
             }
         }
         Ok(())

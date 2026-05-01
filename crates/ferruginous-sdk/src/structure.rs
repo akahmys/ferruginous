@@ -3,7 +3,7 @@
 //! (ISO 14289-2 / PDF/UA-2 Compliance Bridge)
 
 use ferruginous_core::document::structure::StructElement;
-use ferruginous_core::{Handle, Object, PdfArena, PdfError, PdfName, PdfResult, FromPdfObject};
+use ferruginous_core::{FromPdfObject, Handle, Object, PdfArena, PdfError, PdfName, PdfResult};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -93,8 +93,17 @@ impl<'a> MatterhornAuditor<'a> {
         let mut last_heading_level = 0;
 
         while let Some(element_handle) = visitor.next_element() {
-            let element = StructElement::from_pdf_object(Object::Dictionary(element_handle), self.arena)?;
-            let tag_name = self.arena.get_name(element.subtype)
+            let element =
+                StructElement::from_pdf_object(Object::Dictionary(element_handle), self.arena)?;
+
+            // Skip structure elements that lack /S (Subtype) — non-fatal, real-world PDFs may omit it.
+            let Some(subtype_handle) = element.subtype else {
+                continue;
+            };
+
+            let tag_name = self
+                .arena
+                .get_name(subtype_handle)
                 .ok_or_else(|| PdfError::Other("Tag name not found".into()))?;
             let tag_str = tag_name.as_str();
 

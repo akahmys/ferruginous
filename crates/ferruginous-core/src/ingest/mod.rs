@@ -1,14 +1,13 @@
 //! Ingestor module for transitioning lopdf::Document to PdfArena.
 
+use crate::Document;
 use crate::arena::{PdfArena, RemappingTable};
+use crate::error::PdfError;
 use crate::handle::Handle;
 use crate::object::Object;
-use crate::security::SecurityHandler;
-use crate::error::PdfError;
-use crate::Document;
 use crate::refine::ParallelRefinery;
-
-
+use crate::security::SecurityHandler;
+use std::sync::Arc;
 
 mod discovery;
 pub use discovery::*;
@@ -30,11 +29,7 @@ pub struct IngestionOptions {
 
 impl Default for IngestionOptions {
     fn default() -> Self {
-        Self {
-            active_refinement: true,
-            sublime_metadata: true,
-            color_policy: ColorPolicy::Strict,
-        }
+        Self { active_refinement: true, sublime_metadata: true, color_policy: ColorPolicy::Strict }
     }
 }
 
@@ -56,7 +51,10 @@ impl Ingestor {
     /// 2. **Pass 1 (Inhalation)**: Maps lopdf objects to PdfArena Handles, decoupling from physical offsets.
     /// 3. **Pass 1.5 (Context Discovery)**: Discovers font resources and maps them to content streams.
     /// 4. **Pass 2 (Refinement)**: Parallel processing of page content and metadata.
-    pub fn ingest(doc: &mut lopdf::Document, _options: &IngestionOptions) -> crate::PdfResult<IngestedDocument> {
+    pub fn ingest(
+        doc: &mut lopdf::Document,
+        _options: &IngestionOptions,
+    ) -> crate::PdfResult<IngestedDocument> {
         let arena = PdfArena::new();
         let mut table = RemappingTable::new();
 
@@ -70,11 +68,9 @@ impl Ingestor {
         }
 
         for (&id, obj) in &doc.objects {
-            let handle = table.get(&id).cloned().ok_or_else(|| {
-                PdfError::Ingestion {
-                    context: "Pass 1 Inhalation".into(),
-                    message: format!("Missing handle for object {:?}", id).into(),
-                }
+            let handle = table.get(&id).cloned().ok_or_else(|| PdfError::Ingestion {
+                context: "Pass 1 Inhalation".into(),
+                message: format!("Missing handle for object {:?}", id).into(),
             })?;
             let raw_obj = Object::from_lopdf(obj, &arena, &table);
             arena.set_object(handle, raw_obj);
@@ -85,27 +81,37 @@ impl Ingestor {
         let info_id = doc.trailer.get(b"Info").and_then(|o| o.as_reference()).ok();
         let root_handle = root_id.and_then(|id| table.get(&id)).cloned().unwrap_or(Handle::new(0));
         let info_handle = info_id.and_then(|id| table.get(&id)).cloned();
-        
+
         let temp_doc = Document::new(arena.clone(), root_handle, info_handle);
         let handle_font_cache = discover_fonts(&arena, &temp_doc);
         let stream_contexts = map_stream_contexts(&arena, &handle_font_cache);
 
-        println!("Pass 1.5: Discovered {} fonts and {} contextual stream mappings.", handle_font_cache.len(), stream_contexts.len());
+        // Map font file stream handles to their distilled (reconstructed) data
+        let mut distilled_fonts = std::collections::BTreeMap::new();
+        for res in handle_font_cache.values() {
+            if let Some(sh) = res.font_file_handle
+                && let Some(ref data) = res.reconstructed_data
+            {
+                distilled_fonts.insert(sh, Arc::clone(data));
+            }
+        }
 
         let mut all_issues = Vec::new();
         if _options.active_refinement {
             // Pass 2: Active Refinement
-            println!("Pass 2: Active Refinement...");
-            let refined_results =
-                ParallelRefinery::refine_all(doc, &table, &handle_font_cache, &stream_contexts);
+            let refined_results = ParallelRefinery::refine_all(
+                doc,
+                &table,
+                &handle_font_cache,
+                &stream_contexts,
+                &distilled_fonts,
+            );
 
             // Pass 3: Sequential Integration
             for (id, refined, mut issues) in refined_results {
-                let handle = table.get(&id).cloned().ok_or_else(|| {
-                    PdfError::Ingestion {
-                        context: "Pass 3 Integration".into(),
-                        message: format!("Missing handle for refined object {:?}", id).into(),
-                    }
+                let handle = table.get(&id).cloned().ok_or_else(|| PdfError::Ingestion {
+                    context: "Pass 3 Integration".into(),
+                    message: format!("Missing handle for refined object {:?}", id).into(),
                 })?;
                 let committed = crate::refine::commit_to_arena(&arena, refined, 0);
                 arena.set_object(handle, committed);
@@ -113,12 +119,7 @@ impl Ingestor {
             }
         }
 
-        Ok(IngestedDocument {
-            arena,
-            root: root_handle,
-            info: info_handle,
-            issues: all_issues,
-        })
+        Ok(IngestedDocument { arena, root: root_handle, info: info_handle, issues: all_issues })
     }
 
     /// Performs "Pass 0" normalization by decrypting the raw PDF objects in-place.
@@ -129,7 +130,7 @@ impl Ingestor {
     /// Adobe fidelity requirements.
     fn perform_pass_0_decryption(doc: &mut lopdf::Document) -> crate::PdfResult<()> {
         let mut security_handler = None;
-        
+
         if let Ok(encrypt_dict_obj) = doc.trailer.get(b"Encrypt") {
             let encrypt_obj = if let Ok(id) = encrypt_dict_obj.as_reference() {
                 doc.objects.get(&id)
@@ -140,25 +141,31 @@ impl Ingestor {
             if let Some(lopdf::Object::Dictionary(dict)) = encrypt_obj {
                 let v_val = dict.get(b"V").and_then(|o| o.as_i64()).unwrap_or(0);
                 let r_val = dict.get(b"R").and_then(|o| o.as_i64()).unwrap_or(0);
-                
+
                 if v_val == 4 && r_val == 4 {
                     let o_str = dict.get(b"O").and_then(|o| o.as_str()).unwrap_or(&[]);
                     let u_str = dict.get(b"U").and_then(|o| o.as_str()).unwrap_or(&[]);
                     let p_val = dict.get(b"P").and_then(|o| o.as_i64()).unwrap_or(0) as i32;
-                    let file_id = doc.trailer.get(b"ID")
+                    let file_id = doc
+                        .trailer
+                        .get(b"ID")
                         .and_then(|o| o.as_array())
                         .map(|a| a.first().and_then(|o| o.as_str().ok()).unwrap_or(&[]))
                         .unwrap_or(&[]);
-                    let encrypt_metadata = dict.get(b"EncryptMetadata").and_then(|o| o.as_bool()).unwrap_or(true);
-                    if let Ok(handler) = SecurityHandler::new_v4("", o_str, u_str, p_val, file_id, encrypt_metadata) {
+                    let encrypt_metadata =
+                        dict.get(b"EncryptMetadata").and_then(|o| o.as_bool()).unwrap_or(true);
+                    if let Ok(handler) =
+                        SecurityHandler::new_v4("", o_str, u_str, p_val, file_id, encrypt_metadata)
+                    {
                         security_handler = Some(handler);
                     }
-                } else if v_val == 5 && r_val == 5 {
+                } else if v_val == 5 && (r_val == 5 || r_val == 6) {
                     let mut file_id = &[][..];
                     if let Ok(id_array) = doc.trailer.get(b"ID")
                         && let Ok(arr) = id_array.as_array()
                         && let Some(first) = arr.first()
-                        && let Ok(s) = first.as_str() {
+                        && let Ok(s) = first.as_str()
+                    {
                         file_id = s;
                     }
                     if let Ok(handler) = SecurityHandler::new_v5("", "", file_id) {

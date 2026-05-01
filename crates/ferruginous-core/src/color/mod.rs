@@ -22,12 +22,11 @@ pub enum ColorSpace {
 impl ColorSpace {
     /// Loads an ICCBased color space from raw profile data.
     pub fn from_icc(data: &[u8]) -> PdfResult<Self> {
-        let profile = ColorProfile::new_from_slice(data).map_err(|e| {
-            crate::error::PdfError::Ingestion {
+        let profile =
+            ColorProfile::new_from_slice(data).map_err(|e| crate::error::PdfError::Ingestion {
                 context: "ICC Profile Loading".into(),
                 message: format!("ICC Profile error: {:?}", e).into(),
-            }
-        })?;
+            })?;
         Ok(Self::ICCBased(Arc::new(profile)))
     }
 

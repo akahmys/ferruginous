@@ -9,13 +9,12 @@ use std::collections::BTreeMap;
 
 /// Applies the specified predictor to the decoded data.
 pub fn apply_predictor(data: &[u8], params: &Object, arena: &PdfArena) -> PdfResult<Vec<u8>> {
-    let dict = params
-        .as_dict_handle()
-        .and_then(|h| arena.get_dict(h))
-        .ok_or_else(|| PdfError::Filter {
+    let dict = params.as_dict_handle().and_then(|h| arena.get_dict(h)).ok_or_else(|| {
+        PdfError::Filter {
             filter: "Predictor".into(),
-            message: "Predictor params must be a dictionary".into()
-        })?;
+            message: "Predictor params must be a dictionary".into(),
+        }
+    })?;
 
     let predictor = get_int_param(&dict, arena, "Predictor", 1);
 
@@ -95,10 +94,12 @@ fn decode_row(tag: u8, input: &[u8], prev: &[u8], bpp: usize, out: &mut [u8]) ->
             2 => input[j].wrapping_add(up),                                    // Up
             3 => input[j].wrapping_add(((left as u16 + up as u16) / 2) as u8), // Average
             4 => input[j].wrapping_add(paeth(left, up, up_left)),              // Paeth
-            _ => return Err(PdfError::Filter {
-                filter: "PNGPredictor".into(),
-                message: format!("Invalid PNG predictor tag: {}", tag).into(),
-            }),
+            _ => {
+                return Err(PdfError::Filter {
+                    filter: "PNGPredictor".into(),
+                    message: format!("Invalid PNG predictor tag: {}", tag).into(),
+                });
+            }
         };
     }
     Ok(())

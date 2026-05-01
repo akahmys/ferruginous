@@ -136,7 +136,9 @@ fn update_xmp_metadata(doc: &crate::Document, info: &MetadataInfo) -> crate::Pdf
     Ok(())
 }
 
-fn build_refined_metadata_map(info: &MetadataInfo) -> BTreeMap<crate::object::PdfName, crate::refine::RefinedObject> {
+fn build_refined_metadata_map(
+    info: &MetadataInfo,
+) -> BTreeMap<crate::object::PdfName, crate::refine::RefinedObject> {
     let mut refined_map = BTreeMap::new();
     if let Some(v) = &info.title {
         refined_map.insert(
@@ -183,7 +185,10 @@ fn commit_metadata_stream(
         }
     }
     let sdh = arena.alloc_dict(stream_dict);
-    arena.alloc_object(Object::Stream(sdh, std::sync::Arc::new(crate::object::SublimatedData::Raw(data))))
+    arena.alloc_object(Object::Stream(
+        sdh,
+        std::sync::Arc::new(crate::object::SublimatedData::Raw(data)),
+    ))
 }
 
 fn apply_xmp_metadata(doc: &roxmltree::Document, info: &mut MetadataInfo) {

@@ -113,16 +113,36 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    /// Display document information and compliance audit
-    Inspect {
+    /// Analyze document structure and compliance
+    Analyze {
+        #[command(subcommand)]
+        sub: AnalyzeSubcommands,
+    },
+    /// Manipulate document pages and structure
+    Manipulate {
+        #[command(subcommand)]
+        sub: ManipulateSubcommands,
+    },
+    /// Produce new document versions or formats
+    Produce {
+        #[command(subcommand)]
+        sub: ProduceSubcommands,
+    },
+    /// Low-level debugging and inspection tools
+    Debug {
+        #[command(subcommand)]
+        sub: DebugSubcommands,
+    },
+    /// Display open source credits and licenses
+    Credits,
+}
+
+#[derive(Subcommand, Debug)]
+enum AnalyzeSubcommands {
+    /// Display document information and font summary
+    Info {
         /// Input PDF file
         input: PathBuf,
-        /// Perform detailed compliance audit
-        #[arg(long)]
-        audit: bool,
-        /// Dump hierarchical object structure tree
-        #[arg(long)]
-        structure: bool,
         /// Output format (text, json, markdown)
         #[arg(short, long, default_value = "text")]
         format: String,
@@ -130,31 +150,32 @@ enum Commands {
         #[command(flatten)]
         ingest: IngestionArgs,
     },
-    /// Upgrade document to PDF 2.0 and modern standards (A-4, X-6, UA-2)
-    Upgrade {
+    /// Perform detailed compliance audit (UA-2, ISO 32000-2)
+    Audit {
         /// Input PDF file
         input: PathBuf,
-        /// Output PDF file
-        output: PathBuf,
-        /// Target standard (a4, x6, ua2)
-        #[arg(long)]
-        standard: Option<String>,
-        /// Optional ICC color profile path
-        #[arg(long)]
-        icc_profile: Option<PathBuf>,
-        /// Opt-in for Fast Web View (Linearization)
-        #[arg(long)]
-        linearize: bool,
-        /// Display internal structural diff after refinement
-        #[arg(long)]
-        diff: bool,
+        /// Output format (text, json, markdown)
+        #[arg(short, long, default_value = "text")]
+        format: String,
         /// Ingestion control options
         #[command(flatten)]
         ingest: IngestionArgs,
-        /// Optimization options
-        #[command(flatten)]
-        opt: OptimizationArgs,
     },
+    /// Extract text content
+    Text {
+        /// Input PDF file
+        input: PathBuf,
+        /// Pages to extract text from (comma-separated or range, e.g., 1-5)
+        #[arg(short, long)]
+        pages: Option<String>,
+        /// Ingestion control options
+        #[command(flatten)]
+        ingest: IngestionArgs,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum ManipulateSubcommands {
     /// Merge multiple PDF files into one
     Merge {
         /// Input PDF files
@@ -186,6 +207,26 @@ enum Commands {
         #[command(flatten)]
         opt: OptimizationArgs,
     },
+    /// Rotate specific pages in the document
+    Rotate {
+        /// Input PDF file
+        input: PathBuf,
+        /// Output PDF file
+        #[arg(short, long)]
+        output: PathBuf,
+        /// Pages to rotate (comma-separated, e.g., 1,3-5) (default: all)
+        #[arg(short, long)]
+        pages: Option<String>,
+        /// Rotation angle (90, 180, 270)
+        #[arg(short, long)]
+        angle: i32,
+        /// Ingestion control options
+        #[command(flatten)]
+        ingest: IngestionArgs,
+        /// Optimization options
+        #[command(flatten)]
+        opt: OptimizationArgs,
+    },
     /// Attempt to repair a corrupted PDF document
     Repair {
         /// Input corrupted PDF file
@@ -199,18 +240,45 @@ enum Commands {
         #[command(flatten)]
         opt: OptimizationArgs,
     },
-    /// Rotate specific pages in the document
-    Rotate {
+    /// Heuristically re-tag the document logical structure for UA-2
+    Retag {
+        /// Input PDF file
+        input: PathBuf,
+        /// Output repaired PDF file (Explicitly required)
+        #[arg(short, long)]
+        output: PathBuf,
+        /// Enable interactive Wizard Mode
+        #[arg(short, long)]
+        wizard: bool,
+        /// Ingestion control options
+        #[command(flatten)]
+        ingest: IngestionArgs,
+        /// Optimization options
+        #[command(flatten)]
+        opt: OptimizationArgs,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum ProduceSubcommands {
+    /// Upgrade document to PDF 2.0 and modern standards (A-4, X-6, UA-2)
+    Upgrade {
         /// Input PDF file
         input: PathBuf,
         /// Output PDF file
         output: PathBuf,
-        /// Pages to rotate (comma-separated, e.g., 1,3-5) (default: all)
-        #[arg(short, long)]
-        pages: Option<String>,
-        /// Rotation angle (90, 180, 270)
-        #[arg(short, long)]
-        angle: i32,
+        /// Target standard (a4, x6, ua2)
+        #[arg(long)]
+        standard: Option<String>,
+        /// Optional ICC color profile path
+        #[arg(long)]
+        icc_profile: Option<PathBuf>,
+        /// Opt-in for Fast Web View (Linearization)
+        #[arg(long)]
+        linearize: bool,
+        /// Display internal structural diff after refinement
+        #[arg(long)]
+        diff: bool,
         /// Ingestion control options
         #[command(flatten)]
         ingest: IngestionArgs,
@@ -230,34 +298,6 @@ enum Commands {
         /// Ingestion control options
         #[command(flatten)]
         ingest: IngestionArgs,
-    },
-    /// Extract text from the document
-    Text {
-        /// Input PDF file
-        input: PathBuf,
-        /// Pages to extract text from (comma-separated or range, e.g., 1-5)
-        #[arg(short, long)]
-        pages: Option<String>,
-        /// Ingestion control options
-        #[command(flatten)]
-        ingest: IngestionArgs,
-    },
-    /// Heuristically re-tag the document logical structure for UA-2
-    Retag {
-        /// Input PDF file
-        input: PathBuf,
-        /// Output repaired PDF file (Explicitly required)
-        #[arg(short, long)]
-        output: PathBuf,
-        /// Enable interactive Wizard Mode
-        #[arg(short, long)]
-        wizard: bool,
-        /// Ingestion control options
-        #[command(flatten)]
-        ingest: IngestionArgs,
-        /// Optimization options
-        #[command(flatten)]
-        opt: OptimizationArgs,
     },
     /// Digitally sign the PDF document
     Sign {
@@ -287,8 +327,32 @@ enum Commands {
         #[command(flatten)]
         opt: OptimizationArgs,
     },
-    /// Display open source credits and licenses
-    Credits,
+}
+
+#[derive(Subcommand, Debug)]
+enum DebugSubcommands {
+    /// Dump a specific PDF object
+    Dump {
+        /// Input PDF file
+        input: PathBuf,
+        /// Object ID to dump
+        #[arg(long)]
+        obj: u32,
+        /// Gen number (default 0)
+        #[arg(long, default_value_t = 0)]
+        gen_num: u16,
+        /// Ingestion control options
+        #[command(flatten)]
+        ingest: IngestionArgs,
+    },
+    /// Dump hierarchical object structure tree
+    Structure {
+        /// Input PDF file
+        input: PathBuf,
+        /// Ingestion control options
+        #[command(flatten)]
+        ingest: IngestionArgs,
+    },
 }
 
 #[tokio::main]
@@ -296,45 +360,72 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Inspect { input, audit, structure, format, ingest } => {
-            handle_inspect(input, audit, structure, format, ingest)?;
-        }
-        Commands::Upgrade {
-            input,
-            output,
-            standard,
-            icc_profile,
-            linearize,
-            diff,
-            ingest,
-            opt,
-        } => {
-            handle_upgrade(input, output, standard, icc_profile, linearize, diff, ingest, opt)?;
-        }
-        Commands::Merge { inputs, output, ingest, opt } => {
-            handle_merge(inputs, output, ingest, opt)?;
-        }
-        Commands::Split { input, output, pages, ingest, opt } => {
-            handle_split(input, output, pages, ingest, opt)?;
-        }
-        Commands::Repair { input, output, ingest, opt } => {
-            handle_repair(input, output, ingest, opt)?;
-        }
-        Commands::Rotate { input, output, pages, angle, ingest, opt } => {
-            handle_rotate(input, output, pages, angle, ingest, opt)?;
-        }
-        Commands::Render { input, output, page, ingest } => {
-            handle_render(input, output, page, ingest)?;
-        }
-        Commands::Text { input, pages, ingest } => {
-            handle_text(input, pages, ingest)?;
-        }
-        Commands::Retag { input, output, wizard, ingest, opt } => {
-            handle_retag(input, output, wizard, ingest, opt)?;
-        }
-        Commands::Sign { input, output, reason, location, name, page, rect, ingest, opt } => {
-            handle_sign(input, output, reason, location, name, page, rect, ingest, opt)?;
-        }
+        Commands::Analyze { sub } => match sub {
+            AnalyzeSubcommands::Info { input, format, ingest } => {
+                handle_info(input, format, ingest)?;
+            }
+            AnalyzeSubcommands::Audit { input, format, ingest } => {
+                handle_audit(input, format, ingest)?;
+            }
+            AnalyzeSubcommands::Text { input, pages, ingest } => {
+                handle_text(input, pages, ingest)?;
+            }
+        },
+        Commands::Manipulate { sub } => match sub {
+            ManipulateSubcommands::Merge { inputs, output, ingest, opt } => {
+                handle_merge(inputs, output, ingest, opt)?;
+            }
+            ManipulateSubcommands::Split { input, output, pages, ingest, opt } => {
+                handle_split(input, output, pages, ingest, opt)?;
+            }
+            ManipulateSubcommands::Rotate { input, output, pages, angle, ingest, opt } => {
+                handle_rotate(input, output, pages, angle, ingest, opt)?;
+            }
+            ManipulateSubcommands::Repair { input, output, ingest, opt } => {
+                handle_repair(input, output, ingest, opt)?;
+            }
+            ManipulateSubcommands::Retag { input, output, wizard, ingest, opt } => {
+                handle_retag(input, output, wizard, ingest, opt)?;
+            }
+        },
+        Commands::Produce { sub } => match sub {
+            ProduceSubcommands::Upgrade {
+                input,
+                output,
+                standard,
+                icc_profile,
+                linearize,
+                diff,
+                ingest,
+                opt,
+            } => {
+                handle_upgrade(input, output, standard, icc_profile, linearize, diff, ingest, opt)?;
+            }
+            ProduceSubcommands::Render { input, output, page, ingest } => {
+                handle_render(input, output, page, ingest)?;
+            }
+            ProduceSubcommands::Sign {
+                input,
+                output,
+                reason,
+                location,
+                name,
+                page,
+                rect,
+                ingest,
+                opt,
+            } => {
+                handle_sign(input, output, reason, location, name, page, rect, ingest, opt)?;
+            }
+        },
+        Commands::Debug { sub } => match sub {
+            DebugSubcommands::Dump { input, obj, gen_num, ingest } => {
+                handle_debug_dump(input, obj, gen_num, ingest)?;
+            }
+            DebugSubcommands::Structure { input, ingest } => {
+                handle_debug_structure(input, ingest)?;
+            }
+        },
         Commands::Credits => {
             handle_credits()?;
         }
@@ -524,15 +615,9 @@ fn render_summary_text(
     Ok(())
 }
 
-fn handle_inspect(
-    input: PathBuf,
-    audit: bool,
-    structure: bool,
-    format: String,
-    ingest: IngestionArgs,
-) -> Result<()> {
+fn handle_info(input: PathBuf, format: String, ingest: IngestionArgs) -> Result<()> {
     if format == "text" {
-        println!("fepdf inspect: Analyzing {:?}", input);
+        println!("fepdf info: Analyzing {:?}", input);
     }
     let data = std::fs::read(&input).with_context(|| "Failed to read input")?;
     let ingest_options: ferruginous_core::ingest::IngestionOptions = ingest.into();
@@ -542,9 +627,109 @@ fn handle_inspect(
 
     match format.as_str() {
         "json" => println!("{}", serde_json::to_string_pretty(&summary)?),
-        "markdown" => render_summary_markdown(&summary, &input, audit)?,
-        _ => render_summary_text(&doc, &summary, audit, structure)?,
+        "markdown" => render_summary_markdown(&summary, &input, false)?,
+        _ => render_summary_text(&doc, &summary, false, false)?,
     }
+    Ok(())
+}
+
+fn handle_audit(input: PathBuf, format: String, ingest: IngestionArgs) -> Result<()> {
+    if format == "text" {
+        println!("fepdf audit: Performing compliance check on {:?}", input);
+    }
+    let data = std::fs::read(&input).with_context(|| "Failed to read input")?;
+    let ingest_options: ferruginous_core::ingest::IngestionOptions = ingest.into();
+    let doc = PdfDocument::open_with_options(data.into(), &ingest_options)
+        .map_err(|e| anyhow::anyhow!("{:?}", e))?;
+    let summary = doc.get_summary().map_err(|e| anyhow::anyhow!("{:?}", e))?;
+
+    match format.as_str() {
+        "json" => println!("{}", serde_json::to_string_pretty(&summary)?),
+        "markdown" => render_summary_markdown(&summary, &input, true)?,
+        _ => render_summary_text(&doc, &summary, true, false)?,
+    }
+    Ok(())
+}
+
+fn handle_debug_dump(
+    input: PathBuf,
+    obj_id: u32,
+    _gen_num: u16,
+    ingest: IngestionArgs,
+) -> Result<()> {
+    println!("fepdf debug dump: Object {} from {:?}", obj_id, input);
+    let data = std::fs::read(&input).with_context(|| "Failed to read input")?;
+    let ingest_options: ferruginous_core::ingest::IngestionOptions = ingest.into();
+    let doc = PdfDocument::open_with_options(data.into(), &ingest_options)
+        .map_err(|e| anyhow::anyhow!("{:?}", e))?;
+
+    let arena = doc.inner().arena();
+    let id = ferruginous_core::Object::Reference(ferruginous_core::Handle::new(obj_id));
+    let resolved = id.resolve(arena);
+
+    println!("\n--- [ OBJECT {} ] ---", obj_id);
+    match resolved {
+        ferruginous_core::Object::Dictionary(h) => {
+            if let Some(dict) = arena.get_dict(h) {
+                println!("Type: Dictionary");
+                for (k, v) in dict.iter() {
+                    let name = arena
+                        .get_name(k.clone())
+                        .map(|n| n.as_str().to_string())
+                        .unwrap_or_else(|| format!("Unknown_{:?}", k));
+                    println!("  /{} -> {:?}", name, v);
+                }
+            } else {
+                println!("Error: Dictionary handle {:?} not found in arena", h);
+            }
+        }
+        ferruginous_core::Object::Stream(h, data) => {
+            if let Some(dict) = arena.get_dict(h) {
+                println!("Type: Stream");
+                for (k, v) in dict.iter() {
+                    let name = arena
+                        .get_name(k.clone())
+                        .map(|n| n.as_str().to_string())
+                        .unwrap_or_else(|| format!("Unknown_{:?}", k));
+                    println!("  /{} -> {:?}", name, v);
+                }
+                let raw_bytes = arena.get_stream_bytes(&data).unwrap_or_default();
+                println!("Raw Length: {} bytes", raw_bytes.len());
+
+                if let Ok(decoded) = arena.process_filters(&raw_bytes, &dict) {
+                    println!("Decoded Length: {} bytes", decoded.len());
+                    if decoded.len() < 2000 {
+                        println!(
+                            "\n--- [ DECODED CONTENT ] ---\n{}",
+                            String::from_utf8_lossy(&decoded)
+                        );
+                    } else {
+                        println!(
+                            "\n--- [ DECODED CONTENT (PREVIEW) ] ---\n{}",
+                            String::from_utf8_lossy(&decoded[..2000])
+                        );
+                        println!("... (truncated)");
+                    }
+                }
+            } else {
+                println!("Error: Stream dictionary handle {:?} not found in arena", h);
+            }
+        }
+        _ => println!("{:?}", resolved),
+    }
+
+    Ok(())
+}
+
+fn handle_debug_structure(input: PathBuf, ingest: IngestionArgs) -> Result<()> {
+    println!("fepdf debug structure: Hierarchical tree for {:?}", input);
+    let data = std::fs::read(&input).with_context(|| "Failed to read input")?;
+    let ingest_options: ferruginous_core::ingest::IngestionOptions = ingest.into();
+    let doc = PdfDocument::open_with_options(data.into(), &ingest_options)
+        .map_err(|e| anyhow::anyhow!("{:?}", e))?;
+
+    let tree = doc.print_structure().map_err(|e| anyhow::anyhow!("{:?}", e))?;
+    println!("\n--- [ DOCUMENT STRUCTURE ] ---\n{}", tree);
     Ok(())
 }
 
@@ -655,8 +840,37 @@ fn handle_render(
     println!("fepdf render: Rendering page {} of {:?} to {:?}...", page_num, input, output);
     let data = std::fs::read(&input).with_context(|| "Failed to read input")?;
     let ingest_options: ferruginous_core::ingest::IngestionOptions = ingest.into();
-    let doc = PdfDocument::open_with_options(data.into(), &ingest_options)
+    let mut doc = PdfDocument::open_with_options(data.into(), &ingest_options)
         .map_err(|e| anyhow::anyhow!("{:?}", e))?;
+
+    // Phase 4: Host-level font discovery
+    let mut system_fonts = std::collections::BTreeMap::new();
+    let mincho_paths = [
+        "/System/Library/Fonts/ヒラギノ明朝 ProN.ttc",
+        "/System/Library/Fonts/Hiragino Mincho ProN.ttc",
+        "/usr/share/fonts/opentype/ipafont-mincho/ipam.ttf",
+    ];
+    for path in mincho_paths {
+        if let Ok(data) = std::fs::read(path) {
+            system_fonts
+                .insert(ferruginous_sdk::FallbackFontType::Serif, std::sync::Arc::new(data));
+            break;
+        }
+    }
+    let gothic_paths = [
+        "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc",
+        "/System/Library/Fonts/Hiragino Sans GB.ttc",
+        "/usr/share/fonts/opentype/ipafont-gothic/ipag.ttf",
+    ];
+    for path in gothic_paths {
+        if let Ok(data) = std::fs::read(path) {
+            let arc = std::sync::Arc::new(data);
+            system_fonts.insert(ferruginous_sdk::FallbackFontType::SansSerif, arc.clone());
+            system_fonts.entry(ferruginous_sdk::FallbackFontType::Default).or_insert(arc);
+            break;
+        }
+    }
+    doc.set_system_fonts(system_fonts);
 
     if page_num == 0 || page_num > doc.page_count().map_err(|e| anyhow::anyhow!("{:?}", e))? {
         return Err(anyhow::anyhow!("Invalid page number: {}", page_num));
@@ -827,8 +1041,12 @@ fn render_general_text(summary: &ferruginous_sdk::DocumentSummary) {
     println!("\n--- [ DOCUMENT SUMMARY ] ---");
     println!("Version:    {}", summary.version);
     println!("Pages:      {}", summary.page_count);
-    if let Some(v) = &summary.metadata.title { println!("Title:      {}", v); }
-    if let Some(v) = &summary.metadata.author { println!("Author:     {}", v); }
+    if let Some(v) = &summary.metadata.title {
+        println!("Title:      {}", v);
+    }
+    if let Some(v) = &summary.metadata.author {
+        println!("Author:     {}", v);
+    }
 }
 
 fn render_font_text(summary: &ferruginous_sdk::DocumentSummary) {
@@ -839,11 +1057,21 @@ fn render_font_text(summary: &ferruginous_sdk::DocumentSummary) {
     if summary.fonts.is_empty() {
         println!("No fonts detected.");
     } else {
-        println!("{:<30} | {:<10} | {:<4} | {:<4} | {:<10}", "Font Name", "Type", "Emb", "Sub", "Encoding");
-        println!("{:-<30}-+-{:-<10}-+-{:-<4}-+-{:-<4}-+-{:-<10}", "", "", "", "", "");
+        println!(
+            "{:<30} | {:<10} | {:<4} | {:<4} | {:<4} | {:<10}",
+            "Font Name", "Type", "Emb", "Sub", "ToU", "Encoding"
+        );
+        println!("{:-<30}-+-{:-<10}-+-{:-<4}-+-{:-<4}-+-{:-<4}-+-{:-<10}", "", "", "", "", "", "");
         for f in &summary.fonts {
-            println!("{:<30} | {:<10} | {:<4} | {:<4} | {:<10}", f.name, f.font_type,
-                if f.is_embedded { "✅" } else { "❌" }, if f.is_subset { "✅" } else { "−" }, f.encoding);
+            println!(
+                "{:<30} | {:<10} | {:<4} | {:<4} | {:<4} | {:<10}",
+                f.name,
+                f.font_type,
+                if f.is_embedded { "✅" } else { "❌" },
+                if f.is_subset { "✅" } else { "−" },
+                if f.has_to_unicode { "✅" } else { "❌" },
+                f.encoding
+            );
         }
     }
 }

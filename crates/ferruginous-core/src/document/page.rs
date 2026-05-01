@@ -1,5 +1,5 @@
-use crate::{FromPdfObject, Object, PdfName, PdfArena};
 use crate::handle::Handle;
+use crate::{FromPdfObject, Object, PdfArena, PdfName};
 use std::collections::BTreeMap;
 
 /// A high-level representation of a PDF page.

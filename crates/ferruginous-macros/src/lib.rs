@@ -2,7 +2,7 @@ extern crate proc_macro;
 
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, Data, DeriveInput, Fields, LitStr, LitFloat};
+use syn::{Data, DeriveInput, Fields, LitFloat, LitStr, parse_macro_input};
 
 #[proc_macro_derive(FromPdfObject, attributes(pdf_key, pdf_dict))]
 pub fn derive_from_pdf_object(input: TokenStream) -> TokenStream {
@@ -118,7 +118,7 @@ pub fn derive_from_pdf_object(input: TokenStream) -> TokenStream {
                         pos: 0,
                         message: format!("Expected dictionary for {}, got {:?}", stringify!(#name), obj).into()
                     })?;
-                
+
                 let dict = arena.get_dict(dict_handle)
                     .ok_or_else(|| ferruginous_core::PdfError::Arena("Missing dictionary in arena".into()))?;
 

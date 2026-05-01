@@ -1,13 +1,8 @@
-//! Refinery 2.1 Sequential Object Arena (RR-15 Hardened).
-//!
-//! This model utilizes a reference-counted internal state (Arc<RefCell>) to allow
-//! the Arena handle itself to be cheaply cloned while maintaining shared mutable state.
-
 use crate::PdfResult;
 use crate::handle::Handle;
 use crate::object::{Object, ObjectEntry, PdfName};
 use bytes::Bytes;
-use std::cell::RefCell;
+use parking_lot::RwLock;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -23,23 +18,23 @@ pub struct PdfArena {
 
 /// The internal heap-allocated state of the PdfArena.
 ///
-/// All pools are wrapped in `RefCell` to allow interior mutability, enabling the
+/// All pools are wrapped in `RwLock` to allow thread-safe interior mutability, enabling the
 /// "Pass-based" refinement system where objects are updated in-place as they move
 /// through the normalization pipeline.
 #[derive(Default)]
 struct ArenaInner {
     /// Contiguous pool of objects for maximum cache efficiency.
-    objects: RefCell<Vec<ObjectEntry>>,
+    objects: RwLock<Vec<ObjectEntry>>,
     /// Dedicated pools for complex types to allow typesafe handles.
     /// This separation prevents "Handle Confusion" (e.g., using an Array handle to access a Dictionary).
-    dicts: RefCell<Vec<BTreeMap<Handle<PdfName>, Object>>>,
-    arrays: RefCell<Vec<Vec<Object>>>,
+    dicts: RwLock<Vec<BTreeMap<Handle<PdfName>, Object>>>,
+    arrays: RwLock<Vec<Vec<Object>>>,
     /// Interned names to ensure all `/Name` references in the document point to a single memory location.
-    names: RefCell<Vec<PdfName>>,
+    names: RwLock<Vec<PdfName>>,
     /// Index for fast name lookup during interning.
-    name_map: RefCell<BTreeMap<PdfName, Handle<PdfName>>>,
+    name_map: RwLock<BTreeMap<PdfName, Handle<PdfName>>>,
     /// The document version (e.g., 1.7, 2.0).
-    version: RefCell<f32>,
+    version: RwLock<f32>,
 }
 
 impl PdfArena {
@@ -49,65 +44,71 @@ impl PdfArena {
 
     pub fn with_version(version: f32) -> Self {
         let arena = Self::default();
-        *arena.inner.version.borrow_mut() = version;
+        *arena.inner.version.write() = version;
         arena
     }
 
     pub fn version(&self) -> f32 {
-        *self.inner.version.borrow()
+        *self.inner.version.read()
     }
 
-    /// Interns a name and returns its handle.
+    pub fn set_version(&self, version: f32) {
+        *self.inner.version.write() = version;
+    }
+
+    /// Interns a name, returning a deduplicated handle.
     pub fn intern_name(&self, name: PdfName) -> Handle<PdfName> {
-        if let Some(&handle) = self.inner.name_map.borrow().get(&name) {
-            return handle;
+        if let Some(h) = self.inner.name_map.read().get(&name) {
+            return h.clone();
         }
-        let index = u32::try_from(self.inner.names.borrow().len()).unwrap_or(u32::MAX);
-        if index == u32::MAX {
-            return Handle::new(0);
+
+        let mut map = self.inner.name_map.write();
+        let mut names = self.inner.names.write();
+
+        // Re-check after acquiring write lock
+        if let Some(h) = map.get(&name) {
+            return h.clone();
         }
-        let handle = Handle::new(index);
-        self.inner.names.borrow_mut().push(name.clone());
-        self.inner.name_map.borrow_mut().insert(name, handle);
-        handle
+
+        let h = Handle::new(names.len() as u32);
+        names.push(name.clone());
+        map.insert(name, h.clone());
+        h
     }
 
     /// Returns a handle for a name, interning it if necessary (Get-or-Create).
     pub fn name(&self, name: &str) -> Handle<PdfName> {
-        if let Some(&handle) = self.inner.name_map.borrow().get(name) {
-            return handle;
+        if let Some(h) = self.inner.name_map.read().get(name) {
+            return h.clone();
         }
         self.intern_name(PdfName::new(name))
     }
 
     /// Returns the string representation of a name handle.
     pub fn get_name_str(&self, handle: Handle<PdfName>) -> Option<String> {
-        self.inner.names.borrow().get(handle.index() as usize).map(|n| n.as_str().to_string())
+        self.inner.names.read().get(handle.index() as usize).map(|n| n.as_str().to_string())
     }
 
     pub fn get_name_by_str(&self, name: &str) -> Option<Handle<PdfName>> {
-        self.inner.name_map.borrow().get(name).copied()
+        self.inner.name_map.read().get(name).copied()
     }
 
     pub fn get_name(&self, handle: Handle<PdfName>) -> Option<PdfName> {
-        self.inner.names.borrow().get(handle.index() as usize).cloned()
+        self.inner.names.read().get(handle.index() as usize).cloned()
     }
 
     /// Returns all valid dictionary handles in the arena.
     pub fn all_dict_handles(&self) -> Vec<Handle<BTreeMap<Handle<PdfName>, Object>>> {
-        let count = u32::try_from(self.inner.dicts.borrow().len()).unwrap_or(0);
+        let count = self.inner.dicts.read().len() as u32;
         (0..count).map(Handle::new).collect()
     }
 
-    /// Allocates an object.
+    /// Registers a new object, returning a unique handle.
     pub fn alloc_object(&self, object: Object) -> Handle<Object> {
-        let mut objects = self.inner.objects.borrow_mut();
-        let index = u32::try_from(objects.len()).unwrap_or(u32::MAX);
-        if index == u32::MAX {
-            return Handle::new(0);
-        }
+        let mut objects = self.inner.objects.write();
+        let h = Handle::new(objects.len() as u32);
         objects.push(ObjectEntry { object, generation: 0 });
-        Handle::new(index)
+        h
     }
 
     /// Allocates a dictionary.
@@ -115,7 +116,7 @@ impl PdfArena {
         &self,
         dict: BTreeMap<Handle<PdfName>, Object>,
     ) -> Handle<BTreeMap<Handle<PdfName>, Object>> {
-        let mut dicts = self.inner.dicts.borrow_mut();
+        let mut dicts = self.inner.dicts.write();
         let index = u32::try_from(dicts.len()).unwrap_or(u32::MAX);
         if index == u32::MAX {
             return Handle::new(0);
@@ -126,7 +127,7 @@ impl PdfArena {
 
     /// Allocates an array.
     pub fn alloc_array(&self, array: Vec<Object>) -> Handle<Vec<Object>> {
-        let mut arrays = self.inner.arrays.borrow_mut();
+        let mut arrays = self.inner.arrays.write();
         let index = u32::try_from(arrays.len()).unwrap_or(u32::MAX);
         if index == u32::MAX {
             return Handle::new(0);
@@ -135,38 +136,53 @@ impl PdfArena {
         Handle::new(index)
     }
 
-    /// Retrieves an object.
     pub fn get_object(&self, handle: Handle<Object>) -> Option<Object> {
-        self.inner.objects.borrow().get(handle.index() as usize).map(|e| e.object.clone())
+        self.inner.objects.read().get(handle.index() as usize).map(|e| e.object.clone())
     }
 
-    /// Updates an existing object.
     pub fn set_object(&self, handle: Handle<Object>, object: Object) {
-        if let Some(entry) = self.inner.objects.borrow_mut().get_mut(handle.index() as usize) {
-            entry.object = object;
+        if let Some(e) = self.inner.objects.write().get_mut(handle.index() as usize) {
+            e.object = object;
+        }
+    }
+
+    pub fn get_object_entry(&self, handle: Handle<Object>) -> Option<ObjectEntry> {
+        self.inner.objects.read().get(handle.index() as usize).cloned()
+    }
+
+    pub fn set_object_entry(&self, handle: Handle<Object>, entry: ObjectEntry) {
+        if let Some(e) = self.inner.objects.write().get_mut(handle.index() as usize) {
+            *e = entry;
         }
     }
 
     /// Retrieves a dictionary.
-    pub fn get_dict(&self, handle: Handle<BTreeMap<Handle<PdfName>, Object>>) -> Option<BTreeMap<Handle<PdfName>, Object>> {
-        self.inner.dicts.borrow().get(handle.index() as usize).cloned()
+    pub fn get_dict(
+        &self,
+        handle: Handle<BTreeMap<Handle<PdfName>, Object>>,
+    ) -> Option<BTreeMap<Handle<PdfName>, Object>> {
+        self.inner.dicts.read().get(handle.index() as usize).cloned()
     }
 
     /// Updates an existing dictionary.
-    pub fn set_dict(&self, handle: Handle<BTreeMap<Handle<PdfName>, Object>>, dict: BTreeMap<Handle<PdfName>, Object>) {
-        if let Some(d) = self.inner.dicts.borrow_mut().get_mut(handle.index() as usize) {
+    pub fn set_dict(
+        &self,
+        handle: Handle<BTreeMap<Handle<PdfName>, Object>>,
+        dict: BTreeMap<Handle<PdfName>, Object>,
+    ) {
+        if let Some(d) = self.inner.dicts.write().get_mut(handle.index() as usize) {
             *d = dict;
         }
     }
 
     /// Retrieves an array.
     pub fn get_array(&self, handle: Handle<Vec<Object>>) -> Option<Vec<Object>> {
-        self.inner.arrays.borrow().get(handle.index() as usize).cloned()
+        self.inner.arrays.read().get(handle.index() as usize).cloned()
     }
 
     /// Searches for an existing indirect object that matches the provided object.
-    pub fn find_indirect_handle(&self, object: &Object) -> Option<Handle<Object>> {
-        let objects = self.inner.objects.borrow();
+    pub fn find_object(&self, object: &Object) -> Option<Handle<Object>> {
+        let objects = self.inner.objects.read();
         for (i, entry) in objects.iter().enumerate() {
             if &entry.object == object {
                 return Some(Handle::new(i as u32));
@@ -176,27 +192,42 @@ impl PdfArena {
     }
 
     pub fn object_count(&self) -> u32 {
-        self.inner.objects.borrow().len() as u32
+        self.inner.objects.read().len() as u32
     }
 
     /// Applies filters to data using the stream dictionary context.
-    pub fn process_filters(&self, data: &[u8], dict: &BTreeMap<Handle<PdfName>, Object>) -> PdfResult<Bytes> {
+    pub fn process_filters(
+        &self,
+        data: &[u8],
+        dict: &BTreeMap<Handle<PdfName>, Object>,
+    ) -> PdfResult<Bytes> {
         crate::filters::process_arena_filters(data, dict, self)
     }
 
     /// Sublimates raw stream data into a compressed or structured format.
-    pub fn sublimate_stream(&self, handle: Handle<Object>, data: Bytes, is_content_stream: bool) -> PdfResult<()> {
+    pub fn sublimate_stream(
+        &self,
+        handle: Handle<Object>,
+        data: Bytes,
+        is_content_stream: bool,
+    ) -> PdfResult<()> {
         use crate::object::SublimatedData;
-        
+
         let sublimated = if is_content_stream {
             // STUB: This will be replaced by the real IR parser in Pass 2
             SublimatedData::Raw(data)
         } else if data.len() > 1024 {
-            // Compress large non-content streams (images, fonts) with Zstd
-            let compressed = zstd::encode_all(&*data, 3).map_err(|e| crate::PdfError::Other(e.to_string()))?;
-            SublimatedData::Compressed {
-                original_len: data.len(),
-                data: compressed,
+            // Heuristic: If it already looks like Zstd, don't double compress
+            if data.starts_with(&[0x28, 0xB5, 0x2F, 0xFD]) {
+                SublimatedData::Compressed {
+                    original_len: 0, // Unknown if we don't parse it
+                    data: data.to_vec(),
+                }
+            } else {
+                // Compress large non-content streams (images, fonts) with Zstd
+                let compressed = zstd::encode_all(&*data, 3)
+                    .map_err(|e| crate::PdfError::Other(e.to_string().into()))?;
+                SublimatedData::Compressed { original_len: data.len(), data: compressed }
             }
         } else {
             SublimatedData::Raw(data)
@@ -209,11 +240,15 @@ impl PdfArena {
     }
 
     /// Accesses the raw bytes of a stream, transparently decompressing if necessary.
-    pub fn get_stream_bytes(&self, data: &crate::object::SublimatedData) -> PdfResult<bytes::Bytes> {
+    pub fn get_stream_bytes(
+        &self,
+        data: &crate::object::SublimatedData,
+    ) -> PdfResult<bytes::Bytes> {
         match data {
             crate::object::SublimatedData::Raw(b) => Ok(b.clone()),
             crate::object::SublimatedData::Compressed { data, .. } => {
-                let decoded = zstd::decode_all(&**data).map_err(|e| crate::PdfError::Other(e.to_string()))?;
+                let decoded = zstd::decode_all(&**data)
+                    .map_err(|e| crate::PdfError::Other(e.to_string().into()))?;
                 Ok(bytes::Bytes::from(decoded))
             }
             crate::object::SublimatedData::Commands(cmds) => {
@@ -226,12 +261,31 @@ impl PdfArena {
         }
     }
 
-    pub fn get_sublimated_data(&self, handle: Handle<Object>) -> Option<std::sync::Arc<crate::object::SublimatedData>> {
+    pub fn get_sublimated_data(
+        &self,
+        handle: Handle<Object>,
+    ) -> Option<std::sync::Arc<crate::object::SublimatedData>> {
         if let Some(Object::Stream(_, data)) = self.get_object(handle) {
             Some(data.clone())
         } else {
             None
         }
+    }
+
+    /// Finds an indirect object handle that points to the given dictionary handle.
+    pub fn find_object_by_dict_handle(
+        &self,
+        dh: Handle<BTreeMap<Handle<PdfName>, Object>>,
+    ) -> Option<Handle<Object>> {
+        let objects = self.inner.objects.read();
+        for (i, entry) in objects.iter().enumerate() {
+            if let Object::Dictionary(h) = entry.object {
+                if h == dh {
+                    return Some(Handle::new(i as u32));
+                }
+            }
+        }
+        None
     }
 }
 

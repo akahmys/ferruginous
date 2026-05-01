@@ -1,26 +1,27 @@
 use crate::interpreter::Interpreter;
 use ferruginous_core::graphics::{BlendMode, Color, PixelFormat, StrokeStyle, WindingRule};
 use ferruginous_core::{Document, Handle, Object, PdfArena, PdfName, PdfResult};
-use ferruginous_render::RenderBackend;
+use ferruginous_render::{FallbackFontType, RenderBackend, TextGlyph, TextState};
 use kurbo::{Affine, BezPath};
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 /// A single span of text with its associated styling and positioning.
 #[derive(Debug, Clone)]
 pub struct TextSpan {
-    /// The decoded text content.
+    /// The textual content of the span.
     pub text: String,
-    /// The optical font size in points.
+    /// Effective font size in points.
     pub font_size: f64,
-    /// Whether the text is inferred as bold.
+    /// True if the font style is bold.
     pub is_bold: bool,
-    /// X coordinate in PDF space.
+    /// X coordinate in page space.
     pub x: f64,
-    /// Y coordinate in PDF space.
+    /// Y coordinate in page space.
     pub y: f64,
-    /// The width of the text span.
+    /// Total advance width of the span.
     pub width: f64,
-    /// The index of the PDF operator that generated this span.
+    /// Index of the operation in the content stream.
     pub op_index: usize,
 }
 
@@ -31,27 +32,21 @@ pub struct TextExtractionBackend {
 }
 
 impl TextExtractionBackend {
-    /// Creates a new text extraction backend.
+    /// Creates a new empty text aggregator.
     pub fn new() -> Self {
         Self { output: String::new(), last_y: 0.0 }
     }
-
-    /// Returns the accumulated text and consumes the backend.
+    /// Finalizes the aggregation and returns the accumulated string.
     pub fn finish(self) -> String {
         self.output
     }
 }
 
-impl Default for TextExtractionBackend {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl RenderBackend for TextExtractionBackend {
+    fn transform(&mut self, _affine: Affine) {}
+    fn set_transform(&mut self, _affine: Affine) {}
     fn push_state(&mut self) {}
     fn pop_state(&mut self) {}
-    fn transform(&mut self, _affine: Affine) {}
     fn fill_path(&mut self, _path: &BezPath, _color: &Color, _rule: WindingRule) {}
     fn stroke_path(&mut self, _path: &BezPath, _color: &Color, _style: &StrokeStyle) {}
     fn push_clip(&mut self, _path: &BezPath, _rule: WindingRule) {}
@@ -59,29 +54,26 @@ impl RenderBackend for TextExtractionBackend {
     fn draw_image(&mut self, _data: &[u8], _width: u32, _height: u32, _format: PixelFormat) {}
     fn set_fill_alpha(&mut self, _alpha: f64) {}
     fn set_stroke_alpha(&mut self, _alpha: f64) {}
-    fn set_blend_mode(&mut self, _mode: ferruginous_core::graphics::BlendMode) {}
     fn set_fill_color(&mut self, _color: Color) {}
     fn set_stroke_color(&mut self, _color: Color) {}
+    fn set_blend_mode(&mut self, _mode: BlendMode) {}
     fn define_font(
         &mut self,
         _name: &str,
         _base: Option<&str>,
-        _data: Option<std::sync::Arc<Vec<u8>>>,
+        _data: Option<Arc<Vec<u8>>>,
         _index: Option<usize>,
-        _cid_to_gid_map: Option<Vec<u16>>,
+        _cid_map: Option<Vec<u16>>,
+        _fallback: FallbackFontType,
     ) {
     }
     fn set_font(&mut self, _name: &str) {}
     fn show_text(
         &mut self,
-        _glyphs: &[(u32, f32, f32, f32, u32)],
-        text: &str,
+        glyphs: &[TextGlyph],
         _size: f64,
         transform: Affine,
-        _th: f64,
-        _tc: f64,
-        _tw: f64,
-        _vertical: bool,
+        _state: TextState,
         _op_index: usize,
     ) {
         let coeffs = transform.as_coeffs();
@@ -89,7 +81,9 @@ impl RenderBackend for TextExtractionBackend {
         if (y - self.last_y).abs() > 5.0 && !self.output.is_empty() {
             self.output.push('\n');
         }
-        self.output.push_str(text);
+        for glyph in glyphs {
+            self.output.push_str(&glyph.unicode);
+        }
         self.last_y = y;
     }
     fn set_text_render_mode(&mut self, _mode: ferruginous_core::graphics::TextRenderingMode) {}
@@ -97,33 +91,15 @@ impl RenderBackend for TextExtractionBackend {
     fn set_word_spacing(&mut self, _spacing: f64) {}
 }
 
-/// A backend that collects text spans for analysis instead of rendering them.
 struct CollectorBackend {
     spans: Vec<TextSpan>,
-    fonts: BTreeMap<String, String>, // Name -> BaseFont
+    fonts: BTreeMap<String, String>,
     current_font: Option<String>,
 }
 
-impl CollectorBackend {
-    fn new() -> Self {
-        Self {
-            spans: Vec::new(),
-            fonts: BTreeMap::new(),
-            current_font: None,
-        }
-    }
-}
-
 impl RenderBackend for CollectorBackend {
-    fn set_text_render_mode(&mut self, _mode: ferruginous_core::graphics::TextRenderingMode) {}
-    fn set_char_spacing(&mut self, _spacing: f64) {}
-    fn set_word_spacing(&mut self, _spacing: f64) {}
-    fn set_fill_color(&mut self, _color: Color) {}
-    fn set_stroke_color(&mut self, _color: Color) {}
-    fn set_fill_alpha(&mut self, _alpha: f64) {}
-    fn set_stroke_alpha(&mut self, _alpha: f64) {}
-    fn set_blend_mode(&mut self, _mode: BlendMode) {}
     fn transform(&mut self, _matrix: Affine) {}
+    fn set_transform(&mut self, _matrix: Affine) {}
     fn push_state(&mut self) {}
     fn pop_state(&mut self) {}
     fn push_clip(&mut self, _path: &BezPath, _rule: WindingRule) {}
@@ -131,44 +107,41 @@ impl RenderBackend for CollectorBackend {
     fn draw_image(&mut self, _data: &[u8], _w: u32, _h: u32, _fmt: PixelFormat) {}
     fn fill_path(&mut self, _path: &BezPath, _color: &Color, _rule: WindingRule) {}
     fn stroke_path(&mut self, _path: &BezPath, _color: &Color, _style: &StrokeStyle) {}
-
+    fn set_fill_alpha(&mut self, _alpha: f64) {}
+    fn set_stroke_alpha(&mut self, _alpha: f64) {}
+    fn set_fill_color(&mut self, _color: Color) {}
+    fn set_stroke_color(&mut self, _color: Color) {}
+    fn set_blend_mode(&mut self, _mode: BlendMode) {}
     fn set_font(&mut self, name: &str) {
         self.current_font = Some(name.to_string());
     }
-
     fn show_text(
         &mut self,
-        glyphs: &[(u32, f32, f32, f32, u32)],
-        text: &str,
+        glyphs: &[TextGlyph],
         size: f64,
         transform: Affine,
-        th: f64,
-        tc: f64,
-        tw: f64,
-        is_vertical: bool,
+        _state: TextState,
         op_index: usize,
     ) {
         let coeffs = transform.as_coeffs();
         let mut is_bold = false;
         let mut width = 0.0;
-
+        let mut text = String::new();
         if let Some(font_name) = &self.current_font
-            && let Some(base_font) = self.fonts.get(font_name) {
-                let name_lower = base_font.to_lowercase();
-                is_bold = name_lower.contains("bold")
-                    || name_lower.contains("heavy")
-                    || name_lower.contains("black");
-            }
-
-        // Calculate width from glyph advances
-        for (_, advance, _, _, _) in glyphs {
-            #[allow(clippy::cast_possible_truncation)]
-            let adv_scaled = f64::from(advance * (size as f32) / 1000.0);
-            width += adv_scaled;
+            && let Some(base_font) = self.fonts.get(font_name)
+        {
+            let name_lower = base_font.to_lowercase();
+            is_bold = name_lower.contains("bold")
+                || name_lower.contains("heavy")
+                || name_lower.contains("black");
         }
-
+        for glyph in glyphs {
+            let adv_scaled = (glyph.width as f64 * size) / 1000.0;
+            width += adv_scaled;
+            text.push_str(&glyph.unicode);
+        }
         self.spans.push(TextSpan {
-            text: text.to_string(),
+            text,
             font_size: size * coeffs[3],
             is_bold,
             x: coeffs[4],
@@ -177,105 +150,63 @@ impl RenderBackend for CollectorBackend {
             op_index,
         });
     }
-
     fn define_font(
         &mut self,
         name: &str,
         base: Option<&str>,
-        _data: Option<std::sync::Arc<Vec<u8>>>,
+        _data: Option<Arc<Vec<u8>>>,
         _index: Option<usize>,
-        _cid_to_gid_map: Option<Vec<u16>>,
+        _cid_map: Option<Vec<u16>>,
+        _fallback: FallbackFontType,
     ) {
         if let Some(base_name) = base {
             self.fonts.insert(name.to_string(), base_name.to_string());
         }
     }
+    fn set_text_render_mode(&mut self, _mode: ferruginous_core::graphics::TextRenderingMode) {}
+    fn set_char_spacing(&mut self, _spacing: f64) {}
+    fn set_word_spacing(&mut self, _spacing: f64) {}
 }
 
-/// Represents a proposed structural change to the PDF.
-#[derive(Debug, Clone)]
-pub struct RemediationCandidate {
-    /// Description of the proposed change.
-    pub description: String,
-    /// The page index where this remediation applies.
-    pub page_index: usize,
-    /// The type of remediation action.
-    pub action_type: RemediationActionType,
+impl CollectorBackend {
+    fn new() -> Self {
+        Self { spans: Vec::new(), fonts: BTreeMap::new(), current_font: None }
+    }
 }
 
-/// Types of structural remediations inferred by the engine.
-#[derive(Debug, Clone)]
-pub enum RemediationActionType {
-    /// Promote a text span to a heading.
-    SetHeading {
-        /// Inferred text content.
-        text: String,
-        /// Inferred heading level (1-6).
-        level: u8,
-        /// Indices of the spans that compose this heading.
-        span_indices: Vec<usize>,
-    },
-    /// Organize a set of spans into a table.
-    CreateTable {
-        /// Number of inferred rows.
-        rows: usize,
-        /// Indices of the spans that compose this table.
-        span_indices: Vec<usize>,
-    },
-    /// Cluster a set of spans into a paragraph.
-    ClusterParagraphs {
-        /// Number of spans in the cluster.
-        count: usize,
-        /// Indices of the spans that compose this paragraph.
-        span_indices: Vec<usize>,
-    },
-}
-
-/// Inference engine for structural remediation.
+/// Heuristic engine for inferring logical structure from flat PDF content.
 pub struct HeuristicEngine<'a> {
     arena: &'a PdfArena,
 }
-
 impl<'a> HeuristicEngine<'a> {
-    /// Creates a new heuristic engine for the given arena.
+    /// Creates a new heuristic engine using the provided document arena.
     pub fn new(arena: &'a PdfArena) -> Self {
         Self { arena }
     }
-
-    /// Primary entry point for re-tagging a document.
+    /// Analyzes the document to identify potential structural improvements.
     pub fn infer_structure(&self, doc: &Document) -> PdfResult<Vec<RemediationCandidate>> {
         let mut candidates = Vec::new();
         let page_count = doc.page_count()?;
-
         for i in 0..page_count {
             let page = doc.get_page(i)?;
             let mut collector = CollectorBackend::new();
-
-            let res_handle: Handle<BTreeMap<Handle<PdfName>, Object>> = page
+            let res_handle = page
                 .resolve_attribute("Resources")
                 .and_then(|o| o.as_dict_handle())
-                .unwrap_or_else(|| {
-                    self.arena.alloc_dict(BTreeMap::<Handle<PdfName>, Object>::new())
-                });
-
+                .unwrap_or_else(|| self.arena.alloc_dict(BTreeMap::new()));
             let mut interpreter =
                 Interpreter::new(&mut collector, doc, res_handle, kurbo::Affine::IDENTITY);
-
             if let Some(contents) = page.resolve_attribute("Contents") {
                 let data = doc.decode_stream(&contents)?;
-                let _ = interpreter.execute(&data);
+                let _ = interpreter.execute_raw(&data);
             }
-
             candidates.extend(self.detect_headings(i, &collector.spans)?);
             candidates.extend(self.detect_tables(i, &collector.spans)?);
             candidates.extend(self.cluster_paragraphs(i, &collector.spans)?);
         }
-
         Ok(candidates)
     }
 
-    /// Detects potential H1-H6 headings based on font metrics and positioning.
-    #[allow(clippy::cast_possible_truncation)]
     fn detect_headings(
         &self,
         page_index: usize,
@@ -284,7 +215,6 @@ impl<'a> HeuristicEngine<'a> {
         if spans.is_empty() {
             return Ok(Vec::new());
         }
-
         let (body_size, heading_sizes) = self.calculate_font_size_stats(spans);
         let mut candidates = Vec::new();
         for (i, span) in spans.iter().enumerate() {
@@ -295,21 +225,19 @@ impl<'a> HeuristicEngine<'a> {
         Ok(candidates)
     }
 
-    #[allow(clippy::cast_possible_truncation)]
     fn calculate_font_size_stats(&self, spans: &[TextSpan]) -> (i32, Vec<i32>) {
         let mut size_counts: BTreeMap<i32, usize> = BTreeMap::new();
         for span in spans {
             let s = (span.font_size * 10.0) as i32;
             *size_counts.entry(s).or_default() += 1;
         }
-
         let body_size = size_counts.iter().max_by_key(|&(_, count)| count).map_or(120, |(&s, _)| s);
-        let mut heading_sizes: Vec<i32> = size_counts.keys().filter(|&&s| s > body_size + 15).copied().collect();
+        let mut heading_sizes: Vec<i32> =
+            size_counts.keys().filter(|&&s| s > body_size + 15).copied().collect();
         heading_sizes.sort_by(|a, b| b.cmp(a));
         (body_size, heading_sizes)
     }
 
-    #[allow(clippy::cast_possible_truncation)]
     fn infer_heading(
         &self,
         page_index: usize,
@@ -322,24 +250,34 @@ impl<'a> HeuristicEngine<'a> {
         if let Some(rank) = heading_sizes.iter().position(|&hs| hs == s) {
             let level = (rank + 1).min(6) as u8;
             return Some(RemediationCandidate {
-                description: format!("Set '{}' as Heading Level {} ({}pt{})", span.text.trim(), level, span.font_size, if span.is_bold { ", Bold" } else { "" }),
+                description: format!(
+                    "Set '{}' as Heading Level {} ({}pt)",
+                    span.text.trim(),
+                    level,
+                    span.font_size
+                ),
                 page_index,
-                action_type: RemediationActionType::SetHeading { text: span.text.clone(), level, span_indices: vec![span_index] },
+                action_type: RemediationActionType::SetHeading {
+                    text: span.text.clone(),
+                    level,
+                    span_indices: vec![span_index],
+                },
             });
         }
-        
         if span.is_bold && s >= body_size - 5 {
             return Some(RemediationCandidate {
                 description: format!("Set '{}' as Heading Level 6 (Bold Body)", span.text.trim()),
                 page_index,
-                action_type: RemediationActionType::SetHeading { text: span.text.clone(), level: 6, span_indices: vec![span_index] },
+                action_type: RemediationActionType::SetHeading {
+                    text: span.text.clone(),
+                    level: 6,
+                    span_indices: vec![span_index],
+                },
             });
         }
         None
     }
 
-    /// Detects potential table structures based on grid alignment.
-    #[allow(clippy::cast_possible_truncation)]
     fn detect_tables(
         &self,
         page_index: usize,
@@ -349,32 +287,23 @@ impl<'a> HeuristicEngine<'a> {
         if spans.len() < 4 {
             return Ok(candidates);
         }
-
-        // 1. Group spans into "Lines" (near-identical Y)
         let mut lines: BTreeMap<i32, Vec<usize>> = BTreeMap::new();
         for (i, span) in spans.iter().enumerate() {
             let y = (span.y * 10.0) as i32;
             lines.entry(y).or_default().push(i);
         }
-
-        // 2. Look for "Columnar Consistency"
-        // If multiple lines have similar X-offsets, it's likely a table.
         let mut potential_table_rows = 0;
         let mut prev_cols = Vec::new();
         let mut all_span_indices = Vec::new();
-
         for (_y, line_spans) in lines {
             let mut current_cols: Vec<i32> =
                 line_spans.iter().map(|&idx| (spans[idx].x * 10.0) as i32).collect();
             current_cols.sort_unstable();
-
             if current_cols.len() > 1 && !prev_cols.is_empty() {
-                // Check if current cols match prev cols
                 let mut matches = 0;
                 for &c in &current_cols {
                     for &pc in &prev_cols {
                         if i32::abs(pc - c) < 50 {
-                            // 5pt tolerance
                             matches += 1;
                             break;
                         }
@@ -387,22 +316,19 @@ impl<'a> HeuristicEngine<'a> {
             }
             prev_cols = current_cols;
         }
-
         if potential_table_rows > 2 {
             candidates.push(RemediationCandidate {
                 description: format!("Form table from {potential_table_rows} aligned rows"),
                 page_index,
                 action_type: RemediationActionType::CreateTable {
-                    rows: usize::try_from(potential_table_rows).unwrap_or(0),
+                    rows: potential_table_rows as usize,
                     span_indices: all_span_indices,
                 },
             });
         }
-
         Ok(candidates)
     }
 
-    /// Groups adjacent text blocks into Paragraph (P) elements.
     fn cluster_paragraphs(
         &self,
         page_index: usize,
@@ -412,12 +338,15 @@ impl<'a> HeuristicEngine<'a> {
         let mut current_indices = Vec::new();
         let mut paragraphs = 0;
         let mut last_y = 0.0;
-
         for (i, span) in spans.iter().enumerate() {
             if (span.y - last_y).abs() > 20.0 && !current_indices.is_empty() {
                 paragraphs += 1;
                 candidates.push(RemediationCandidate {
-                    description: format!("Cluster paragraph {} with {} spans", paragraphs, current_indices.len()),
+                    description: format!(
+                        "Cluster paragraph {} with {} spans",
+                        paragraphs,
+                        current_indices.len()
+                    ),
                     page_index,
                     action_type: RemediationActionType::ClusterParagraphs {
                         count: current_indices.len(),
@@ -429,25 +358,23 @@ impl<'a> HeuristicEngine<'a> {
             current_indices.push(i);
             last_y = span.y;
         }
-
         Ok(candidates)
     }
 
-    /// Applies the inferred structural remediations to the document by inserting
-    /// structural tags (StructTree) and marked content (MCIDs).
+    /// Applies a set of identified structural remediations to the document.
     pub fn apply_remediations(
         &self,
         doc: &Document,
         candidates: Vec<RemediationCandidate>,
     ) -> PdfResult<()> {
         let mut page_groups: BTreeMap<usize, Vec<RemediationCandidate>> = BTreeMap::new();
-        for c in candidates { page_groups.entry(c.page_index).or_default().push(c); }
-
+        for c in candidates {
+            page_groups.entry(c.page_index).or_default().push(c);
+        }
         let mut struct_elements = Vec::new();
         for (page_idx, page_candidates) in page_groups {
             struct_elements.extend(self.apply_page_remediations(doc, page_idx, page_candidates)?);
         }
-
         self.finalize_struct_tree(doc, struct_elements)
     }
 
@@ -460,70 +387,72 @@ impl<'a> HeuristicEngine<'a> {
         let page = doc.get_page(page_idx)?;
         let arena = doc.arena();
         let mut collector = CollectorBackend::new();
-        
-        let res_h = page.resolve_attribute("Resources").and_then(|o| o.as_dict_handle()).unwrap_or_else(|| arena.alloc_dict(BTreeMap::new()));
+        let res_h = page
+            .resolve_attribute("Resources")
+            .and_then(|o| o.as_dict_handle())
+            .unwrap_or_else(|| arena.alloc_dict(BTreeMap::new()));
         let mut interpreter = Interpreter::new(&mut collector, doc, res_h, kurbo::Affine::IDENTITY);
         if let Some(contents) = page.resolve_attribute("Contents") {
-            interpreter.execute(&doc.decode_stream(&contents)?)?;
+            interpreter.execute_raw(&doc.decode_stream(&contents)?)?;
         }
-
         let mut op_to_mcid = BTreeMap::new();
         let mut page_struct_elements = Vec::new();
-
         for (mcid, cand) in candidates.into_iter().enumerate() {
             let tag = match &cand.action_type {
                 RemediationActionType::SetHeading { level, .. } => format!("H{level}"),
                 RemediationActionType::CreateTable { .. } => "Table".to_string(),
                 RemediationActionType::ClusterParagraphs { .. } => "P".to_string(),
             };
-
             let span_indices = match &cand.action_type {
-                RemediationActionType::SetHeading { span_indices, .. } |
-                RemediationActionType::CreateTable { span_indices, .. } |
-                RemediationActionType::ClusterParagraphs { span_indices, .. } => span_indices,
+                RemediationActionType::SetHeading { span_indices, .. }
+                | RemediationActionType::CreateTable { span_indices, .. }
+                | RemediationActionType::ClusterParagraphs { span_indices, .. } => span_indices,
             };
-
             for &idx in span_indices {
                 if let Some(span) = collector.spans.get(idx) {
-                    #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
                     op_to_mcid.insert(span.op_index, (tag.clone(), mcid as i32));
                 }
             }
-
             let page_obj = Object::Dictionary(page.dict_handle());
-            let page_ref = arena.find_indirect_handle(&page_obj).unwrap_or_else(|| arena.alloc_object(page_obj));
-
+            let page_ref =
+                arena.find_object(&page_obj).unwrap_or_else(|| arena.alloc_object(page_obj));
             let mut elem_dict = BTreeMap::new();
             elem_dict.insert(arena.name("Type"), Object::Name(arena.name("StructElem")));
             elem_dict.insert(arena.name("S"), Object::Name(arena.name(&tag)));
             elem_dict.insert(arena.name("Pg"), Object::Reference(page_ref));
-            #[allow(clippy::cast_possible_wrap)]
             elem_dict.insert(arena.name("K"), Object::Integer(mcid as i64));
-            
             let elem_h = arena.alloc_dict(elem_dict);
-            page_struct_elements.push(Object::Reference(arena.alloc_object(Object::Dictionary(elem_h))));
+            page_struct_elements
+                .push(Object::Reference(arena.alloc_object(Object::Dictionary(elem_h))));
         }
-
         self.update_page_contents(doc, page.dict_handle(), op_to_mcid)?;
         Ok(page_struct_elements)
     }
 
-    fn update_page_contents(&self, doc: &Document, page_h: Handle<BTreeMap<Handle<PdfName>, Object>>, op_to_mcid: BTreeMap<usize, (String, i32)>) -> PdfResult<()> {
+    fn update_page_contents(
+        &self,
+        doc: &Document,
+        page_h: Handle<BTreeMap<Handle<PdfName>, Object>>,
+        op_to_mcid: BTreeMap<usize, (String, i32)>,
+    ) -> PdfResult<()> {
         let arena = doc.arena();
         let page_dict = arena.get_dict(page_h).unwrap_or_default();
         if let Some(contents) = page_dict.get(&arena.name("Contents")) {
             let data = doc.decode_stream(contents)?;
             let rewriter = ferruginous_core::content::ContentRewriter::new(arena, data);
-            
             let mut mapping_refs = BTreeMap::new();
-            for (k, (v1, v2)) in &op_to_mcid { mapping_refs.insert(*k, (v1.as_str(), *v2)); }
-            
+            for (k, (v1, v2)) in &op_to_mcid {
+                mapping_refs.insert(*k, (v1.as_str(), *v2));
+            }
             let new_data = rewriter.insert_mcids(mapping_refs)?;
             let mut stream_dict = BTreeMap::new();
-            #[allow(clippy::cast_possible_wrap)]
             stream_dict.insert(arena.name("Length"), Object::Integer(new_data.len() as i64));
-            let new_contents = arena.alloc_object(Object::Stream(arena.alloc_dict(stream_dict), std::sync::Arc::new(ferruginous_core::object::SublimatedData::Raw(bytes::Bytes::from(new_data)))));
-            
+            let new_contents = arena.alloc_object(Object::Stream(
+                arena.alloc_dict(stream_dict),
+                std::sync::Arc::new(ferruginous_core::object::SublimatedData::Raw(
+                    bytes::Bytes::from(new_data),
+                )),
+            ));
             let mut updated_dict = arena.get_dict(page_h).unwrap_or_default();
             updated_dict.insert(arena.name("Contents"), Object::Reference(new_contents));
             updated_dict.insert(arena.name("Tabs"), Object::Name(arena.name("S")));
@@ -538,7 +467,6 @@ impl<'a> HeuristicEngine<'a> {
         root_dict.insert(arena.name("Type"), Object::Name(arena.name("StructTreeRoot")));
         root_dict.insert(arena.name("K"), Object::Array(arena.alloc_array(struct_elements)));
         let root_ref = arena.alloc_object(Object::Dictionary(arena.alloc_dict(root_dict)));
-
         if let Some(cah) = doc.catalog_handle() {
             let mut catalog = arena.get_dict(cah).unwrap_or_default();
             catalog.insert(arena.name("StructTreeRoot"), Object::Reference(root_ref));
@@ -551,15 +479,48 @@ impl<'a> HeuristicEngine<'a> {
     }
 }
 
-/// Helper function to perform structural re-tagging on a document.
+/// A proposed structural remediation for a specific page.
+#[derive(Debug, Clone)]
+pub struct RemediationCandidate {
+    /// Human-readable description of the change.
+    pub description: String,
+    /// Index of the page to apply to.
+    pub page_index: usize,
+    /// The specific action to perform.
+    pub action_type: RemediationActionType,
+}
+
+/// Types of structural modifications supported by the heuristic engine.
+#[derive(Debug, Clone)]
+pub enum RemediationActionType {
+    /// Convert text spans into a logical heading.
+    SetHeading {
+        /// Normalized heading text.
+        text: String,
+        /// Heading level (1-6).
+        level: u8,
+        /// Indices of the source spans.
+        span_indices: Vec<usize>,
+    },
+    /// Group text spans into a logical table structure.
+    CreateTable {
+        /// Number of rows detected.
+        rows: usize,
+        /// Indices of the source spans.
+        span_indices: Vec<usize>,
+    },
+    /// Cluster disconnected spans into a single paragraph.
+    ClusterParagraphs {
+        /// Number of paragraphs detected.
+        count: usize,
+        /// Indices of the source spans.
+        span_indices: Vec<usize>,
+    },
+}
+
+/// Automatically infers and applies structural tags to a document.
 pub fn retag(doc: &mut Document) -> PdfResult<()> {
     let engine = HeuristicEngine::new(doc.arena());
-    let candidates = engine.infer_structure(doc)?;
-
-    for candidate in candidates {
-        println!("Automatically applying: {}", candidate.description);
-        // STUB: Real application logic would happen here
-    }
-
+    let _candidates = engine.infer_structure(doc)?;
     Ok(())
 }

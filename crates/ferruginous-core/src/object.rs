@@ -3,11 +3,12 @@
 //! This model adheres strictly to ISO 32000-2:2020 and utilizes the Handle system
 //! for all internal references, ensuring maximum memory efficiency.
 
-use crate::{PdfArena, PdfResult};
 use crate::handle::Handle;
+use crate::{PdfArena, PdfResult};
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::sync::Arc;
 pub mod sublimation;
 
 /// A trait for types that can be initialized from a PDF Object within an Arena.
@@ -30,7 +31,7 @@ impl FromPdfObject for Handle<BTreeMap<Handle<PdfName>, Object>> {
             Object::Dictionary(h) => Ok(h),
             _ => Err(crate::PdfError::Parse {
                 pos: 0,
-                message: format!("Expected dictionary handle, got {:?}", resolved).into()
+                message: format!("Expected dictionary handle, got {:?}", resolved).into(),
             }),
         }
     }
@@ -44,7 +45,7 @@ impl FromPdfObject for Handle<Vec<Object>> {
             Object::Array(h) => Ok(h),
             _ => Err(crate::PdfError::Parse {
                 pos: 0,
-                message: format!("Expected array handle, got {:?}", resolved).into()
+                message: format!("Expected array handle, got {:?}", resolved).into(),
             }),
         }
     }
@@ -56,12 +57,12 @@ impl FromPdfObject for Handle<Object> {
         match resolved {
             Object::Reference(h) => Ok(h),
             _ => {
-                // If it's not a reference, we can't really have a "handle to the object" 
+                // If it's not a reference, we can't really have a "handle to the object"
                 // in the sense of an indirect reference, but we can return the handle if it's already in the arena.
                 // For simplicity, we mostly expect references here.
                 Err(crate::PdfError::Parse {
                     pos: 0,
-                    message: format!("Expected reference handle, got {:?}", resolved).into()
+                    message: format!("Expected reference handle, got {:?}", resolved).into(),
                 })
             }
         }
@@ -70,53 +71,49 @@ impl FromPdfObject for Handle<Object> {
 
 impl FromPdfObject for Handle<PdfName> {
     fn from_pdf_object(obj: Object, arena: &PdfArena) -> PdfResult<Self> {
-        obj.resolve(arena).as_name()
-            .ok_or_else(|| crate::PdfError::Parse {
-                pos: 0,
-                message: "Expected name handle".into()
-            })
+        let resolved = obj.resolve(arena);
+        resolved.as_name().ok_or_else(|| crate::PdfError::Parse {
+            pos: 0,
+            message: format!("Expected name handle, got {:?}", resolved).into(),
+        })
     }
 }
 
 impl FromPdfObject for bool {
     fn from_pdf_object(obj: Object, arena: &PdfArena) -> PdfResult<Self> {
-        obj.resolve(arena).as_bool()
-            .ok_or_else(|| crate::PdfError::Parse {
-                pos: 0,
-                message: "Expected boolean".into()
-            })
+        obj.resolve(arena)
+            .as_bool()
+            .ok_or_else(|| crate::PdfError::Parse { pos: 0, message: "Expected boolean".into() })
     }
 }
 
 impl FromPdfObject for i64 {
     fn from_pdf_object(obj: Object, arena: &PdfArena) -> PdfResult<Self> {
-        obj.resolve(arena).as_integer()
-            .ok_or_else(|| crate::PdfError::Parse {
-                pos: 0,
-                message: "Expected integer".into()
-            })
+        obj.resolve(arena)
+            .as_integer()
+            .ok_or_else(|| crate::PdfError::Parse { pos: 0, message: "Expected integer".into() })
     }
 }
 
 impl FromPdfObject for f64 {
     fn from_pdf_object(obj: Object, arena: &PdfArena) -> PdfResult<Self> {
-        obj.resolve(arena).as_f64()
-            .ok_or_else(|| crate::PdfError::Parse {
-                pos: 0,
-                message: "Expected real".into()
-            })
+        obj.resolve(arena)
+            .as_f64()
+            .ok_or_else(|| crate::PdfError::Parse { pos: 0, message: "Expected real".into() })
     }
 }
 
 impl FromPdfObject for String {
     fn from_pdf_object(obj: Object, arena: &PdfArena) -> PdfResult<Self> {
         let resolved = obj.resolve(arena);
-        if let Some(bytes) = resolved.as_string() {
+        if let Some(text) = resolved.as_text() {
+            Ok(text.to_string())
+        } else if let Some(bytes) = resolved.as_string() {
             Ok(crate::refine::text::recover_string(bytes))
         } else {
             Err(crate::PdfError::Parse {
                 pos: 0,
-                message: format!("Expected string, got {:?}", resolved).into()
+                message: format!("Expected string or text, got {:?}", resolved).into(),
             })
         }
     }
@@ -130,7 +127,7 @@ impl FromPdfObject for Object {
 
 impl<T: FromPdfObject> FromPdfObject for Option<T> {
     fn from_pdf_object(obj: Object, arena: &PdfArena) -> PdfResult<Self> {
-        if matches!(obj, Object::Null) {
+        if matches!(obj.resolve(arena), Object::Null) {
             Ok(None)
         } else {
             T::from_pdf_object(obj, arena).map(Some)
@@ -140,41 +137,45 @@ impl<T: FromPdfObject> FromPdfObject for Option<T> {
 
 /// ISO 32000-2:2020 Clause 7.3.5 - Name Objects
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub struct PdfName(pub Bytes);
+pub struct PdfName(pub String);
 
 impl PdfName {
     pub fn new(s: &str) -> Self {
-        Self(Bytes::copy_from_slice(s.as_bytes()))
+        Self(s.to_string())
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+        Self(crate::refine::text::recover_string(bytes))
     }
 
     pub fn as_str(&self) -> &str {
-        std::str::from_utf8(&self.0).unwrap_or("")
+        &self.0
     }
 
     pub fn to_string_lossy(&self) -> String {
-        String::from_utf8_lossy(&self.0).to_string()
+        self.0.clone()
     }
 
     pub fn as_bytes(&self) -> &[u8] {
-        &self.0
+        self.0.as_bytes()
     }
 }
 
 impl FromPdfObject for PdfName {
     fn from_pdf_object(obj: Object, arena: &PdfArena) -> PdfResult<Self> {
-        let name_handle = obj.resolve(arena).as_name()
-            .ok_or_else(|| crate::PdfError::Parse {
-                pos: 0,
-                message: "Expected name".into()
-            })?;
-        arena.get_name(name_handle)
+        let name_handle = obj
+            .resolve(arena)
+            .as_name()
+            .ok_or_else(|| crate::PdfError::Parse { pos: 0, message: "Expected name".into() })?;
+        arena
+            .get_name(name_handle)
             .ok_or_else(|| crate::PdfError::Arena("Missing name in arena".into()))
     }
 }
 
 impl AsRef<[u8]> for PdfName {
     fn as_ref(&self) -> &[u8] {
-        &self.0
+        self.0.as_bytes()
     }
 }
 
@@ -204,7 +205,7 @@ pub enum Object {
     Dictionary(Handle<BTreeMap<Handle<PdfName>, Object>>),
     /// Stream objects (Clause 7.3.8)
     /// References a dictionary handle and holds the sublimated or raw data.
-    Stream(Handle<BTreeMap<Handle<PdfName>, Object>>, SublimatedData),
+    Stream(Handle<BTreeMap<Handle<PdfName>, Object>>, Arc<SublimatedData>),
     /// Hexadecimal string objects (Clause 7.3.4.3)
     Hex(Bytes),
     /// Text string objects (Refinery extension for UTF-8 internal management)
@@ -221,10 +222,7 @@ pub enum SublimatedData {
     /// Fully parsed high-level commands (for Content Streams).
     Commands(Vec<sublimation::Command>),
     /// Zstd-compressed raw bytes (for Images/Fonts/Thumbnails).
-    Compressed {
-        original_len: usize,
-        data: Vec<u8>,
-    },
+    Compressed { original_len: usize, data: Vec<u8> },
     /// Raw uncompressed bytes.
     Raw(Bytes),
 }
@@ -263,7 +261,15 @@ impl Object {
     }
 
     pub fn as_string(&self) -> Option<&[u8]> {
-        if let Self::String(s) = self { Some(s) } else { None }
+        match self {
+            Self::String(s) => Some(s),
+            Self::Hex(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    pub fn as_text(&self) -> Option<&str> {
+        if let Self::Text(t) = self { Some(t) } else { None }
     }
 
     pub fn as_reference(&self) -> Option<Handle<Object>> {
@@ -278,7 +284,11 @@ impl Object {
         }
     }
 
-    pub fn from_lopdf(obj: &lopdf::Object, arena: &PdfArena, table: &crate::arena::RemappingTable) -> Self {
+    pub fn from_lopdf(
+        obj: &lopdf::Object,
+        arena: &PdfArena,
+        table: &crate::arena::RemappingTable,
+    ) -> Self {
         match obj {
             lopdf::Object::Boolean(b) => Self::Boolean(*b),
             lopdf::Object::Integer(i) => Self::Integer(*i),
@@ -290,7 +300,7 @@ impl Object {
                     Self::String(Bytes::copy_from_slice(s))
                 }
             }
-            lopdf::Object::Name(n) => Self::Name(arena.intern_name(PdfName(Bytes::copy_from_slice(n)))),
+            lopdf::Object::Name(n) => Self::Name(arena.intern_name(PdfName::from_bytes(n))),
             lopdf::Object::Array(arr) => {
                 let items: Vec<Object> =
                     arr.iter().map(|o| Self::from_lopdf(o, arena, table)).collect();
@@ -299,7 +309,7 @@ impl Object {
             lopdf::Object::Dictionary(dict) => {
                 let mut map = BTreeMap::new();
                 for (k, v) in dict {
-                    let k_handle = arena.intern_name(PdfName(Bytes::copy_from_slice(k)));
+                    let k_handle = arena.intern_name(PdfName::from_bytes(k));
                     let v_obj = Self::from_lopdf(v, arena, table);
                     map.insert(k_handle, v_obj);
                 }
@@ -308,11 +318,14 @@ impl Object {
             lopdf::Object::Stream(s) => {
                 let mut map = BTreeMap::new();
                 for (k, v) in &s.dict {
-                    let k_handle = arena.intern_name(PdfName(Bytes::copy_from_slice(k)));
+                    let k_handle = arena.intern_name(PdfName::from_bytes(k));
                     let v_obj = Self::from_lopdf(v, arena, table);
                     map.insert(k_handle, v_obj);
                 }
-                Self::Stream(arena.alloc_dict(map), SublimatedData::Raw(Bytes::copy_from_slice(&s.content)))
+                Self::Stream(
+                    arena.alloc_dict(map),
+                    SublimatedData::Raw(Bytes::copy_from_slice(&s.content)).into(),
+                )
             }
             lopdf::Object::Reference(id) => {
                 let handle = table.get(&(id.0, id.1)).cloned().unwrap_or(Handle::new(0));
@@ -331,10 +344,7 @@ pub struct Reference {
 
 impl From<Handle<Object>> for Reference {
     fn from(h: Handle<Object>) -> Self {
-        Self {
-            id: h.index(),
-            generation: 0,
-        }
+        Self { id: h.index(), generation: 0 }
     }
 }
 
@@ -373,15 +383,15 @@ mod tests {
         map.insert(arena.name("Foo"), Object::Integer(42));
         map.insert(arena.name("Bar"), Object::Boolean(true));
         map.insert(arena.name("NewFeature"), Object::Integer(100));
-        
+
         let dict_handle = arena.alloc_dict(map.clone());
         let obj = Object::Dictionary(dict_handle);
 
         let test_dict = TestDict::from_pdf_object(obj, &arena).unwrap();
         assert_eq!(test_dict.foo, 42);
         assert_eq!(test_dict.bar, Some(true));
-        assert_eq!(test_dict.new_feature, None); 
-        assert_eq!(test_dict.def, 123); 
+        assert_eq!(test_dict.new_feature, None);
+        assert_eq!(test_dict.def, 123);
 
         let arena_20 = PdfArena::with_version(2.0);
         let mut map_20 = BTreeMap::new();
@@ -393,7 +403,7 @@ mod tests {
         let dict_handle_20 = arena_20.alloc_dict(map_20);
         let obj_20 = Object::Dictionary(dict_handle_20);
         let test_dict_20 = TestDict::from_pdf_object(obj_20, &arena_20).unwrap();
-        assert_eq!(test_dict_20.new_feature, Some(100)); 
-        assert_eq!(test_dict_20.def, 999); 
+        assert_eq!(test_dict_20.new_feature, Some(100));
+        assert_eq!(test_dict_20.def, 999);
     }
 }

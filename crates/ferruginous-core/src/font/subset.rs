@@ -27,9 +27,9 @@ impl<'a> TrueTypeSubsetter<'a> {
         // For this hardening phase, we implement a "Smart Pruning" strategy:
         // We keep the original font structure but nullify data of unused glyphs
         // in the 'glyf' table and update 'loca'.
-        
+
         let _new_data = self.data.to_vec();
-        
+
         // This is a simplified "Zeroing" subsetter which is valid TTF
         // and provides immediate space savings when compressed.
         let _new_data = self.data.to_vec();
@@ -39,7 +39,11 @@ impl<'a> TrueTypeSubsetter<'a> {
         Ok(self.data.to_vec())
     }
 
-    fn collect_glyph_dependencies(&self, gid: ttf_parser::GlyphId, glyphs: &mut std::collections::BTreeSet<u16>) {
+    fn collect_glyph_dependencies(
+        &self,
+        gid: ttf_parser::GlyphId,
+        glyphs: &mut std::collections::BTreeSet<u16>,
+    ) {
         if !glyphs.insert(gid.0) {
             // Already handled
         }

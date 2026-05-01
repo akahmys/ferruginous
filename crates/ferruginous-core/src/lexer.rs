@@ -180,7 +180,8 @@ impl Lexer {
             if b == b'#' && self.pos + 2 < self.data.len() {
                 let hex = &self.data[self.pos + 1..self.pos + 3];
                 if let Ok(utf8_str) = std::str::from_utf8(hex)
-                    && let Ok(val) = u8::from_str_radix(utf8_str, 16) {
+                    && let Ok(val) = u8::from_str_radix(utf8_str, 16)
+                {
                     result.push(val);
                     self.pos += 3;
                     continue;

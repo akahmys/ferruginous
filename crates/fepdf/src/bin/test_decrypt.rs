@@ -12,11 +12,11 @@ fn main() {
                         if let Ok(obj) = doc.get_object((6938, 0)) {
                             println!("Sample Object (6938): {:?}", obj);
                         }
-                    },
+                    }
                     Err(e) => println!("Decryption Failed: {:?}", e),
                 }
             }
-        },
+        }
         Err(e) => println!("Load Failed: {:?}", e),
     }
 }

@@ -1,6 +1,6 @@
-use crate::object::PdfName;
 use super::RefinedObject;
 use crate::font::FontResource;
+use crate::object::PdfName;
 use bytes::Bytes;
 use std::collections::BTreeMap;
 
@@ -14,7 +14,8 @@ pub fn normalize_font(
 
     // Only process if it's actually a Font
     if let Some(RefinedObject::Name(t)) = dict.get(&type_key)
-        && t.as_str() != "Font" {
+        && t.as_str() != "Font"
+    {
         return RefinedObject::Dictionary(dict);
     }
 
@@ -25,7 +26,7 @@ pub fn normalize_font(
     // We only do this if we have a reliable GID map OR it's already a CID font.
     let _has_gid_map = resource.map(|r| !r.unicode_to_gid.is_empty()).unwrap_or(false);
     let is_embedded = resource.map(|r| r.data.is_some()).unwrap_or(false);
-    
+
     if let Some(RefinedObject::Name(st)) = dict.get(&subtype_key) {
         if st == &type0_name && is_embedded {
             normalize_type0_font(&mut dict, resource);
@@ -38,7 +39,10 @@ pub fn normalize_font(
     RefinedObject::Dictionary(dict)
 }
 
-fn normalize_type0_font(_dict: &mut BTreeMap<PdfName, RefinedObject>, _resource: Option<&FontResource>) {
+fn normalize_type0_font(
+    _dict: &mut BTreeMap<PdfName, RefinedObject>,
+    _resource: Option<&FontResource>,
+) {
     // HARDENING: Do NOT override the original Encoding unless we are 100% sure we can restructure the stream.
     /*
     let encoding_name = if resource.map(|r| r.wmode == 1).unwrap_or(false) {
@@ -48,7 +52,7 @@ fn normalize_type0_font(_dict: &mut BTreeMap<PdfName, RefinedObject>, _resource:
     };
     dict.insert(PdfName::new("Encoding"), RefinedObject::Name(PdfName::new(encoding_name)));
     */
-    
+
     // HARDENING: Do NOT inject inline streams into the dictionary.
     // PDF 1.7+ requires ToUnicode to be an indirect object.
     /*

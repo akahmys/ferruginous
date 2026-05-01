@@ -35,7 +35,6 @@ impl CMap {
         }
         let mut cmap = Self::default();
         let tokens = tokenize_cmap(data);
-        println!("    CMap tokenized into {} tokens", tokens.len());
 
         // Use local maps during parsing to avoid redundant Arc clones (Rule 15)
         let mut mappings = BTreeMap::new();
@@ -45,7 +44,9 @@ impl CMap {
         let mut safety = 0;
         while i < tokens.len() {
             safety += 1;
-            if safety > 1_000_000 { break; }
+            if safety > 1_000_000 {
+                break;
+            }
             i = handle_cmap_token(&mut cmap, &mut mappings, &mut mappings_cid, &tokens, i, depth);
         }
 
@@ -56,6 +57,10 @@ impl CMap {
     }
 
     pub fn map(&self, code: &[u8]) -> Option<String> {
+        self.map_internal(code)
+    }
+
+    fn map_internal(&self, code: &[u8]) -> Option<String> {
         if let Some(s) = self.mappings.get(code) {
             return Some(s.clone());
         }
@@ -139,55 +144,69 @@ impl CMap {
     pub fn decode_next_with_min_len(
         &self,
         data: &[u8],
-        min_len: Option<usize>,
+        _min_len: Option<usize>,
     ) -> Option<(usize, Option<String>)> {
         if data.is_empty() {
             return None;
         }
 
-        // 1. Try codespace ranges to determine length
+        // 1. Try codespace ranges first to determine valid length
         if !self.codespace_ranges.is_empty() {
             for (start, end) in &self.codespace_ranges {
                 let len = start.len();
                 if data.len() >= len {
                     let segment = &data[0..len];
                     if segment >= start.as_slice() && segment <= end.as_slice() {
-                        let m = self.map(segment);
-                        let final_len = min_len.unwrap_or(len).max(len);
-                        return Some((final_len, m));
+                        // Found a valid codespace range. Now look for a mapping.
+                        if let Some(m) = self.map(segment) {
+                            return Some((len, Some(m)));
+                        }
+                        // If no mapping found in codespace, don't return Some(None)
+                        // This allows falling back to other decoders/heuristics.
                     }
+                }
+            }
+        } else {
+            // 2. Fallback: Try 1-byte then 2-byte mapping if no codespace defined (common in ToUnicode)
+            if let Some(m) = self.map(&data[..1]) {
+                return Some((1, Some(m)));
+            }
+            if data.len() >= 2 {
+                if let Some(m) = self.map(&data[..2]) {
+                    return Some((2, Some(m)));
                 }
             }
         }
 
-        // 2. Fallback: Try lengths 2 and 1 if no codespace ranges or no match
-        for len in [2, 1] {
+        // 2. Fallback to direct mapping search if no ranges defined (legacy)
+        for len in [4, 3, 2, 1] {
             if data.len() >= len {
                 let segment = &data[0..len];
                 if let Some(m) = self.map(segment) {
-                    let final_len = min_len.unwrap_or(len).max(len);
-                    return Some((final_len, Some(m.clone())));
-                }
-                
-                // Legacy Distiller Case: 2-byte stream matching 1-byte key
-                if len == 2 && min_len == Some(2) && data[0] == 0 {
-                    let segment1 = &data[1..2];
-                    if let Some(m) = self.map(segment1) {
-                        return Some((2, Some(m.clone())));
-                    }
+                    return Some((len, Some(m.clone())));
                 }
             }
         }
 
+        // 3. Last resort: Return None to allow heuristics to try.
         None
     }
 
     pub fn identity_h() -> Self {
-        Self { name: "Identity-H".into(), ..Default::default() }
+        Self {
+            name: "Identity-H".into(),
+            codespace_ranges: vec![(vec![0, 0], vec![0xFF, 0xFF])],
+            ..Default::default()
+        }
     }
 
     pub fn identity_v() -> Self {
-        Self { name: "Identity-V".into(), wmode: 1, ..Default::default() }
+        Self {
+            name: "Identity-V".into(),
+            wmode: 1,
+            codespace_ranges: vec![(vec![0, 0], vec![0xFF, 0xFF])],
+            ..Default::default()
+        }
     }
 
     pub fn rksj_h() -> Self {
@@ -200,14 +219,16 @@ impl CMap {
     }
 
     pub fn adobe_japan1_ucs2() -> Self {
-        static CACHE: std::sync::OnceLock<std::collections::BTreeMap<Vec<u8>, String>> = std::sync::OnceLock::new();
+        static CACHE: std::sync::OnceLock<std::collections::BTreeMap<Vec<u8>, String>> =
+            std::sync::OnceLock::new();
 
         let mappings = CACHE.get_or_init(|| {
             let mut map = std::collections::BTreeMap::new();
             // Try to load from cid2code.txt in the resources directory
             let resource_dir = std::env::var("FERRUGINOUS_RESOURCES")
                 .unwrap_or_else(|_| "external/adobe-cmaps".to_string());
-            let cid2code_path = std::path::Path::new(&resource_dir).join("Adobe-Japan1-7/cid2code.txt");
+            let cid2code_path =
+                std::path::Path::new(&resource_dir).join("Adobe-Japan1-7/cid2code.txt");
 
             if let Ok(content) = std::fs::read_to_string(&cid2code_path) {
                 for line in content.lines() {
@@ -221,13 +242,15 @@ impl CMap {
                             .iter()
                             .find(|&&c| c != "*" && !c.is_empty())
                             .copied()
-                                .unwrap_or("*");
+                            .unwrap_or("*");
 
                         if ucs2_col != "*"
-                            && let Ok(cid) = cid_str.parse::<u32>() {
+                            && let Ok(cid) = cid_str.parse::<u32>()
+                        {
                             let hex = ucs2_col.split(',').next().unwrap_or(ucs2_col);
                             if let Ok(val) = u32::from_str_radix(hex, 16)
-                                && let Some(c) = std::char::from_u32(val) {
+                                && let Some(c) = std::char::from_u32(val)
+                            {
                                 let cid_bytes = vec![(cid >> 8) as u8, (cid & 0xFF) as u8];
                                 map.insert(cid_bytes, c.to_string());
                             }
@@ -235,14 +258,8 @@ impl CMap {
                     }
                 }
             }
-            
-            // Minimal fallback if loading failed
-            if map.is_empty() {
-                for cid in 1..=95 {
-                    let u = (cid + 31) as u8 as char;
-                    map.insert(vec![(cid >> 8) as u8, (cid & 0xFF) as u8], u.to_string());
-                }
-            }
+
+            // No fallback: return empty map. Let to_unicode_inner handle PUA.
             map
         });
 
@@ -258,8 +275,10 @@ impl CMap {
     }
 
     fn load_named_recursive(name: &str, depth: usize) -> Option<Self> {
-        if depth > 4 { return None; } // Recursion guard
-        
+        if depth > 4 {
+            return None;
+        } // Recursion guard
+
         // 1. Check programmatic presets (where no file exists)
         if let Some(cmap) = match name {
             "Identity-H" => Some(Self::identity_h()),
@@ -273,16 +292,17 @@ impl CMap {
         // 2. Dynamic loading from synced cmap-resources repository
         let resource_dir = std::env::var("FERRUGINOUS_RESOURCES")
             .unwrap_or_else(|_| "external/adobe-cmaps".to_string());
-        
+
         let mut search_paths = vec![std::path::PathBuf::from(&resource_dir)];
         search_paths.push(std::path::Path::new(&resource_dir).join("Adobe-Japan1-7/CMap"));
         search_paths.push(std::path::Path::new(&resource_dir).join("Adobe-Japan1-6/CMap"));
         search_paths.push(std::path::Path::new(&resource_dir).join("Adobe-Japan1-4/CMap"));
-        
+
         for base in search_paths {
             let file_path = base.join(name);
             if let Ok(data) = std::fs::read(&file_path)
-                && let Ok(mut cmap) = Self::parse_recursive(&data, depth) {
+                && let Ok(mut cmap) = Self::parse_recursive(&data, depth)
+            {
                 cmap.name = name.to_string();
                 return Some(cmap);
             }
@@ -296,9 +316,9 @@ impl CMap {
         let mut i = 0;
         while i < tokens.len() {
             let token = tokens[i];
-            if token == b"usecmap"
-                && i > 0 {
-                let parent_name = String::from_utf8_lossy(tokens[i - 1]).trim_start_matches('/').to_string();
+            if token == b"usecmap" && i > 0 {
+                let parent_name =
+                    String::from_utf8_lossy(tokens[i - 1]).trim_start_matches('/').to_string();
                 if let Some(parent_cmap) = Self::load_named_recursive(&parent_name, depth + 1) {
                     let mut new_mappings = (*cmap.mappings).clone();
                     for (k, v) in parent_cmap.mappings.iter() {
@@ -322,11 +342,11 @@ fn handle_cmap_token(
     depth: usize,
 ) -> usize {
     match tokens[i] {
-        b"usecmap" => handle_usecmap(mappings, mappings_cid, tokens, i, depth),
+        b"usecmap" => handle_usecmap(cmap, mappings, mappings_cid, tokens, i, depth),
         b"/CMapName" => handle_cmap_name(cmap, tokens, i),
         b"/WMode" => handle_wmode(cmap, tokens, i),
         b"begincodespacerange" => handle_codespacerange(cmap, tokens, i),
-        b"beginbfchar" => handle_bfchar(mappings, tokens, i),
+        b"beginbfchar" => handle_bfchar(cmap, mappings, tokens, i),
         b"beginbfrange" => handle_bfrange(cmap, mappings, tokens, i),
         b"begincidchar" => handle_cidchar(mappings_cid, tokens, i),
         b"begincidrange" => handle_cidrange(cmap, mappings_cid, tokens, i),
@@ -335,6 +355,7 @@ fn handle_cmap_token(
 }
 
 fn handle_usecmap(
+    cmap: &mut CMap,
     mappings: &mut BTreeMap<Vec<u8>, String>,
     mappings_cid: &mut BTreeMap<Vec<u8>, u32>,
     tokens: &[&[u8]],
@@ -342,10 +363,21 @@ fn handle_usecmap(
     depth: usize,
 ) -> usize {
     if i > 0 {
-        let parent_name = String::from_utf8_lossy(tokens[i - 1]).trim_start_matches('/').to_string();
+        let parent_name =
+            String::from_utf8_lossy(tokens[i - 1]).trim_start_matches('/').to_string();
         if let Some(parent_cmap) = CMap::load_named_recursive(&parent_name, depth + 1) {
-            for (k, v) in parent_cmap.mappings.iter() { mappings.insert(k.clone(), v.clone()); }
-            for (k, v) in parent_cmap.mappings_cid.iter() { mappings_cid.insert(k.clone(), *v); }
+            for (k, v) in parent_cmap.mappings.iter() {
+                mappings.insert(k.clone(), v.clone());
+            }
+            for (k, v) in parent_cmap.mappings_cid.iter() {
+                mappings_cid.insert(k.clone(), *v);
+            }
+            cmap.codespace_ranges.extend(parent_cmap.codespace_ranges.clone());
+            if cmap.wmode == 0 {
+                cmap.wmode = parent_cmap.wmode;
+            }
+            cmap.bf_ranges.extend(parent_cmap.bf_ranges.clone());
+            cmap.cid_ranges.extend(parent_cmap.cid_ranges.clone());
         }
     }
     i + 1
@@ -355,14 +387,18 @@ fn handle_cmap_name(cmap: &mut CMap, tokens: &[&[u8]], i: usize) -> usize {
     if i + 1 < tokens.len() {
         cmap.name = String::from_utf8_lossy(tokens[i + 1]).trim_start_matches('/').to_string();
         i + 2
-    } else { i + 1 }
+    } else {
+        i + 1
+    }
 }
 
 fn handle_wmode(cmap: &mut CMap, tokens: &[&[u8]], i: usize) -> usize {
     if i + 1 < tokens.len() {
         cmap.wmode = std::str::from_utf8(tokens[i + 1]).unwrap_or("0").parse().unwrap_or(0);
         i + 2
-    } else { i + 1 }
+    } else {
+        i + 1
+    }
 }
 
 fn handle_codespacerange(cmap: &mut CMap, tokens: &[&[u8]], i: usize) -> usize {
@@ -370,22 +406,39 @@ fn handle_codespacerange(cmap: &mut CMap, tokens: &[&[u8]], i: usize) -> usize {
     let count = get_count(tokens, i);
     for _ in 0..count {
         if next_i + 1 < tokens.len() {
-            cmap.codespace_ranges.push((parse_cmap_bytes(tokens[next_i]), parse_cmap_bytes(tokens[next_i + 1])));
+            let start = parse_cmap_bytes(tokens[next_i]);
+            let end = parse_cmap_bytes(tokens[next_i + 1]);
+            cmap.codespace_ranges.push((start, end));
             next_i += 2;
         }
     }
     next_i
 }
 
-fn handle_bfchar(mappings: &mut BTreeMap<Vec<u8>, String>, tokens: &[&[u8]], i: usize) -> usize {
+fn handle_bfchar(
+    cmap: &CMap,
+    mappings: &mut BTreeMap<Vec<u8>, String>,
+    tokens: &[&[u8]],
+    i: usize,
+) -> usize {
     let mut next_i = i + 1;
     let count = get_count(tokens, i);
     for _ in 0..count {
         if next_i + 1 < tokens.len() {
-            let src = parse_cmap_bytes(tokens[next_i]);
+            let mut src = parse_cmap_bytes(tokens[next_i]);
             let dst = if tokens[next_i + 1].starts_with(b"/") {
                 glyph_name_to_unicode(tokens[next_i + 1])
-            } else { parse_cmap_string(tokens[next_i + 1]) };
+            } else {
+                parse_cmap_string(tokens[next_i + 1])
+            };
+
+            // NORMALIZATION: If key is shorter than expected codespace, pad it (Legacy Distiller case)
+            if src.len() == 1
+                && cmap.codespace_ranges.iter().any(|(s, _): &(Vec<u8>, Vec<u8>)| s.len() == 2)
+            {
+                src.insert(0, 0);
+            }
+
             mappings.insert(src, dst);
             next_i += 2;
         }
@@ -393,7 +446,12 @@ fn handle_bfchar(mappings: &mut BTreeMap<Vec<u8>, String>, tokens: &[&[u8]], i: 
     next_i + 1
 }
 
-fn handle_bfrange(cmap: &mut CMap, mappings: &mut BTreeMap<Vec<u8>, String>, tokens: &[&[u8]], i: usize) -> usize {
+fn handle_bfrange(
+    cmap: &mut CMap,
+    mappings: &mut BTreeMap<Vec<u8>, String>,
+    tokens: &[&[u8]],
+    i: usize,
+) -> usize {
     let mut next_i = i + 1;
     let count = get_count(tokens, i);
     for _ in 0..count {
@@ -408,28 +466,57 @@ fn handle_bfrange(cmap: &mut CMap, mappings: &mut BTreeMap<Vec<u8>, String>, tok
     next_i + 1
 }
 
-fn process_bfrange_entry(cmap: &mut CMap, new_map: &mut BTreeMap<Vec<u8>, String>, start: &[u8], end: &[u8], dst_base: &[u8], next_i: &mut usize, tokens: &[&[u8]]) {
+fn process_bfrange_entry(
+    cmap: &mut CMap,
+    new_map: &mut BTreeMap<Vec<u8>, String>,
+    start: &[u8],
+    end: &[u8],
+    dst_base: &[u8],
+    next_i: &mut usize,
+    tokens: &[&[u8]],
+) {
+    let mut s_raw = start.to_vec();
+    let mut e_raw = end.to_vec();
+
+    // NORMALIZATION: Pad keys if shorter than codespace
+    if s_raw.len() == 1 && cmap.codespace_ranges.iter().any(|(s, _)| s.len() == 2) {
+        s_raw.insert(0, 0);
+        e_raw.insert(0, 0);
+    }
+
     if dst_base.starts_with(b"<") || dst_base.starts_with(b"(") {
-        let (s_val, e_val) = (vec_to_u32(start), vec_to_u32(end));
+        let (s_val, e_val) = (vec_to_u32(&s_raw), vec_to_u32(&e_raw));
         let mut u_val = vec_to_u32(&parse_cmap_bytes(dst_base));
         if e_val - s_val > 100 {
-            cmap.bf_ranges.push(CMapRange { start: s_val, end: e_val, base: u_val, len: start.len() });
+            cmap.bf_ranges.push(CMapRange {
+                start: s_val,
+                end: e_val,
+                base: u_val,
+                len: s_raw.len(),
+            });
         } else {
             for code in s_val..=e_val {
-                let uni = std::char::from_u32(u_val).map(|c| c.to_string()).unwrap_or_else(|| String::from_utf16_lossy(&[u_val as u16]));
-                new_map.insert(u32_to_vec(code, start.len()), uni);
+                let uni = std::char::from_u32(u_val)
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|| String::from_utf16_lossy(&[u_val as u16]));
+                new_map.insert(u32_to_vec(code, s_raw.len()), uni);
                 u_val += 1;
             }
         }
     } else if dst_base == b"[" {
-        let s_val = vec_to_u32(start);
+        let s_val = vec_to_u32(&s_raw);
         let mut offset = 0;
         while *next_i < tokens.len() && tokens[*next_i] != b"]" {
-            new_map.insert(u32_to_vec(s_val + offset, start.len()), parse_cmap_string(tokens[*next_i]));
+            new_map.insert(
+                u32_to_vec(s_val + offset, s_raw.len()),
+                parse_cmap_string(tokens[*next_i]),
+            );
             *next_i += 1;
             offset += 1;
         }
-        if *next_i < tokens.len() && tokens[*next_i] == b"]" { *next_i += 1; }
+        if *next_i < tokens.len() && tokens[*next_i] == b"]" {
+            *next_i += 1;
+        }
     }
 }
 
@@ -447,19 +534,33 @@ fn handle_cidchar(mappings_cid: &mut BTreeMap<Vec<u8>, u32>, tokens: &[&[u8]], i
     next_i
 }
 
-fn handle_cidrange(cmap: &mut CMap, mappings_cid: &mut BTreeMap<Vec<u8>, u32>, tokens: &[&[u8]], i: usize) -> usize {
+fn handle_cidrange(
+    cmap: &mut CMap,
+    mappings_cid: &mut BTreeMap<Vec<u8>, u32>,
+    tokens: &[&[u8]],
+    i: usize,
+) -> usize {
     let mut next_i = i + 1;
     let count = get_count(tokens, i);
     for _ in 0..count {
         if next_i + 2 < tokens.len() {
-            let (start, end) = (parse_cmap_bytes(tokens[next_i]), parse_cmap_bytes(tokens[next_i + 1]));
-            let cid_base = std::str::from_utf8(tokens[next_i + 2]).unwrap_or("0").parse().unwrap_or(0);
+            let (start, end) =
+                (parse_cmap_bytes(tokens[next_i]), parse_cmap_bytes(tokens[next_i + 1]));
+            let cid_base =
+                std::str::from_utf8(tokens[next_i + 2]).unwrap_or("0").parse().unwrap_or(0);
             next_i += 3;
             let (s_val, e_val) = (vec_to_u32(&start), vec_to_u32(&end));
             if e_val - s_val > 100 {
-                cmap.cid_ranges.push(CMapRange { start: s_val, end: e_val, base: cid_base, len: start.len() });
+                cmap.cid_ranges.push(CMapRange {
+                    start: s_val,
+                    end: e_val,
+                    base: cid_base,
+                    len: start.len(),
+                });
             } else {
-                for v in s_val..=e_val { mappings_cid.insert(u32_to_vec(v, start.len()), cid_base + (v - s_val)); }
+                for v in s_val..=e_val {
+                    mappings_cid.insert(u32_to_vec(v, start.len()), cid_base + (v - s_val));
+                }
             }
         }
     }
@@ -475,14 +576,23 @@ fn tokenize_cmap(data: &[u8]) -> Vec<&[u8]> {
     let mut i = 0;
     while i < data.len() {
         let b = data[i];
-        if b.is_ascii_whitespace() || b == b'\r' { i += 1; continue; }
-        if b == b'%' { i = skip_comment(data, i); continue; }
+        if b.is_ascii_whitespace() || b == b'\r' {
+            i += 1;
+            continue;
+        }
+        if b == b'%' {
+            i = skip_comment(data, i);
+            continue;
+        }
         let start = i;
         match b {
             b'(' => i = tokenize_literal(data, i, &mut tokens),
             b'<' => i = tokenize_hex(data, i, &mut tokens),
             b'/' => i = tokenize_name(data, i, &mut tokens),
-            b'[' | b']' | b'{' | b'}' => { tokens.push(&data[i..i + 1]); i += 1; }
+            b'[' | b']' | b'{' | b'}' => {
+                tokens.push(&data[i..i + 1]);
+                i += 1;
+            }
             _ => i = tokenize_other(data, i, &mut tokens, start),
         }
     }
@@ -490,8 +600,12 @@ fn tokenize_cmap(data: &[u8]) -> Vec<&[u8]> {
 }
 
 fn skip_comment(data: &[u8], mut i: usize) -> usize {
-    while i < data.len() && data[i] != b'\n' && data[i] != b'\r' { i += 1; }
-    if i < data.len() { i += 1; }
+    while i < data.len() && data[i] != b'\n' && data[i] != b'\r' {
+        i += 1;
+    }
+    if i < data.len() {
+        i += 1;
+    }
     i
 }
 
@@ -501,10 +615,15 @@ fn tokenize_literal<'a>(data: &'a [u8], mut i: usize, tokens: &mut Vec<&'a [u8]>
     let (mut depth, mut escaped) = (1, false);
     while i < data.len() && depth > 0 {
         let b = data[i];
-        if escaped { escaped = false; }
-        else if b == b'\\' { escaped = true; }
-        else if b == b'(' { depth += 1; }
-        else if b == b')' { depth -= 1; }
+        if escaped {
+            escaped = false;
+        } else if b == b'\\' {
+            escaped = true;
+        } else if b == b'(' {
+            depth += 1;
+        } else if b == b')' {
+            depth -= 1;
+        }
         i += 1;
     }
     tokens.push(&data[start..i]);
@@ -514,8 +633,12 @@ fn tokenize_literal<'a>(data: &'a [u8], mut i: usize, tokens: &mut Vec<&'a [u8]>
 fn tokenize_hex<'a>(data: &'a [u8], mut i: usize, tokens: &mut Vec<&'a [u8]>) -> usize {
     let start = i;
     i += 1;
-    while i < data.len() && data[i] != b'>' { i += 1; }
-    if i < data.len() { i += 1; }
+    while i < data.len() && data[i] != b'>' {
+        i += 1;
+    }
+    if i < data.len() {
+        i += 1;
+    }
     tokens.push(&data[start..i]);
     i
 }
@@ -523,14 +646,25 @@ fn tokenize_hex<'a>(data: &'a [u8], mut i: usize, tokens: &mut Vec<&'a [u8]>) ->
 fn tokenize_name<'a>(data: &'a [u8], mut i: usize, tokens: &mut Vec<&'a [u8]>) -> usize {
     let start = i;
     i += 1;
-    while i < data.len() && !is_delimiter(data[i]) { i += 1; }
+    while i < data.len() && !is_delimiter(data[i]) {
+        i += 1;
+    }
     tokens.push(&data[start..i]);
     i
 }
 
-fn tokenize_other<'a>(data: &'a [u8], mut i: usize, tokens: &mut Vec<&'a [u8]>, start: usize) -> usize {
-    while i < data.len() && !is_delimiter(data[i]) { i += 1; }
-    if start == i { i += 1; }
+fn tokenize_other<'a>(
+    data: &'a [u8],
+    mut i: usize,
+    tokens: &mut Vec<&'a [u8]>,
+    start: usize,
+) -> usize {
+    while i < data.len() && !is_delimiter(data[i]) {
+        i += 1;
+    }
+    if start == i {
+        i += 1;
+    }
     tokens.push(&data[start..i]);
     i
 }
@@ -563,7 +697,9 @@ fn parse_hex(v: &[u8]) -> Vec<u8> {
     // Filter to only hex digits, ignoring whitespace and delimiters
     let s = v
         .iter()
-        .filter(|&&b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b) || (b'A'..=b'F').contains(&b))
+        .filter(|&&b| {
+            b.is_ascii_digit() || (b'a'..=b'f').contains(&b) || (b'A'..=b'F').contains(&b)
+        })
         .collect::<Vec<_>>();
     let mut bytes = Vec::new();
     for i in (0..s.len()).step_by(2) {
@@ -671,11 +807,12 @@ fn u32_to_vec(val: u32, len: usize) -> Vec<u8> {
 pub fn glyph_name_to_unicode(v: &[u8]) -> String {
     let name = if v.starts_with(b"/") { &v[1..] } else { v };
     let name_str = String::from_utf8_lossy(name);
-    
+
     if let Some(unicode) = crate::font::agl::lookup(&name_str) {
         unicode
     } else {
-        name_str.to_string()
+        // Return empty string instead of raw glyph name to avoid rendering 'g' etc.
+        String::new()
     }
 }
 
@@ -710,7 +847,7 @@ mod tests {
         let cmap = CMap::parse(cmap_data).unwrap();
         assert_eq!(cmap.cid_ranges.len(), 1);
         assert_eq!(cmap.mappings_cid.len(), 0);
-        
+
         // Test mapping
         assert_eq!(cmap.to_cid(&[0x00, 0x00, 0x01]), 1);
         assert_eq!(cmap.to_cid(&[0xFF, 0xFF, 0xFF]), 0xFFFFFF);

@@ -9,25 +9,16 @@ pub enum PdfError {
     Io(#[from] std::io::Error),
 
     #[error("Parse error at position {pos}: {message}")]
-    Parse {
-        pos: usize,
-        message: std::borrow::Cow<'static, str>,
-    },
+    Parse { pos: usize, message: std::borrow::Cow<'static, str> },
 
     #[error("Ingestion error in {context}: {message}")]
-    Ingestion {
-        context: std::borrow::Cow<'static, str>,
-        message: std::borrow::Cow<'static, str>,
-    },
+    Ingestion { context: std::borrow::Cow<'static, str>, message: std::borrow::Cow<'static, str> },
 
     #[error("Arena handle error: {0}")]
     Arena(std::borrow::Cow<'static, str>),
 
     #[error("Filter error ({filter}): {message}")]
-    Filter {
-        filter: std::borrow::Cow<'static, str>,
-        message: std::borrow::Cow<'static, str>,
-    },
+    Filter { filter: std::borrow::Cow<'static, str>, message: std::borrow::Cow<'static, str> },
 
     #[error("Lopdf error: {0}")]
     Lopdf(#[from] lopdf::Error),
@@ -36,10 +27,7 @@ pub enum PdfError {
     DepthLimitExceeded(usize),
 
     #[error("ISO 32000-2 Clause violation ({clause}): {message}")]
-    ClauseViolation {
-        clause: &'static str,
-        message: std::borrow::Cow<'static, str>,
-    },
+    ClauseViolation { clause: &'static str, message: std::borrow::Cow<'static, str> },
 
     #[error("Cryptography error: {0}")]
     Crypto(std::borrow::Cow<'static, str>),

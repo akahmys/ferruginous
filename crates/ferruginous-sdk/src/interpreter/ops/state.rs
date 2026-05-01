@@ -10,7 +10,17 @@ impl Interpreter<'_> {
                 self.backend.push_state();
             }
             "Q" => {
+                let current_clips = self.state.clip_count;
                 if let Some(old) = self.state_stack.pop() {
+                    let target_clips = old.clip_count;
+
+                    // Restore clip stack by popping the difference BEFORE popping state
+                    if current_clips > target_clips {
+                        for _ in 0..(current_clips - target_clips) {
+                            self.backend.pop_clip();
+                        }
+                    }
+
                     self.state = old;
                     self.backend.pop_state();
                 }

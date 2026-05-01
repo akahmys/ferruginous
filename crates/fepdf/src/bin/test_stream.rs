@@ -1,26 +1,38 @@
-use ferruginous_core::{Document, PdfName, Object, Handle};
+use ferruginous_core::Object;
+use ferruginous_sdk::PdfDocument;
 use std::fs;
 
 fn main() {
-    let data = fs::read("/Users/jun/Downloads/converted/bokutokitan.pdf").unwrap();
-    let doc = Document::parse(&data).unwrap();
-    let pages = doc.pages().unwrap();
-    let page2 = doc.arena().get_dict(pages[1]).unwrap();
-    let contents_key = doc.arena().intern_name(PdfName::new("Contents"));
-    if let Some(contents) = page2.get(&contents_key).map(|o| o.resolve(doc.arena())) {
+    let data = fs::read("samples/nihonkokukenpou.pdf").expect("Failed to read sample PDF");
+    let doc = PdfDocument::open(bytes::Bytes::from(data)).unwrap();
+    let page_count = doc.page_count().unwrap();
+
+    if page_count < 1 {
+        println!("Document has no pages");
+        return;
+    }
+
+    let page = doc.inner().get_page(0).unwrap();
+    let arena = doc.inner().arena();
+
+    if let Some(contents) = page.resolve_attribute("Contents") {
         let stream = match contents {
             Object::Stream(dh, stream_data) => Some((dh, stream_data)),
             Object::Array(arr_h) => {
-                let arr = doc.arena().get_array(arr_h).unwrap();
-                if let Object::Stream(dh, stream_data) = arr[0].resolve(doc.arena()) {
+                let arr = arena.get_array(arr_h).unwrap();
+                if let Object::Stream(dh, stream_data) = arr[0].resolve(arena) {
                     Some((dh, stream_data))
-                } else { None }
-            },
+                } else {
+                    None
+                }
+            }
             _ => None,
         };
+
         if let Some((dh, stream_data)) = stream {
-            let dict = doc.arena().get_dict(dh).unwrap();
-            let decoded = doc.arena().process_filters(stream_data, dict).unwrap();
+            let dict = arena.get_dict(dh).unwrap();
+            let raw_bytes = arena.get_stream_bytes(&stream_data).unwrap();
+            let decoded = arena.process_filters(&raw_bytes, &dict).unwrap();
             println!("Content stream:\n{}", String::from_utf8_lossy(&decoded));
         } else {
             println!("Contents is not a stream");

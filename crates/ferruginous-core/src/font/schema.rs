@@ -1,5 +1,5 @@
-use crate::{FromPdfObject, Object, PdfName};
 use crate::handle::Handle;
+use crate::{FromPdfObject, Object, PdfName};
 
 /// PDF Font Descriptor (ISO 32000-2:2020 Clause 9.8)
 #[derive(Debug, Clone, FromPdfObject)]
