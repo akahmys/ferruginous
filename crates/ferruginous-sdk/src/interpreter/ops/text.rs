@@ -222,7 +222,7 @@ impl Interpreter<'_> {
                     let displacement = n / 1000.0 * self.state.text_state.font_size;
                     let m = self.text_matrices.get_or_insert_with(TextMatrices::default);
                     let shift = if wmode == 1 {
-                        Matrix::new(1.0, 0.0, 0.0, 1.0, 0.0, displacement)
+                        Matrix::new(1.0, 0.0, 0.0, 1.0, 0.0, -displacement)
                     } else {
                         Matrix::new(1.0, 0.0, 0.0, 1.0, -displacement * th, 0.0)
                     };
@@ -312,7 +312,7 @@ impl Interpreter<'_> {
                         let displacement = n / 1000.0 * self.state.text_state.font_size;
                         let m = self.text_matrices.get_or_insert_with(TextMatrices::default);
                         let shift = if wmode == 1 {
-                            Matrix::new(1.0, 0.0, 0.0, 1.0, 0.0, displacement)
+                            Matrix::new(1.0, 0.0, 0.0, 1.0, 0.0, -displacement)
                         } else {
                             Matrix::new(1.0, 0.0, 0.0, 1.0, -displacement * th, 0.0)
                         };
