@@ -15,6 +15,7 @@ The "Rebirth" project aims to achieve the world's most robust and ISO-compliant 
 **Goal**: Achieve ISO-compliant rendering stability and finalize CLI utilities.
 
 - [x] **Rendering Stability**: Robust coordinate mapping, CMap v2 engine, and strict ICC profiling for Japanese PDFs.
+- [x] **Type 3 Font Pipeline**: Normalized loading and metrics parsing for Type 3 fonts with `CharProcs` support.
 - [x] **Active Refinement**: Unicode-native normalization and unified font mapping during ingestion.
 - [x] **Governance & Security**: 100% compliance with Rule 1 (RR-15) and integrated PII/Secret scanning.
 
@@ -63,7 +64,7 @@ The "Rebirth" project aims to achieve the world's most robust and ISO-compliant 
 ## 5. Progress History (Highlights)
 
 ### [x] Phase 23 (First Half): Rendering Hardening
-- [x] **M67**: Achieved stable rendering of complex Japanese PDFs. Implemented **Advanced Metadata Sublimation** (Info <-> XMP), **Advanced Vacuum** (Contiguous ID Remapping), and **Primary Linearization** (Object Reordering) in the export engine.
+- [x] **M67**: Achieved stable rendering of complex Japanese PDFs and Type 3 font stabilization. Implemented **Advanced Metadata Sublimation** (Info <-> XMP), **Advanced Vacuum** (Contiguous ID Remapping), and **Primary Linearization** (Object Reordering) in the export engine.
 
 ### [x] Phase 22: fepdf & UA-2 Bridge (2.2)
 - [x] **M66/M67**: Restored core engine, implemented iterative `StructureVisitor`, and unified `MatterhornAuditor`. Achieved 100% build health with new Arena handle system.
@@ -75,4 +76,4 @@ The "Rebirth" project aims to achieve the world's most robust and ISO-compliant 
 ... (Previous Phases 1 - 20 summarized)
 
 ---
-*Roadmap updated: 2026-04-28 (Phase 24-27 GUI Expansion)*
+*Roadmap updated: 2026-05-01 (Type 3 Pipeline Finalization)*

@@ -147,11 +147,15 @@ The rendering pipeline is designed for resolution-independent, low-latency visua
 `fepdf` is the professional CLI companion for Ferruginous, designed for batch processing, document auditing, and structural remediation.
 
 ### Key Subcommands
-- **`inspect`**: Audit compliance (UA-2) and visualize document structure.
-- **`upgrade`**: Modernize legacy PDFs to ISO 32000-2 (PDF 2.0).
-- **`merge` / `split`**: High-fidelity document manipulation using iterative `ObjectCloner`.
-- **`sign`**: Apply PAdES-compliant digital signatures with robust `ByteRange` patching.
-- **`repair`**: Salvage corrupted PDF files using the hardened parser.
+- **`analyze`**: Perform document auditing (`audit`), metadata inspection (`info`), and content extraction (`text`).
+- **`manipulate`**: High-fidelity document manipulation including `merge`, `split`, `rotate`, and structural `repair`.
+- **`produce`**: Industrial-strength output tools: ISO 32000-2 `upgrade`, PAdES-compliant `sign`, and GPU-accelerated `render`.
+- **`debug`**: Low-level inspection tools for PDF object `dump` and hierarchical `structure` visualization.
+
+### Achieved Milestones (Type 3 & CJK)
+- **Type 3 Pipeline**: Full support for Type 3 font metrics and `CharProcs` parsing, enabling accurate rendering of legacy Japanese PDFs.
+- **Audit Table**: Integrated font audit with explicit Type 3 detection and embedding validation.
+- **Rendering Fidelity**: CAD-grade layout preservation for complex Japanese vertical writing and mixed-font documents.
 
 ### Optimization & Ingestion Flags
 - **`--compress`**: Enable **FlateDecode** stream compression.

@@ -53,6 +53,7 @@ pub trait RenderBackend {
 #[derive(Debug, Clone)]
 pub struct TextGlyph {
     pub gid: u32,
+    pub name: Option<String>,
     pub char_code: u32,
     pub unicode: String,
     pub width: f32,

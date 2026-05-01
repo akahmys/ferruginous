@@ -537,10 +537,11 @@ fn render_font_audit(summary: &ferruginous_sdk::DocumentSummary) {
         println!("| :--- | :--- | :--- | :--- | :--- |");
         for f in &summary.fonts {
             println!(
-                "| {} | {} | {} | {} | {} |",
+                "| {} | {} | {} | {} | {} | {} |",
                 f.name,
                 f.font_type,
                 if f.is_embedded { "✅" } else { "❌" },
+                if f.is_type3 { "T3" } else { "−" },
                 if f.is_subset { "✅" } else { "−" },
                 f.encoding
             );
@@ -1058,16 +1059,17 @@ fn render_font_text(summary: &ferruginous_sdk::DocumentSummary) {
         println!("No fonts detected.");
     } else {
         println!(
-            "{:<30} | {:<10} | {:<4} | {:<4} | {:<4} | {:<10}",
-            "Font Name", "Type", "Emb", "Sub", "ToU", "Encoding"
+            "{:<30} | {:<10} | {:<4} | {:<4} | {:<4} | {:<4} | {:<10}",
+            "Font Name", "Type", "Emb", "T3", "Sub", "ToU", "Encoding"
         );
-        println!("{:-<30}-+-{:-<10}-+-{:-<4}-+-{:-<4}-+-{:-<4}-+-{:-<10}", "", "", "", "", "", "");
+        println!("{:-<30}-+-{:-<10}-+-{:-<4}-+-{:-<4}-+-{:-<4}-+-{:-<4}-+-{:-<10}", "", "", "", "", "", "", "");
         for f in &summary.fonts {
             println!(
-                "{:<30} | {:<10} | {:<4} | {:<4} | {:<4} | {:<10}",
+                "{:<30} | {:<10} | {:<4} | {:<4} | {:<4} | {:<4} | {:<10}",
                 f.name,
                 f.font_type,
                 if f.is_embedded { "✅" } else { "❌" },
+                if f.is_type3 { "T3" } else { "−" },
                 if f.is_subset { "✅" } else { "−" },
                 if f.has_to_unicode { "✅" } else { "❌" },
                 f.encoding

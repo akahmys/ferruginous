@@ -157,7 +157,8 @@ impl<'a> Interpreter<'a> {
             | Command::SetWordSpacing(_)
             | Command::SetHorizontalScaling(_)
             | Command::SetTextRenderMode(_)
-            | Command::SetWritingMode(_) => self.handle_text_command(cmd),
+            | Command::SetWritingMode(_)
+            | Command::Type3SetMetrics { .. } => self.handle_text_command(cmd),
             Command::SetFillColor(_) | Command::SetStrokeColor(_) => self.handle_color_command(cmd),
             Command::DrawXObject(_)
             | Command::BeginMarkedContent { .. }

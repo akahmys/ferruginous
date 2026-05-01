@@ -101,6 +101,17 @@ pub enum Command {
     /// End a marked-content sequence (EMC).
     EndMarkedContent,
 
+    // --- Type 3 Fonts ---
+    /// Set the glyph width and bounding box for a Type 3 font (d0, d1).
+    Type3SetMetrics {
+        /// Horizontal advance.
+        wx: f64,
+        /// Vertical advance (only for vertical writing mode).
+        wy: f64,
+        /// Bounding box (llx, lly, urx, ury) if d1.
+        bbox: Option<kurbo::Rect>,
+    },
+
     /// A raw PDF operator that could not be sublimated.
     RawOperator { name: String, operands: Vec<Object> },
 }

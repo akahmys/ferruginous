@@ -57,6 +57,10 @@ pub struct FontResource {
     pub unicode_to_gid: BTreeMap<char, u32>,
     /// Reconstructed SFNT data with injected metrics.
     pub reconstructed_data: Option<Arc<Vec<u8>>>,
+    /// Type 3 font character procedures (ISO 32000-2:2020 Clause 9.6.5).
+    pub char_procs: Option<BTreeMap<String, Handle<Object>>>,
+    /// Type 3 font matrix (ISO 32000-2:2020 Clause 9.6.5).
+    pub font_matrix: Option<[f32; 6]>,
 }
 
 #[derive(Default)]
@@ -87,6 +91,8 @@ pub struct FontSummary {
     pub font_type: String,
     /// Whether the font is embedded in the PDF.
     pub is_embedded: bool,
+    /// Whether the font is a Type 3 font (defined by PDF content streams).
+    pub is_type3: bool,
     /// Whether the font is a subset of the original font.
     pub is_subset: bool,
     /// The character encoding used by the font.
@@ -107,14 +113,14 @@ impl FontResource {
         let to_unicode = Self::parse_to_unicode(dict, doc);
         let encoding = Self::parse_encoding(dict, doc);
 
-        let metrics;
         let mut font_descriptor =
             dict.get(&arena.name("FontDescriptor")).and_then(|o| o.as_reference());
         let mut font_file_handle = None;
         let mut cid_to_gid_map = None;
-        let font_data_final;
 
-        if subtype.as_str() == "Type0"
+        let (metrics, font_data_final) = if subtype.as_str() == "Type3" {
+            (Self::parse_type3_metrics(dict, arena), font_data)
+        } else if subtype.as_str() == "Type0"
             || subtype.as_str() == "CIDFontType0"
             || subtype.as_str() == "CIDFontType2"
         {
@@ -124,22 +130,20 @@ impl FontResource {
                 {
                     base_font = bf;
                 }
-                font_data_final = if font_data.is_none() { res.font_data } else { font_data };
+                let fd = if font_data.is_none() { res.font_data } else { font_data };
                 if font_descriptor.is_none() {
                     font_descriptor = res.font_descriptor;
                 }
                 font_file_handle = res.font_file_handle;
                 cid_to_gid_map = res.cid_to_gid_map;
-                metrics = res.metrics;
+                (res.metrics, fd)
             } else {
                 // If it's a CIDFont directly (not wrapped in Type0), parse its metrics
-                font_data_final = font_data;
-                metrics = Self::parse_cid_metrics(dict, arena);
+                (Self::parse_cid_metrics(dict, arena), font_data)
             }
         } else {
-            font_data_final = font_data;
-            metrics = Self::parse_standard_widths(dict, arena);
-        }
+            (Self::parse_standard_widths(dict, arena), font_data)
+        };
 
         let mut resource = Self {
             subtype: subtype.clone(),
@@ -164,6 +168,8 @@ impl FontResource {
             unicode_to_gid: BTreeMap::new(),
             fallback_type: None,
             reconstructed_data: None,
+            char_procs: Self::parse_char_procs(dict, arena),
+            font_matrix: Self::parse_font_matrix(dict, arena),
         };
 
         resource.fallback_type = Some(resource.infer_fallback_type());
@@ -300,6 +306,50 @@ impl FontResource {
             .and_then(|o| o.resolve(arena).as_name())
             .and_then(|h| arena.get_name(h))
             .unwrap_or_else(|| PdfName::new("Untitled"))
+    }
+
+    fn parse_char_procs(
+        dict: &BTreeMap<Handle<PdfName>, Object>,
+        arena: &PdfArena,
+    ) -> Option<BTreeMap<String, Handle<Object>>> {
+        let cp_key = arena.name("CharProcs");
+        if let Some(cp_obj) = dict.get(&cp_key) {
+            let cp_resolved = cp_obj.resolve(arena);
+            if let Object::Dictionary(dfh) = cp_resolved {
+                if let Some(cp_dict) = arena.get_dict(dfh) {
+                    let mut map = BTreeMap::new();
+                    for (name_h, obj) in cp_dict {
+                        if let Some(name) = arena.get_name(name_h) {
+                            if let Some(h) = obj.as_reference() {
+                                map.insert(name.as_str().to_string(), h);
+                            }
+                        }
+                    }
+                    return Some(map);
+                }
+            }
+        }
+        None
+    }
+
+    fn parse_font_matrix(
+        dict: &BTreeMap<Handle<PdfName>, Object>,
+        arena: &PdfArena,
+    ) -> Option<[f32; 6]> {
+        let fm_key = arena.name("FontMatrix");
+        if let Some(fm_obj) = dict.get(&fm_key)
+            && let Object::Array(ah) = fm_obj.resolve(arena)
+            && let Some(arr) = arena.get_array(ah)
+            && arr.len() == 6
+        {
+            let mut matrix = [0.0; 6];
+            for (i, item) in arr.iter().enumerate() {
+                matrix[i] = item.as_f64().unwrap_or(0.0) as f32;
+            }
+            Some(matrix)
+        } else {
+            None
+        }
     }
 
     fn parse_to_unicode(
@@ -605,6 +655,29 @@ impl FontResource {
         0
     }
 
+    fn parse_type3_metrics(
+        dict: &BTreeMap<Handle<PdfName>, Object>,
+        arena: &PdfArena,
+    ) -> FontMetrics {
+        let mut metrics = FontMetrics::default();
+        if let Some(Object::Integer(f)) = dict.get(&arena.name("FirstChar")).map(|o| o.resolve(arena)) {
+            metrics.first = f as i32;
+        }
+        if let Some(Object::Integer(l)) = dict.get(&arena.name("LastChar")).map(|o| o.resolve(arena)) {
+            metrics.last = l as i32;
+        }
+        if let Some(Object::Array(ah)) = dict.get(&arena.name("Widths")).map(|o| o.resolve(arena)) {
+            if let Some(arr) = arena.get_array(ah) {
+                for (i, w) in arr.iter().enumerate() {
+                    let val = w.resolve(arena).as_f64().unwrap_or(0.0) as f32;
+                    let char_code = (metrics.first as i32 + i as i32) as u32;
+                    metrics.widths.insert(char_code, val);
+                }
+            }
+        }
+        metrics
+    }
+
     pub fn has_any_mapping(&self) -> bool {
         (self.to_unicode.as_ref().map(|m| !m.mappings.is_empty()).unwrap_or(false))
             || (self.encoding.as_ref().map(|m| !m.mappings.is_empty()).unwrap_or(false))
@@ -661,6 +734,8 @@ impl FontResource {
             unicode_to_gid: std::collections::BTreeMap::new(),
             fallback_type: None,
             reconstructed_data: None,
+            char_procs: None,
+            font_matrix: None,
         };
 
         resource.init_adj1_mapping();
@@ -1179,11 +1254,24 @@ fn extract_font_summary(
         _ => "Standard".to_string(),
     };
 
-    let is_embedded = check_font_embedding(arena, dict, fv);
+    let is_type3 = font_type == "Type3";
+    let is_embedded = if is_type3 {
+        dict.contains_key(&arena.name("CharProcs"))
+    } else {
+        check_font_embedding(arena, dict, fv)
+    };
     let is_subset = name.len() > 7 && name.as_bytes().get(6).copied() == Some(b'+');
     let has_to_unicode = dict.contains_key(&arena.name("ToUnicode"));
 
-    Some(FontSummary { name, font_type, is_embedded, is_subset, encoding, has_to_unicode })
+    Some(FontSummary {
+        name,
+        font_type,
+        is_embedded,
+        is_type3,
+        is_subset,
+        encoding,
+        has_to_unicode,
+    })
 }
 
 fn extract_font_name(

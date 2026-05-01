@@ -55,6 +55,11 @@ impl Interpreter<'_> {
                 self.state.text_state.wmode = *w;
                 Ok(())
             }
+            Command::Type3SetMetrics { .. } => {
+                // ISO 32000-2 9.6.5: d0/d1 set the glyph width.
+                // We currently handle width in show_text, so this is a no-op here.
+                Ok(())
+            }
             _ => Ok(()),
         }
     }
@@ -239,10 +244,9 @@ impl Interpreter<'_> {
         let res = self.resolve_font_resource(&name)?;
         let glyphs = self.map_text_to_glyphs(text, &res)?;
 
-        let m = self.text_matrices.get_or_insert_with(TextMatrices::default);
-
+        let tm = self.text_matrices.as_ref().map(|m| m.tm).unwrap_or_default();
         let rise_mat = Matrix::new(1.0, 0.0, 0.0, 1.0, 0.0, self.state.text_state.rise);
-        let render = m.tm.concat(&rise_mat);
+        let render = tm.concat(&rise_mat);
 
         let th = self.state.text_state.horizontal_scaling / 100.0;
         let text_state = ferruginous_render::TextState {
@@ -251,43 +255,113 @@ impl Interpreter<'_> {
             tw: self.state.text_state.word_spacing,
             is_vertical: res.wmode() == 1,
         };
-        self.backend.show_text(
-            &glyphs,
-            self.state.text_state.font_size,
-            render.as_affine(),
-            text_state,
-            self.op_index,
-        );
 
-        let mut total_advance = 0.0;
-        for glyph in &glyphs {
-            let char_width = f64::from(glyph.width) / 1000.0 * self.state.text_state.font_size;
-            if res.wmode() == 1 {
-                total_advance += char_width;
-                total_advance -= self.state.text_state.char_spacing;
-                // Note: Word spacing (Tw) only applies to 1-byte space characters (0x20).
-                // In many Japanese PDFs, space is U+3000 or specific CIDs, so we check both.
-                // However, the spec says it only applies to the ASCII space character.
-            } else {
-                total_advance += char_width * th;
-                total_advance += self.state.text_state.char_spacing * th;
+        if let Some(char_procs) = res.char_procs.clone() {
+            self.render_type3_glyphs(&glyphs, &res, &render, &text_state, &char_procs)?;
+        } else {
+            self.backend.show_text(
+                &glyphs,
+                self.state.text_state.font_size,
+                render.as_affine(),
+                text_state,
+                self.op_index,
+            );
+        }
+
+        // Calculate total advance to update text matrix
+        let advance_mat = self.calculate_text_advance(&glyphs, res.wmode() == 1, th);
+        let m = self.text_matrices.get_or_insert_with(TextMatrices::default);
+        m.tm = m.tm.concat(&advance_mat);
+        Ok(())
+    }
+
+    fn render_type3_glyphs(
+        &mut self,
+        glyphs: &[ferruginous_render::TextGlyph],
+        font: &FontResource,
+        render: &Matrix,
+        text_state: &ferruginous_render::TextState,
+        char_procs: &std::collections::BTreeMap<String, Handle<Object>>,
+    ) -> PdfResult<()> {
+        let font_matrix = font.font_matrix.unwrap_or([0.001, 0.0, 0.0, 0.001, 0.0, 0.0]);
+        let fm = kurbo::Affine::new(font_matrix.map(|v| v as f64));
+        let mut current_advance = 0.0;
+
+        for glyph in glyphs {
+            if let Some(name) = &glyph.name {
+                let clean_name = name.strip_prefix('/').unwrap_or(name);
+                if let Some(stream_h) = char_procs.get(clean_name) {
+                    self.backend.push_state();
+                    let adv_vec = if text_state.is_vertical {
+                        kurbo::Vec2::new(0.0, current_advance)
+                    } else {
+                        kurbo::Vec2::new(current_advance, 0.0)
+                    };
+
+                    let size = self.state.text_state.font_size;
+                    let h_scale = if text_state.is_vertical { 1.0 } else { text_state.th };
+                    let local_to_pt = kurbo::Affine::scale_non_uniform(size * h_scale, size) * fm;
+
+                    let t = render.as_affine() * kurbo::Affine::translate(adv_vec) * local_to_pt;
+                    self.backend.set_transform(self.state.ctm.as_affine() * t);
+
+                    // Execute glyph stream
+                    let _ = self.execute(*stream_h);
+
+                    self.backend.pop_state();
+                }
             }
-            if glyph.char_code == 0x20 {
-                if res.wmode() == 1 {
-                    total_advance -= self.state.text_state.word_spacing;
-                } else {
-                    total_advance += self.state.text_state.word_spacing * th;
+
+            // Calculate advance for next glyph
+            let mut advance = f64::from(glyph.width) / 1000.0 * self.state.text_state.font_size;
+            if !text_state.is_vertical {
+                advance *= text_state.th;
+                advance += text_state.tc * text_state.th;
+                if glyph.char_code == 0x20 {
+                    advance += text_state.tw * text_state.th;
+                }
+            } else {
+                advance -= text_state.tc;
+                if glyph.char_code == 0x20 {
+                    advance -= text_state.tw;
+                }
+            }
+            current_advance += advance;
+        }
+        Ok(())
+    }
+
+    fn calculate_text_advance(
+        &self,
+        glyphs: &[ferruginous_render::TextGlyph],
+        is_vertical: bool,
+        th: f64,
+    ) -> Matrix {
+        let mut total_advance = 0.0;
+        let font_size = self.state.text_state.font_size;
+        let tc = self.state.text_state.char_spacing;
+        let tw = self.state.text_state.word_spacing;
+
+        for glyph in glyphs {
+            let char_width = f64::from(glyph.width) / 1000.0 * font_size;
+            if is_vertical {
+                total_advance += char_width - tc;
+                if glyph.char_code == 0x20 {
+                    total_advance -= tw;
+                }
+            } else {
+                total_advance += (char_width + tc) * th;
+                if glyph.char_code == 0x20 {
+                    total_advance += tw * th;
                 }
             }
         }
 
-        let advance_mat = if res.wmode() == 1 {
+        if is_vertical {
             Matrix::new(1.0, 0.0, 0.0, 1.0, 0.0, total_advance)
         } else {
             Matrix::new(1.0, 0.0, 0.0, 1.0, total_advance, 0.0)
-        };
-        m.tm = m.tm.concat(&advance_mat);
-        Ok(())
+        }
     }
 
     pub(crate) fn show_text_array(&mut self, arr: Handle<Vec<Object>>) -> PdfResult<()> {
@@ -365,10 +439,17 @@ impl Interpreter<'_> {
                 }
             });
 
+            let name = if let Some(ref enc) = font.encoding {
+                enc.mappings.get(code).cloned()
+            } else {
+                None
+            };
+
             let u_char = unicode.chars().next().unwrap_or('\0');
             let resolved_gid = font.resolve_gid(cid, Some(u_char));
             glyphs.push(ferruginous_render::TextGlyph {
                 gid: resolved_gid,
+                name,
                 char_code,
                 unicode,
                 width: w as f32,

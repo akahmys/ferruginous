@@ -55,6 +55,7 @@ impl<'a> Sublimator<'a> {
             | "Tz" | "Tr" | "Ts" => self.handle_text_op(op),
             "rg" | "RG" | "k" | "K" | "g" | "G" => self.handle_color_op(op),
             "BMC" | "BDC" | "EMC" => self.handle_marked_content_op(op),
+            "d0" | "d1" => self.handle_type3_op(op),
             _ => {
                 let operands = self.stack.drain(..).map(token_to_object).collect();
                 Some(Command::RawOperator { name: op.to_string(), operands })
@@ -134,6 +135,30 @@ impl<'a> Sublimator<'a> {
             }
             "BDC" => self.handle_bdc(),
             "EMC" => Some(Command::EndMarkedContent),
+            _ => None,
+        }
+    }
+
+    fn handle_type3_op(&mut self, op: &str) -> Option<Command> {
+        match op {
+            "d0" => {
+                let wy = self.pop_f64()?;
+                let wx = self.pop_f64()?;
+                Some(Command::Type3SetMetrics { wx, wy, bbox: None })
+            }
+            "d1" => {
+                let ury = self.pop_f64()?;
+                let urx = self.pop_f64()?;
+                let lly = self.pop_f64()?;
+                let llx = self.pop_f64()?;
+                let wy = self.pop_f64()?;
+                let wx = self.pop_f64()?;
+                Some(Command::Type3SetMetrics {
+                    wx,
+                    wy,
+                    bbox: Some(Rect::new(llx, lly, urx, ury)),
+                })
+            }
             _ => None,
         }
     }
