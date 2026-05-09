@@ -19,20 +19,17 @@ pub fn normalize_font(
         return RefinedObject::Dictionary(dict);
     }
 
-    let type0_name = PdfName::new("Type0");
-    let cid2_name = PdfName::new("CIDFontType2");
-
-    // Decide whether to use Identity-H normalization
-    // We only do this if we have a reliable GID map OR it's already a CID font.
-    let _has_gid_map = resource.map(|r| !r.unicode_to_gid.is_empty()).unwrap_or(false);
+    let subtype = dict.get(&subtype_key).and_then(|o| o.as_str()).map(|s| s.to_string());
     let is_embedded = resource.map(|r| r.data.is_some()).unwrap_or(false);
 
-    if let Some(RefinedObject::Name(st)) = dict.get(&subtype_key) {
-        if st == &type0_name && is_embedded {
+    if let Some(st_str) = subtype {
+        if st_str == "Type0" && is_embedded {
             normalize_type0_font(&mut dict, resource);
-        } else if st == &cid2_name {
-            // HARDENING: Inject /CIDToGIDMap /Identity directly into the CIDFont
-            dict.insert(PdfName::new("CIDToGIDMap"), RefinedObject::Name(PdfName::new("Identity")));
+        }
+
+        // CIDFonts (descendants) need CIDToGIDMap Identity if missing
+        if st_str == "CIDFontType0" || st_str == "CIDFontType2" {
+            dict.entry(PdfName::new("CIDToGIDMap")).or_insert_with(|| RefinedObject::Name(PdfName::new("Identity")));
         }
     }
 

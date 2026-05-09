@@ -14,16 +14,28 @@ pub fn discover_fonts(arena: &PdfArena, doc: &Document) -> BTreeMap<u32, Arc<Fon
     let base_font_key = arena.name("BaseFont");
     let subtype_key = arena.name("Subtype");
 
-    for handle in arena.all_dict_handles() {
-        if let Some(dict) = arena.get_dict(handle) {
-            let is_font = dict.get(&type_key).and_then(|o| o.resolve(arena).as_name())
-                == Some(font_val)
-                || (dict.contains_key(&base_font_key) && dict.contains_key(&subtype_key));
+    for i in 0..arena.object_count() {
+        let obj_handle = Handle::new(i);
+        if let Some(Object::Dictionary(dict_handle)) = arena.get_object(obj_handle)
+            && let Some(dict) = arena.get_dict(dict_handle) {
+                let type_val = dict.get(&type_key).and_then(|o| o.resolve(arena).as_name());
+                let is_font = if let Some(tv) = type_val {
+                    tv == font_val
+                } else {
+                    dict.contains_key(&base_font_key) && dict.contains_key(&subtype_key)
+                };
 
-            if is_font && let Ok(font_res) = FontResource::load(&dict, doc) {
-                cache.insert(handle.index(), Arc::new(font_res));
+                if is_font {
+                    match FontResource::load(&dict, doc) {
+                        Ok(font_res) => {
+                            cache.insert(obj_handle.index(), Arc::new(font_res));
+                        }
+                        Err(_e) => {
+                            // Identified as font but failed to load
+                        }
+                    }
+                }
             }
-        }
     }
     cache
 }
@@ -41,44 +53,77 @@ pub fn map_stream_contexts(
     let font_key = arena.name("Font");
     let contents_key = arena.name("Contents");
 
-    for handle in arena.all_dict_handles() {
-        if let Some(dict) = arena.get_dict(handle) {
-            let is_page =
-                dict.get(&type_key).and_then(|o| o.resolve(arena).as_name()) == Some(page_val);
-            let is_form =
-                dict.get(&subtype_key).and_then(|o| o.resolve(arena).as_name()) == Some(form_val);
+    for i in 0..arena.object_count() {
+        let obj_h = Handle::new(i);
+        if let Some(Object::Dictionary(handle)) | Some(Object::Stream(handle, _)) = arena.get_object(obj_h)
+            && let Some(dict) = arena.get_dict(handle) {
+                let is_page =
+                    dict.get(&type_key).and_then(|o| o.resolve(arena).as_name()) == Some(page_val);
+                let is_form =
+                    dict.get(&subtype_key).and_then(|o| o.resolve(arena).as_name()) == Some(form_val);
 
-            if (is_page || is_form)
-                && let Some(res_obj) = dict.get(&resources_key)
-                && let Some(res_dict_h) = res_obj.resolve(arena).as_dict_handle()
-                && let Some(res_dict) = arena.get_dict(res_dict_h)
-                && let Some(f_obj) = res_dict.get(&font_key)
-                && let Some(f_dict_h) = f_obj.resolve(arena).as_dict_handle()
-                && let Some(f_dict) = arena.get_dict(f_dict_h)
-            {
-                let mut context_fonts = BTreeMap::new();
-                for (res_name_h, font_obj) in f_dict {
-                    if let Some(res_name) = arena.get_name(res_name_h)
-                        && let Some(font_dict_h) = font_obj.resolve(arena).as_dict_handle()
-                        && let Some(font_res) = fonts.get(&font_dict_h.index())
-                    {
-                        context_fonts.insert(res_name.as_str().to_string(), font_res.clone());
+                if is_page || is_form {
+                    let mut context_fonts = BTreeMap::new();
+                    
+                    // 1. Accumulate resources from the entire hierarchy (Real-world flattening)
+                    let mut current_node = Some(dict.clone());
+                    let mut resource_nodes = Vec::new();
+
+                    while let Some(node) = current_node {
+                        if let Some(res_obj) = node.get(&resources_key)
+                            && let Some(res_dict_h) = res_obj.resolve(arena).as_dict_handle()
+                            && let Some(res_dict) = arena.get_dict(res_dict_h)
+                        {
+                            resource_nodes.push(res_dict);
+                        }
+                        
+                        if is_form { break; }
+
+                        let parent_key = arena.name("Parent");
+                        if let Some(parent_ref) = node.get(&parent_key) {
+                            let resolved_parent = parent_ref.resolve(arena);
+                            if let Object::Dictionary(parent_dict_h) = resolved_parent {
+                                current_node = arena.get_dict(parent_dict_h);
+                            } else {
+                                current_node = None;
+                            }
+                        } else {
+                            current_node = None;
+                        }
+                    }
+
+                    // 2. Merge all discovered resources (Child overrides Parent)
+                    resource_nodes.reverse(); // Parents first
+                    for res_dict in resource_nodes {
+                        if let Some(f_obj) = res_dict.get(&font_key)
+                            && let Some(f_dict_h) = f_obj.resolve(arena).as_dict_handle()
+                            && let Some(f_dict) = arena.get_dict(f_dict_h)
+                        {
+                            for (res_name_h, font_obj) in f_dict {
+                                if let Some(res_name) = arena.get_name(res_name_h)
+                                    && let Some(font_obj_h) = font_obj.as_reference()
+                                    && let Some(font_res) = fonts.get(&font_obj_h.index())
+                                {
+                                    context_fonts.insert(res_name.as_str().to_string(), font_res.clone());
+                                }
+                            }
+                        }
+                    }
+
+                    if is_page {
+                        associate_page_streams(
+                            arena,
+                            &dict,
+                            &contents_key,
+                            context_fonts,
+                            &mut contexts,
+                        );
+                    } else {
+                        // For Forms, the stream object itself is obj_h
+                        contexts.insert(obj_h.index(), context_fonts);
                     }
                 }
-
-                if is_page {
-                    associate_page_streams(
-                        arena,
-                        &dict,
-                        &contents_key,
-                        context_fonts,
-                        &mut contexts,
-                    );
-                } else {
-                    associate_form_stream(arena, handle, context_fonts, &mut contexts);
-                }
             }
-        }
     }
     contexts
 }
@@ -91,47 +136,24 @@ fn associate_page_streams(
     contexts: &mut BTreeMap<u32, BTreeMap<String, Arc<FontResource>>>,
 ) {
     if let Some(contents) = dict.get(contents_key) {
-        let resolved = contents.resolve(arena);
-        match resolved {
+        match contents {
             Object::Reference(h) => {
                 contexts.insert(h.index(), context_fonts);
             }
-            Object::Stream(h, _) => {
-                contexts.insert(h.index(), context_fonts);
-            }
             Object::Array(ah) => {
-                if let Some(arr) = arena.get_array(ah) {
+                if let Some(arr) = arena.get_array(*ah) {
                     for item in arr {
-                        let res_item = item.resolve(arena);
-                        match res_item {
-                            Object::Reference(h) => {
-                                contexts.insert(h.index(), context_fonts.clone());
-                            }
-                            Object::Stream(h, _) => {
-                                contexts.insert(h.index(), context_fonts.clone());
-                            }
-                            _ => {}
+                        if let Object::Reference(h) = item {
+                            contexts.insert(h.index(), context_fonts.clone());
                         }
                     }
                 }
             }
+            Object::Stream(_, _) => {
+                // This shouldn't happen for Page Contents (usually references),
+                // but if it's a direct stream, we'd need its object handle.
+            }
             _ => {}
-        }
-    }
-}
-
-fn associate_form_stream(
-    arena: &PdfArena,
-    dict_handle: Handle<BTreeMap<Handle<PdfName>, Object>>,
-    context_fonts: BTreeMap<String, Arc<FontResource>>,
-    contexts: &mut BTreeMap<u32, BTreeMap<String, Arc<FontResource>>>,
-) {
-    for i in 0..arena.object_count() {
-        let h = Handle::new(i);
-        if let Some(Object::Stream(dh, _)) = arena.get_object(h)
-            && dh.index() == dict_handle.index()
-        {
-            contexts.insert(h.index(), context_fonts.clone());
         }
     }
 }

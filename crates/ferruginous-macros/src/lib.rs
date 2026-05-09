@@ -35,7 +35,7 @@ pub fn derive_from_pdf_object(input: TokenStream) -> TokenStream {
     let field_parsers = fields.iter().map(|f| {
         let field_name = &f.ident;
         let field_type = &f.ty;
-        
+
         let mut pdf_key = field_name.as_ref().map(|id| id.to_string()).unwrap_or_default();
         let mut since_version: Option<f32> = None;
         let mut default_expr: Option<String> = None;

@@ -3,10 +3,12 @@
 use crate::Document;
 use crate::arena::{PdfArena, RemappingTable};
 use crate::error::PdfError;
+use crate::font::FontResource;
 use crate::handle::Handle;
 use crate::object::Object;
 use crate::refine::ParallelRefinery;
 use crate::security::SecurityHandler;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 mod discovery;
@@ -25,11 +27,17 @@ pub struct IngestionOptions {
     pub active_refinement: bool,
     pub sublime_metadata: bool,
     pub color_policy: ColorPolicy,
+    pub force_fallback: bool,
 }
 
 impl Default for IngestionOptions {
     fn default() -> Self {
-        Self { active_refinement: true, sublime_metadata: true, color_policy: ColorPolicy::Strict }
+        Self {
+            active_refinement: true,
+            sublime_metadata: true,
+            color_policy: ColorPolicy::Strict,
+            force_fallback: false,
+        }
     }
 }
 
@@ -41,6 +49,7 @@ pub struct IngestedDocument {
     pub root: Handle<Object>,
     pub info: Option<Handle<Object>>,
     pub issues: Vec<String>,
+    pub font_cache: BTreeMap<u32, Arc<FontResource>>,
 }
 
 impl Ingestor {
@@ -77,19 +86,73 @@ impl Ingestor {
         }
 
         // Pass 1.5: Font Discovery & Contextual Mapping
-        let root_id = doc.trailer.get(b"Root").and_then(|o| o.as_reference()).ok();
-        let info_id = doc.trailer.get(b"Info").and_then(|o| o.as_reference()).ok();
+        let root_id = match doc.trailer.get(b"Root") {
+            Ok(o) => match o.as_reference() {
+                Ok(id) => Some(id),
+                Err(e) => {
+                    log::warn!("Trailer /Root is not a reference: {:?}", e);
+                    None
+                }
+            },
+            Err(e) => {
+                log::warn!("Trailer /Root is missing: {:?}", e);
+                None
+            }
+        };
+
+        let info_id = match doc.trailer.get(b"Info") {
+            Ok(o) => match o.as_reference() {
+                Ok(id) => Some(id),
+                Err(e) => {
+                    log::warn!("Trailer /Info is not a reference: {:?}", e);
+                    None
+                }
+            },
+            Err(_) => None, // Info is optional
+        };
+
         let root_handle = root_id.and_then(|id| table.get(&id)).cloned().unwrap_or(Handle::new(0));
         let info_handle = info_id.and_then(|id| table.get(&id)).cloned();
 
         let temp_doc = Document::new(arena.clone(), root_handle, info_handle);
         let handle_font_cache = discover_fonts(&arena, &temp_doc);
-        let stream_contexts = map_stream_contexts(&arena, &handle_font_cache);
+        
+        // 1. Create a Document-wide Global Font Registry
+        let mut global_font_registry = BTreeMap::new();
+        for (h_idx, font_res) in &handle_font_cache {
+            if let Some(_dict) = arena.get_dict(Handle::new(*h_idx)) {
+                // Collect by both physical object index and BaseFont name for maximum resolution
+                global_font_registry.insert(format!("obj_{}", h_idx), font_res.clone());
+                
+                // Only register by BaseFont name if it's NOT a subsetted font and NOT a raw CIDFont.
+                // Raw CIDFonts (CIDFontType0/2) are components of Type0 fonts and should not clobber them.
+                let base_name = font_res.base_font.as_str();
+                let is_subset = base_name.len() > 7 && base_name.as_bytes()[6] == b'+';
+                let is_component_cid = font_res.subtype.as_str() == "CIDFontType0" || font_res.subtype.as_str() == "CIDFontType2";
+                
+                if !is_subset && !is_component_cid {
+                    global_font_registry.insert(base_name.to_string(), font_res.clone());
+                }
+            }
+        }
+
+        let mut stream_contexts = map_stream_contexts(&arena, &handle_font_cache);
+        
+        // 2. Supplement each stream context with the global registry for missing names
+        // (This implements the "Normalization-at-Load" philosophy for broken resource chains)
+        for context in stream_contexts.values_mut() {
+            for (name, res) in global_font_registry.iter() {
+                let name_string: &String = name;
+                if !context.contains_key(name_string) {
+                    context.insert(name_string.clone(), Arc::clone(res));
+                }
+            }
+        }
 
         // Map font file stream handles to their distilled (reconstructed) data
         let mut distilled_fonts = std::collections::BTreeMap::new();
         for res in handle_font_cache.values() {
-            if let Some(sh) = res.font_file_handle
+            if let Some(sh) = res.file_handle
                 && let Some(ref data) = res.reconstructed_data
             {
                 distilled_fonts.insert(sh, Arc::clone(data));
@@ -119,7 +182,13 @@ impl Ingestor {
             }
         }
 
-        Ok(IngestedDocument { arena, root: root_handle, info: info_handle, issues: all_issues })
+        Ok(IngestedDocument {
+            arena,
+            root: root_handle,
+            info: info_handle,
+            issues: all_issues,
+            font_cache: handle_font_cache,
+        })
     }
 
     /// Performs "Pass 0" normalization by decrypting the raw PDF objects in-place.

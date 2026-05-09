@@ -22,3 +22,7 @@ Conventions for troubleshooting and the debugging thought process in Ferruginous
 - **Layer Isolation**: Distinguish between "Physical" issues (decryption, stream decompression, parsing) and "Semantic" issues (refinement, resource mapping, font selection).
 - **Physical Indicators**: Corrupt stream errors, "Unexpected token" panics, or truncated object streams indicate a Physical failure.
 - **Semantic Indicators**: "Invisible" text (correct positions but missing glyphs), garbled strings (mojibake), or incorrect font faces suggest a failure in the Refinery or Resource discovery phase.
+
+## 7. Layer-Aware Diagnostics
+- **Avoid Double-Sublimation**: When writing diagnostic scripts, ensure you are inspecting the correct layer. Using high-level APIs (like `Document::load`) can apply buggy sublimation logic during loading, masking the very issues being investigated.
+- **Raw Verification**: Always verify low-level rendering bugs against the raw byte stream and raw PDF tokens (via `lopdf` or raw `Lexer`) to determine the ground truth before trusting the Intermediate Representation (IR).

@@ -29,3 +29,8 @@
 - **Rule**: Record lessons learned and diagnostic patterns in `regression_log.md`.
 - **Purpose**: Promote institutional memory and prevent AI contexts from forgetting common pitfalls.
 - **Compliance Criterion**: `regression_log.md` must be updated with the terminal state of the fix.
+
+## 6. Mandatory User Confirmation
+- **Rule**: Prior to implementing any fix, present the diagnosis and the proposed solution (Implementation Plan) to the user and obtain explicit confirmation.
+- **Purpose**: Prevent architectural deviations and ensure that the user approves the technical direction of the fix.
+- **Compliance Criterion**: `implementation_plan.md` must be created and approved by the user before any source code changes are made.

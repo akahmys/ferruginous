@@ -1,7 +1,6 @@
 //! PDF Logical Structure Types (ISO 32000-2:2020 Clause 14.7)
 
 use crate::{FromPdfObject, Handle, Object, PdfName};
-use std::collections::BTreeMap;
 
 /// PDF Structure Tree Root (Clause 14.7.2)
 #[derive(Debug, Clone, FromPdfObject)]
@@ -22,7 +21,7 @@ pub struct StructElement {
     #[pdf_key("S")]
     pub subtype: Option<Handle<PdfName>>,
     #[pdf_key("P")]
-    pub parent: Option<Handle<BTreeMap<Handle<PdfName>, Object>>>,
+    pub parent: Option<Handle<Object>>,
     #[pdf_key("K")]
     pub kids: Option<Object>,
     #[pdf_key("Alt")]

@@ -63,14 +63,14 @@
 - **Compliance Criterion**: All errors must be defined as domain-specific Enum types. Complex variants MUST use **named fields** (struct-like variants) rather than tuples. All string-based payloads MUST use `std::borrow::Cow<'static, str>` to allow zero-copy static messages and efficient dynamic context. Errors must capture mandatory contextual enrichment (e.g., `pos` for parsing, `context` for ingestion).
 
 ## 12. Bound & Invariant Enforcement
-- **Rule**: Enforce a 256MB limit on external inputs and explicitly state logical invariants using `assert!`.
-- **Purpose**: Early detection of resource exhaustion and developer-originated logical contradictions.
-- **Compliance Criterion**: Resource limits must be enforced by types or constants. `assert!` MUST ONLY be used for "impossible" logical states that indicate a bug in the code, never for validating untrusted input.
+- **Rule**: Enforce resource limits (e.g. 256MB input) and explicitly state logical invariants using `assert!`.
+- **Core Invariant: Handle Invariance**: The codebase MUST strictly distinguish between **Stable Handles** (`Handle<Object>`) and **Volatile Handles** (`DictHandle`, `ArrayHandle`). Models that survive refinery passes must never store volatile handles.
+- **Compliance Criterion**: Resource limits must be enforced by types or constants. `assert!` MUST ONLY be used for "impossible" logical states (e.g. violation of handle invariance) that indicate a bug in the code.
 
 ## 13. Zero Silent Swallowing
 - **Rule**: Prohibit discarding errors via `.ok()` or `_`. Always log or propagate.
 - **Purpose**: Early surfacing of latent bugs.
-- **Compliance Criterion**: All `Result` types must be evaluated; not a single error should be ignored.
+- **Compliance Criterion**: All `Result` types must be evaluated; not a single error should be ignored. This rule extends to the **Interpretation layer**: un-sublimated `RawOperator` instances must not be silently bypassed; they must either be fully integrated into the IR or trigger an explicit `WARN` or `ERROR` if unhandled.
 
 ## 14. Strict Scoping
 - **Rule**: Define variables just before they are used. Limit scopes (`{}`).

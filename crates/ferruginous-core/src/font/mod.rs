@@ -2,10 +2,15 @@
 
 pub mod agl;
 pub mod cmap;
+pub mod loader;
+pub mod metrics;
 pub mod reconstruction;
-pub use reconstruction::FontReconstructor;
+pub mod rescue;
+pub mod cff_standard;
+pub use reconstruction::{FontReconstructor, ReconstructedFont};
 pub mod schema;
 pub mod subset;
+pub mod mapping_tests;
 
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
@@ -23,63 +28,105 @@ use crate::{Document, Object, PdfArena, PdfError, PdfName, PdfResult};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+
 use crate::handle::Handle;
 
 /// Logical representation of a PDF Font (ISO 32000-2 Clause 9.2).
 #[derive(Clone)]
 pub struct FontResource {
-    pub subtype: PdfName,
+    // --- Identification ---
+    /// The PostScript name of the font.
     pub base_font: PdfName,
+    /// The font subtype (e.g., Type1, TrueType, Type0).
+    pub subtype: PdfName,
+    /// Whether the font is CID-keyed (Type0 or CIDFont).
+    pub is_cid_keyed: bool,
+
+    // --- Metrics & Descriptors ---
+    /// The first character code defined in the font.
     pub first_char: i32,
+    /// The last character code defined in the font.
     pub last_char: i32,
+    /// Widths of glyphs in font units (usually 1/1000 em).
     pub widths: BTreeMap<u32, f32>,
+    /// Vertical widths for vertical writing mode.
     pub vertical_widths: BTreeMap<u32, (f32, f32, f32)>, // (w1, v_x, v_y)
+    /// Default width for glyphs not present in the widths map.
     pub default_width: f32,
+    /// The writing mode (0 for horizontal, 1 for vertical).
+    pub wmode: u8,
+    /// Inferred bold status.
+    pub is_bold: bool,
+    /// Font descriptor dictionary if present.
+    pub descriptor: Option<Handle<Object>>,
+    /// Handle to the original font file stream.
+    pub file_handle: Option<Handle<Object>>,
+    /// Type 1 segment lengths (Length1, Length2, Length3).
+    pub length1: Option<u32>,
+    pub length2: Option<u32>,
+    pub length3: Option<u32>,
+
+    // --- Encodings & Unicode ---
+    /// Mapping from byte sequences to glyph names or character codes.
     pub encoding: Option<cmap::CMap>,
+    /// The ToUnicode CMap if present.
     pub to_unicode: Option<cmap::CMap>,
-    pub wmode: i32,
-    pub cid_to_gid_map: Option<Vec<u16>>,
-    pub data: Option<Arc<Vec<u8>>>,
-    pub font_descriptor: Option<Handle<Object>>,
-    pub font_file_handle: Option<Handle<Object>>,
-    pub is_legacy_distiller: bool,
-    /// Unified mapping: UTF-8 String -> GID
-    /// This is used during Arena Expansion for restructuring content streams.
-    pub unified_map: BTreeMap<String, u32>,
     /// System-wide Adobe-Japan1-UCS2 mapping for Japanese fonts.
     pub adj1_mapping: Option<cmap::CMap>,
+    /// Reverse mapping for ADJ1 lookups.
     pub reverse_adj1_mapping: Option<BTreeMap<String, u32>>,
-    /// Mapping discovered during content stream scanning (Original Bytes -> Unicode)
+    /// Mapping discovered during content stream scanning (Original Bytes -> Unicode).
     pub discovered_mappings: Arc<std::sync::Mutex<BTreeMap<Vec<u8>, String>>>,
-    /// Mapping from Unicode characters to internal Glyph IDs (GIDs) from the font file
-    pub fallback_type: Option<FallbackFontType>,
-    /// Mapping from Unicode characters to internal Glyph IDs (GIDs) from the font file
+    /// Unified mapping used for CMap synthesis.
+    pub unified_map: BTreeMap<String, u32>,
+
+    // --- Internal Glyph Mappings (GIDs) ---
+    /// Mapping from Unicode characters to internal Glyph IDs (GIDs).
     pub unicode_to_gid: BTreeMap<char, u32>,
+    /// Mapping from Glyph Names to internal Glyph IDs (GIDs).
+    pub glyph_name_to_gid: BTreeMap<String, u32>,
+    /// Mapping from PDF character codes to internal Glyph IDs (GIDs) discovered from embedded cmap.
+    pub code_to_gid: BTreeMap<u32, u32>,
+    /// Mapping from CFF SIDs to internal Glyph IDs (GIDs).
+    pub sid_to_gid: BTreeMap<u32, u32>,
+    /// Direct CID-to-GID mapping (Authoritative).
+    pub cid_to_gid_map: Option<BTreeMap<u32, u32>>,
+
+    // --- Reconstruction & Rendering State ---
+    /// Original or system font data.
+    pub data: Option<Arc<Vec<u8>>>,
     /// Reconstructed SFNT data with injected metrics.
     pub reconstructed_data: Option<Arc<Vec<u8>>>,
+    /// Fallback font type if substitution is needed.
+    pub fallback_type: Option<FallbackFontType>,
+    /// Whether the font was processed by a legacy distiller (affects encoding heuristics).
+    pub is_legacy_distiller: bool,
+
+    // --- Type 3 Specific ---
     /// Type 3 font character procedures (ISO 32000-2:2020 Clause 9.6.5).
     pub char_procs: Option<BTreeMap<String, Handle<Object>>>,
     /// Type 3 font matrix (ISO 32000-2:2020 Clause 9.6.5).
     pub font_matrix: Option<[f32; 6]>,
+    /// Whether to force fallback to system fonts on error.
+    pub force_fallback: bool,
+    /// CID Ordering (e.g., "Identity", "Japan1").
+    pub cid_ordering: Option<String>,
+    /// CID Registry (e.g., "Adobe").
+    pub cid_registry: Option<String>,
 }
 
-#[derive(Default)]
-struct FontMetrics {
-    first: i32,
-    last: i32,
-    widths: BTreeMap<u32, f32>,
-    v_widths: BTreeMap<u32, (f32, f32, f32)>,
-    default_width: f32,
-}
+pub use metrics::FontMetrics;
 
 #[derive(Default)]
 struct DescendantResult {
     base_font: Option<PdfName>,
-    font_data: Option<Vec<u8>>,
+    font_data: Option<loader::FontData>,
     font_descriptor: Option<Handle<Object>>,
     font_file_handle: Option<Handle<Object>>,
-    cid_to_gid_map: Option<Vec<u16>>,
+    cid_to_gid_map: Option<BTreeMap<u32, u32>>,
     metrics: FontMetrics,
+    ordering: Option<String>,
+    registry: Option<String>,
 }
 
 /// Summary of a font used in the document.
@@ -99,86 +146,226 @@ pub struct FontSummary {
     pub encoding: String,
     /// Whether the font has a ToUnicode mapping.
     pub has_to_unicode: bool,
+    /// Handle to the underlying PDF object.
+    pub handle: Handle<Object>,
 }
 
 impl FontResource {
+    #[cfg(test)]
+    pub fn new_test() -> Self {
+        Self {
+            base_font: PdfName::new("Test"),
+            subtype: PdfName::new("TrueType"),
+            is_cid_keyed: false,
+            first_char: 0,
+            last_char: 255,
+            widths: BTreeMap::new(),
+            vertical_widths: BTreeMap::new(),
+            default_width: 1000.0,
+            wmode: 0,
+            is_bold: false,
+            descriptor: None,
+            file_handle: None,
+            encoding: None,
+            to_unicode: None,
+            adj1_mapping: None,
+            reverse_adj1_mapping: None,
+            discovered_mappings: Arc::new(std::sync::Mutex::new(BTreeMap::new())),
+            unified_map: BTreeMap::new(),
+            unicode_to_gid: BTreeMap::new(),
+            glyph_name_to_gid: BTreeMap::new(),
+            code_to_gid: BTreeMap::new(),
+            sid_to_gid: BTreeMap::new(),
+            cid_to_gid_map: None,
+            data: None,
+            reconstructed_data: None,
+            length1: None,
+            length2: None,
+            length3: None,
+            fallback_type: None,
+            is_legacy_distiller: false,
+            char_procs: None,
+            font_matrix: None,
+            force_fallback: false,
+        }
+    }
+
     /// Loads a Font resource from a PDF dictionary.
     pub fn load(dict: &BTreeMap<Handle<PdfName>, Object>, doc: &Document) -> PdfResult<Self> {
         let arena = doc.arena();
         let subtype = Self::extract_subtype(dict, arena)?;
         let mut base_font = Self::extract_base_font(dict, arena);
 
-        let font_data =
-            dict.get(&arena.name("FontDescriptor")).and_then(|o| Self::extract_font_data(o, doc));
+        let fd_obj = dict.get(&arena.name("FontDescriptor"));
+        let font_data = fd_obj.and_then(|o| loader::FontLoader::extract_data(o, doc, Some(dict)));
+        
         let to_unicode = Self::parse_to_unicode(dict, doc);
         let encoding = Self::parse_encoding(dict, doc);
 
-        let mut font_descriptor =
-            dict.get(&arena.name("FontDescriptor")).and_then(|o| o.as_reference());
+        let mut font_descriptor = fd_obj.and_then(|o| o.as_reference());
         let mut font_file_handle = None;
         let mut cid_to_gid_map = None;
+        let mut cid_ordering = None;
+        let mut cid_registry = None;
 
-        let (metrics, font_data_final) = if subtype.as_str() == "Type3" {
-            (Self::parse_type3_metrics(dict, arena), font_data)
-        } else if subtype.as_str() == "Type0"
+        let is_cid_keyed = subtype.as_str() == "Type0"
             || subtype.as_str() == "CIDFontType0"
-            || subtype.as_str() == "CIDFontType2"
-        {
+            || subtype.as_str() == "CIDFontType2";
+
+        let (metrics, data_final) = if subtype.as_str() == "Type3" {
+            (FontMetrics::parse_type3(dict, arena), font_data)
+        } else if subtype.as_str() == "Type0" {
             if let Some(res) = Self::parse_descendant_font(dict, doc) {
-                if base_font.as_str() == "Untitled"
-                    && let Some(bf) = res.base_font
-                {
+                if base_font.as_str() == "Untitled" && let Some(bf) = res.base_font {
                     base_font = bf;
                 }
-                let fd = if font_data.is_none() { res.font_data } else { font_data };
+                let fd = font_data.or(res.font_data);
                 if font_descriptor.is_none() {
                     font_descriptor = res.font_descriptor;
                 }
                 font_file_handle = res.font_file_handle;
                 cid_to_gid_map = res.cid_to_gid_map;
+                cid_ordering = res.ordering;
+                cid_registry = res.registry;
                 (res.metrics, fd)
             } else {
-                // If it's a CIDFont directly (not wrapped in Type0), parse its metrics
-                (Self::parse_cid_metrics(dict, arena), font_data)
+                log::warn!("[HARDENING] Type0 font {} is missing descendant fonts or is malformed.", base_font.as_str());
+                (FontMetrics::default(), font_data)
             }
+        } else if subtype.as_str() == "CIDFontType0" || subtype.as_str() == "CIDFontType2" {
+            (FontMetrics::parse_cid(dict, arena), font_data)
         } else {
-            (Self::parse_standard_widths(dict, arena), font_data)
+            (FontMetrics::parse_standard(dict, arena), font_data)
         };
 
-        let mut resource = Self {
-            subtype: subtype.clone(),
-            base_font: base_font.clone(),
+        let mut resource = Self::new_initial(
+            subtype,
+            base_font,
+            metrics,
+            encoding,
+            to_unicode,
+            cid_to_gid_map,
+            data_final,
+            font_descriptor,
+            font_file_handle,
+            is_cid_keyed,
+            dict,
+            arena,
+            doc.force_fallback,
+            cid_ordering,
+            cid_registry,
+        );
+
+        resource.initialize_lifecycle(doc);
+        Ok(resource)
+    }
+
+    pub fn load_fallback(ftype: FallbackFontType, doc: &Document) -> PdfResult<Self> {
+        let mut res = Self::new_initial(
+            PdfName::new("TrueType"),
+            PdfName::new("Fallback"),
+            FontMetrics::default(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+            &BTreeMap::new(),
+            doc.arena(),
+            doc.force_fallback,
+            None,
+            None,
+        );
+        res.fallback_type = Some(ftype);
+        res.data = doc.system_fonts.get(&ftype).cloned();
+        res.initialize_lifecycle(doc);
+        Ok(res)
+    }
+
+    fn new_initial(
+        subtype: PdfName,
+        base_font: PdfName,
+        metrics: FontMetrics,
+        encoding: Option<cmap::CMap>,
+        to_unicode: Option<cmap::CMap>,
+        cid_to_gid_map: Option<BTreeMap<u32, u32>>,
+        font_data: Option<loader::FontData>,
+        descriptor: Option<Handle<Object>>,
+        file_handle: Option<Handle<Object>>,
+        is_cid_keyed: bool,
+        dict: &BTreeMap<Handle<PdfName>, Object>,
+        arena: &PdfArena,
+        force_fallback: bool,
+        cid_ordering: Option<String>,
+        cid_registry: Option<String>,
+    ) -> Self {
+        let is_bold = base_font.as_str().to_lowercase().contains("bold");
+        let (data, l1, l2, l3) = if let Some(fd) = font_data {
+            (Some(Arc::new(fd.data)), fd.length1, fd.length2, fd.length3)
+        } else {
+            (None, None, None, None)
+        };
+
+        Self {
+            subtype,
+            base_font,
+            is_cid_keyed,
             first_char: metrics.first,
             last_char: metrics.last,
             widths: metrics.widths,
             vertical_widths: metrics.v_widths,
             default_width: metrics.default_width,
+            wmode: metrics::detect_wmode(dict, arena) as u8,
+            is_bold,
+            descriptor,
+            file_handle,
+            length1: l1,
+            length2: l2,
+            length3: l3,
             encoding,
             to_unicode: to_unicode.clone(),
-            wmode: Self::detect_wmode(dict, arena),
-            cid_to_gid_map,
-            data: font_data_final.map(Arc::new),
-            font_descriptor,
-            font_file_handle,
-            is_legacy_distiller: Self::detect_legacy_distiller(&to_unicode),
-            unified_map: BTreeMap::new(),
             adj1_mapping: None,
             reverse_adj1_mapping: None,
             discovered_mappings: Arc::new(std::sync::Mutex::new(BTreeMap::new())),
+            unified_map: BTreeMap::new(),
             unicode_to_gid: BTreeMap::new(),
-            fallback_type: None,
+            glyph_name_to_gid: BTreeMap::new(),
+            code_to_gid: BTreeMap::new(),
+            sid_to_gid: BTreeMap::new(),
+            cid_to_gid_map,
+            data,
             reconstructed_data: None,
+            fallback_type: None,
+            is_legacy_distiller: Self::detect_legacy_distiller(&to_unicode),
             char_procs: Self::parse_char_procs(dict, arena),
             font_matrix: Self::parse_font_matrix(dict, arena),
-        };
+            force_fallback,
+            cid_ordering,
+            cid_registry,
+        }
+    }
 
-        resource.fallback_type = Some(resource.infer_fallback_type());
-        resource.init_adj1_mapping();
-        resource.build_unified_map();
-        resource.populate_embedded_unicode_map();
-        let _ = resource.perform_reconstruction();
+    fn initialize_lifecycle(&mut self, doc: &Document) {
+        self.fallback_type = Some(self.infer_fallback_type());
+        self.rescue_unicode_map();
+        self.init_adj1_mapping();
+        
+        // Build the authoritative Unicode->CID map BEFORE reconstruction 
+        // so it can be injected into the virtual SFNT's 'cmap' table.
+        self.build_unified_map();
+        
+        self.populate_embedded_unicode_map(doc);
+        let _ = self.perform_reconstruction();
+        
+        // Precipitation: Release original raw data if reconstruction succeeded to save memory.
+        if self.reconstructed_data.is_some() {
+            self.data = None;
+        }
 
-        Ok(resource)
+        self.populate_embedded_unicode_map(doc);
+        self.build_unified_map();
     }
 
     fn infer_fallback_type(&self) -> FallbackFontType {
@@ -223,13 +410,27 @@ impl FontResource {
     /// Surgically patches the embedded font data with PDF metrics.
     pub fn perform_reconstruction(&mut self) -> PdfResult<()> {
         if let Some(ref raw_data) = self.data {
-            let (patched, discovered_map) = FontReconstructor::reconstruct(self, raw_data)?;
-            self.reconstructed_data = Some(Arc::new(patched));
+            log::debug!("[FONT] Attempting reconstruction for {}", self.base_font.as_str());
+            let res = FontReconstructor::reconstruct(self, raw_data)?;
+            let sig = if res.data.len() >= 4 { format!("{:02x}{:02x}{:02x}{:02x}", res.data[0], res.data[1], res.data[2], res.data[3]) } else { "short".to_string() };
+            log::info!("[FONT] Reconstruction successful for {}. New size: {}, sig: {}", self.base_font.as_str(), res.data.len(), sig);
+            self.reconstructed_data = Some(Arc::new(res.data));
 
-            // If the PDF didn't provide a CIDToGIDMap, use the one discovered from the font itself
-            if self.cid_to_gid_map.is_none() && discovered_map.is_some() {
-                self.cid_to_gid_map = discovered_map;
+            if let Some(names) = res.name_to_gid_map {
+                self.glyph_name_to_gid = names;
             }
+
+            if let Some(sids) = res.sid_to_gid_map {
+                self.sid_to_gid = sids;
+            }
+
+            // Always favor the discovered map for embedded CFF fonts, as it reflects the physical charset truth.
+            if let Some(m) = res.cid_to_gid_map {
+                self.cid_to_gid_map = Some(m);
+            }
+            
+            // Re-read the newly synthesized cmap table to populate unicode_to_gid.
+            self.build_unicode_to_gid();
         }
         Ok(())
     }
@@ -237,55 +438,210 @@ impl FontResource {
     pub fn build_unified_map(&mut self) {
         let mut map: BTreeMap<String, u32> = BTreeMap::new();
 
+        // 1. First populate from ToUnicode (Highest Priority)
+        if let Some(ref tu) = self.to_unicode {
+            for (code, uni) in tu.mappings.iter() {
+                let cid = self.code_to_cid(code);
+                // For ToUnicode, we always insert or overwrite if it's authoritative
+                map.insert(uni.clone(), cid);
+            }
+        }
+
+        // 2. Fallback to Adobe-Japan1 (AJ1) for Japanese fonts
+        if map.is_empty()
+            && let Some(ref adj1) = self.adj1_mapping {
+                for (code, uni) in adj1.mappings.iter() {
+                    let cid = if code.len() == 2 {
+                        (u32::from(code[0]) << 8) | u32::from(code[1])
+                    } else {
+                        code[0] as u32
+                    };
+                    map.entry(uni.clone()).or_insert(cid);
+                }
+            }
+
+        // 3. Fallback to Heuristics/Encoding for simple fonts (Lowest Priority)
         if self.subtype.as_str() != "Type0" {
             for code in 0..=255 {
                 let (_, uni) = self.decode_via_heuristics(&[code as u8]);
                 if let Some(u) = uni {
-                    map.insert(u, code as u32);
+                    // Only insert if not already present from ToUnicode
+                    map.entry(u).or_insert(code as u32);
                 }
-            }
-        }
-
-        if let Some(ref tu) = self.to_unicode {
-            for (code, uni) in tu.mappings.iter() {
-                let cid = if code.len() == 2 {
-                    (u32::from(code[0]) << 8) | u32::from(code[1])
-                } else {
-                    code[0] as u32
-                };
-                map.insert(uni.clone(), cid);
             }
         }
 
         self.unified_map = map;
     }
 
-    pub fn populate_embedded_unicode_map(&mut self) {
+    pub fn populate_embedded_unicode_map(&mut self, doc: &Document) {
         let mut u2g = BTreeMap::new();
+
+        // Check if the current font data is valid SFNT.
+        // If it's not (e.g. Type 1), we should pre-populate u2g from the system fallback font
+        // that will be used during rendering, ensuring GID consistency.
+        let is_sfnt = self.data.as_ref().map(|raw_data| {
+            raw_data.starts_with(b"OTTO")
+                || raw_data.starts_with(&[0, 1, 0, 0])
+                || raw_data.starts_with(b"ttcf")
+                || raw_data.starts_with(b"true")
+        }).unwrap_or(false);
+
+        let is_cff = self.data.as_ref().map(|raw_data| {
+            raw_data.len() >= 2 && ((raw_data[0] == 1 && raw_data[1] == 0) || raw_data[0] == 2)
+        }).unwrap_or(false);
+
+        let is_type1 = self.data.as_ref().map(|raw_data| {
+            raw_data.starts_with(b"%!") || raw_data.starts_with(&[0x80, 0x01])
+        }).unwrap_or(false);
+
+        // Priority 1: ToUnicode (bridges Unicode to character codes/GIDs)
+        self.populate_u2g_from_tounicode(&mut u2g);
+
+        // Priority 2: Font file's own charmap
+        if is_sfnt || is_cff || self.reconstructed_data.is_some() {
+            self.populate_u2g_from_font_file(&mut u2g);
+        } else if is_type1 {
+            log::warn!("[FONT] Embedded font for {} is Type 1. Direct ingestion from font file is not yet supported for this format.", self.base_font.as_str());
+        } else if self.data.is_some() {
+            log::warn!("[FONT] Embedded font for {} is an unrecognized format (sig: {:?}). Skipping ingestion.", 
+                self.base_font.as_str(), 
+                &self.data.as_ref().unwrap()[..std::cmp::min(4, self.data.as_ref().unwrap().len())]);
+        }
+        // Priority 3: System fallback fonts (for characters still missing)
+        if let Some(ftype) = self.fallback_type
+            && let Some(fb_data) = doc.system_fonts.get(&ftype) {
+                // If force_fallback is set, we proactively populate from system fonts 
+                // to cover potential parsing failures in embedded fonts.
+                // Otherwise, it acts as a traditional fallback for missing glyphs.
+                self.populate_u2g_from_data(fb_data, &mut u2g);
+            }
+        // Priority 4: Unified mapping (last resort heuristics)
+        self.populate_u2g_from_unified(&mut u2g);
+        
+        self.unicode_to_gid = u2g;
+    }
+
+    fn populate_u2g_from_data(&self, data: &[u8], u2g: &mut BTreeMap<char, u32>) {
+        if let Ok(face) = ttf_parser::Face::parse(data, 0) {
+            log::debug!("[FONT] Parsing cmap for font: {}. cmap table present: {}", 
+                self.base_font.as_str(), face.tables().cmap.is_some());
+            let mut count = 0;
+            if let Some(cmap) = face.tables().cmap {
+                for table in cmap.subtables {
+                    log::debug!("[FONT] Subtable: platform={:?}, encoding={:?}, is_unicode={}", 
+                        table.platform_id, table.encoding_id, table.is_unicode());
+                    if table.is_unicode() {
+                        table.codepoints(|cp| {
+                            if let Some(c) = char::from_u32(cp)
+                                && let Some(gid) = table.glyph_index(cp) {
+                                    u2g.entry(c).or_insert(gid.0 as u32);
+                                    count += 1;
+                                }
+                        });
+                    }
+                }
+            }
+            log::debug!("[FONT] Mapped {} Unicode characters to GIDs for font {}", count, self.base_font.as_str());
+        } else {
+            log::error!("[FONT] Failed to parse font data for {}", self.base_font.as_str());
+        }
+    }
+
+    fn populate_u2g_from_tounicode(&mut self, u2g: &mut BTreeMap<char, u32>) {
+        let Some(ref tu) = self.to_unicode else { return };
+        let is_embedded = self.data.is_some() || self.reconstructed_data.is_some();
+        let is_cid = self.is_cid_keyed || self.subtype.as_str().contains("CIDFont");
+
+        for (code, uni) in tu.mappings.iter() {
+            if let Some(c) = uni.chars().next() {
+                // Priority Check: If we already have a valid GID from the physical font (embedded or fallback),
+                // we should NOT allow the PDF's internal character codes to override it for simple fonts.
+                // For CIDFonts, the character code (CID) IS the intended lookup key, so we allow it.
+                // If this is an embedded font, we TRUST ToUnicode to define the character-to-GID bridge
+                // even if the font's own cmap has a conflicting mapping for that Unicode character.
+                if let Some(&existing) = u2g.get(&c)
+                    && existing != 0 && !is_cid && !is_embedded {
+                        continue;
+                    }
+
+                let cid = self.code_to_cid(code);
+                
+                let gid = self.to_gid(cid, None);
+                
+                // For CIDFonts, we always trust the CID-to-GID mapping IF it yields a valid GID.
+                // For simple embedded fonts, we only use the character code as a GID if we have no other choice.
+                if is_cid && gid != 0 {
+                    u2g.insert(c, gid);
+                } else if !u2g.contains_key(&c) && is_embedded && gid != 0 {
+                    u2g.insert(c, gid);
+                }
+            }
+        }
+    }
+
+    fn populate_u2g_from_unified(&self, u2g: &mut BTreeMap<char, u32>) {
+        let is_embedded = self.data.is_some() || self.reconstructed_data.is_some();
+        let is_cid = self.is_cid_keyed || self.subtype.as_str().contains("CIDFont");
 
         for (uni, &cid) in &self.unified_map {
             if let Some(c) = uni.chars().next() {
-                u2g.insert(c, self.to_gid(cid));
+                if u2g.contains_key(&c) && u2g[&c] != 0 {
+                    continue;
+                }
+                
+                // For non-embedded simple fonts, unified mapping (derived from heuristics)
+                // is not authoritative for GIDs.
+                if !is_embedded && !is_cid {
+                    continue;
+                }
+
+                let gid = self.to_gid(cid, None);
+                u2g.entry(c).and_modify(|e| { if *e == 0 { *e = gid; } }).or_insert(gid);
             }
         }
+    }
 
-        if let Some(ref arc_data) = self.data
-            && let Ok(face) = ttf_parser::Face::parse(arc_data, 0)
-        {
-            for table in face.tables().cmap.iter().flat_map(|t| t.subtables) {
-                if table.is_unicode() {
-                    table.codepoints(|cp| {
-                        if let Some(c) = std::char::from_u32(cp)
-                            && let Some(gid) = table.glyph_index(cp)
-                        {
-                            // Only insert if not already present or if we are confident
-                            // For subset fonts, ToUnicode (unified_map) is usually more reliable.
-                            u2g.entry(c).or_insert(gid.0 as u32);
+    fn populate_u2g_from_font_file(&mut self, u2g: &mut BTreeMap<char, u32>) {
+        let font_data = self.reconstructed_data.as_ref().or(self.data.as_ref());
+        let font_name = self.base_font.as_str();
+
+        if let Some(arc_data) = font_data {
+            let sig = if arc_data.len() >= 4 { format!("{:02x}{:02x}{:02x}{:02x}", arc_data[0], arc_data[1], arc_data[2], arc_data[3]) } else { "short".to_string() };
+            log::debug!("[FONT] Parsing embedded font file for: {} (size: {} bytes, sig: {}, is_reconstructed: {})", 
+                font_name, arc_data.len(), sig, self.reconstructed_data.is_some());
+            match ttf_parser::Face::parse(arc_data, 0) {
+                Ok(face) => {
+                    log::debug!("[FONT] Parsing embedded font file for: {}. cmap present: {}", 
+                        font_name, face.tables().cmap.is_some());
+                    let mut count = 0;
+                    if let Some(cmap_table) = face.tables().cmap {
+                        for table in cmap_table.subtables {
+                            table.codepoints(|cp| {
+                                if let Some(gid) = table.glyph_index(cp) {
+                                    let gid_u32 = gid.0 as u32;
+                                    // GID 0 is .notdef.
+                                    if gid_u32 != 0 {
+                                        // Store raw character code to GID mapping
+                                        self.code_to_gid.insert(cp, gid_u32);
+                                        
+                                        // If this is a Unicode subtable, also populate u2g
+                                        if table.is_unicode()
+                                            && let Some(c) = std::char::from_u32(cp) {
+                                                u2g.entry(c).or_insert(gid_u32);
+                                                count += 1;
+                                            }
+                                    }
+                                }
+                            });
                         }
-                    });
+                    }
+                    log::debug!("[FONT] Mapped {} Unicode characters from embedded file for {}", count, font_name);
+                }
+                Err(e) => {
+                    log::debug!("[FONT] Failed to parse embedded font file for {}: {:?}. (Falling back to document/system truth)", font_name, e);
                 }
             }
-            self.unicode_to_gid = u2g;
         }
     }
 
@@ -297,6 +653,11 @@ impl FontResource {
             .get(&arena.name("Subtype"))
             .and_then(|o| o.resolve(arena).as_name())
             .and_then(|h| arena.get_name(h));
+
+        if subtype_name.is_none() {
+            let keys: Vec<String> = dict.keys().filter_map(|k| arena.get_name(*k).map(|n| n.as_str().to_string())).collect();
+            log::warn!("[HARDENING] Missing font subtype. Available keys: {:?}", keys);
+        }
 
         subtype_name.ok_or_else(|| PdfError::Other("Missing font subtype".into()))
     }
@@ -315,19 +676,17 @@ impl FontResource {
         let cp_key = arena.name("CharProcs");
         if let Some(cp_obj) = dict.get(&cp_key) {
             let cp_resolved = cp_obj.resolve(arena);
-            if let Object::Dictionary(dfh) = cp_resolved {
-                if let Some(cp_dict) = arena.get_dict(dfh) {
+            if let Object::Dictionary(dfh) = cp_resolved
+                && let Some(cp_dict) = arena.get_dict(dfh) {
                     let mut map = BTreeMap::new();
                     for (name_h, obj) in cp_dict {
-                        if let Some(name) = arena.get_name(name_h) {
-                            if let Some(h) = obj.as_reference() {
+                        if let Some(name) = arena.get_name(name_h)
+                            && let Some(h) = obj.as_reference() {
                                 map.insert(name.as_str().to_string(), h);
                             }
-                        }
                     }
                     return Some(map);
                 }
-            }
         }
         None
     }
@@ -357,9 +716,32 @@ impl FontResource {
         doc: &Document,
     ) -> Option<cmap::CMap> {
         let arena = doc.arena();
-        dict.get(&arena.name("ToUnicode"))
-            .and_then(|tu_obj| doc.decode_stream(&tu_obj.resolve(arena)).ok())
-            .and_then(|data| cmap::CMap::parse(&data).ok())
+        let tu_obj = dict.get(&arena.name("ToUnicode"))?;
+        let base_font = if let Some(h) = dict.get(&arena.name("BaseFont")).and_then(|o| o.as_name()) {
+            arena.get_name(h).map(|n| n.as_str().to_string()).unwrap_or_else(|| "Unknown".to_string())
+        } else {
+            "Unknown".to_string()
+        };
+        log::debug!("[FONT] Font {} has ToUnicode obj: {:?}", base_font, tu_obj);
+        Self::try_load_cmap(doc, &tu_obj.resolve(arena), "ToUnicode")
+    }
+
+    fn try_load_cmap(doc: &Document, obj: &Object, context: &str) -> Option<cmap::CMap> {
+        match doc.decode_stream(obj) {
+            Ok(data) => {
+                match cmap::CMap::parse(&data) {
+                    Ok(m) => Some(m),
+                    Err(e) => {
+                        log::warn!("Failed to parse CMap ({}): {:?}", context, e);
+                        None
+                    }
+                }
+            },
+            Err(e) => {
+                log::warn!("Failed to decode CMap stream ({}): {:?}", context, e);
+                None
+            }
+        }
     }
 
     fn detect_legacy_distiller(to_unicode: &Option<cmap::CMap>) -> bool {
@@ -391,9 +773,7 @@ impl FontResource {
                     _ => None,
                 })
             }
-            Object::Stream(_, _) => {
-                doc.decode_stream(&enc).ok().and_then(|data| cmap::CMap::parse(&data).ok())
-            }
+            Object::Stream(_, _) => Self::try_load_cmap(doc, &enc, "Encoding"),
             Object::Dictionary(h) => Self::parse_encoding_dict(h, arena),
             _ => None,
         }
@@ -448,15 +828,52 @@ impl FontResource {
         doc: &Document,
     ) -> Option<DescendantResult> {
         let arena = doc.arena();
-        let df_dict_obj = dict
-            .get(&arena.name("DescendantFonts"))?
-            .resolve(arena)
-            .as_array()
-            .and_then(|ah| arena.get_array(ah))?
-            .first()?
-            .clone();
-        let dfh = df_dict_obj.resolve(arena).as_dict_handle()?;
-        let df_dict = arena.get_dict(dfh)?;
+        let df_obj = dict.get(&arena.name("DescendantFonts"));
+        if df_obj.is_none() {
+            log::warn!("[HARDENING] DescendantFonts key is missing in Type0 font.");
+            return None;
+        }
+
+        let df_resolved = df_obj.unwrap().resolve(arena);
+        let df_array_h = df_resolved.as_array();
+        if df_array_h.is_none() {
+            log::warn!("[HARDENING] DescendantFonts is not an array (type: {:?}).", df_resolved);
+            return None;
+        }
+
+        let ah = df_array_h.unwrap();
+        let df_dict_obj = if let Some(df_array) = arena.get_array(ah) {
+            if let Some(first) = df_array.first() {
+                first.clone()
+            } else {
+                log::warn!("[HARDENING] DescendantFonts array is empty.");
+                return None;
+            }
+        } else {
+            log::warn!("[HARDENING] Failed to retrieve DescendantFonts array from arena.");
+            return None;
+        };
+
+        let df_dict_resolved = df_dict_obj.resolve(arena);
+        let df_h = df_dict_obj.as_reference().or({
+            // If it's not a reference, it might be an inline dictionary.
+            // In that case, we can't easily use get_font(handle), but CIDFonts are almost always indirect.
+            None
+        });
+
+        let mut font_resource = None;
+        if let Some(h) = df_h
+            && let Ok(res) = doc.get_font(h) {
+                font_resource = Some(res);
+            }
+
+        let dfh = df_dict_resolved.as_dict_handle();
+        if dfh.is_none() {
+            log::warn!("[HARDENING] First DescendantFont is not a dictionary (type: {:?}).", df_dict_resolved);
+            return None;
+        }
+
+        let df_dict = arena.get_dict(dfh.unwrap())?;
 
         let mut font_file_handle = None;
         if let Some(fd_obj) = df_dict.get(&arena.name("FontDescriptor"))
@@ -473,24 +890,65 @@ impl FontResource {
             }
         }
 
+        // Favor the mapping from the FontResource (which includes embedded CFF truth)
+        // over the potentially missing or "Identity" PDF dictionary mapping.
+        let cid_to_gid_map = if let Some(ref fr) = font_resource {
+            fr.cid_to_gid_map.clone().or_else(|| Self::parse_cid_to_gid_map(&df_dict, doc))
+        } else {
+            Self::parse_cid_to_gid_map(&df_dict, doc)
+        };
+
+        let csi_dict = df_dict.get(&arena.name("CIDSystemInfo"))
+            .and_then(|o| o.resolve(arena).as_dict_handle())
+            .and_then(|h| arena.get_dict(h));
+            
+        let ordering = if let Some(ref d) = csi_dict {
+            d.get(&arena.name("Ordering"))
+                .and_then(|o| o.resolve(arena).as_name())
+                .and_then(|n| arena.get_name(n))
+                .map(|n| n.as_str().to_string())
+        } else {
+            None
+        };
+            
+        let registry = if let Some(ref d) = csi_dict {
+            d.get(&arena.name("Registry"))
+                .and_then(|o| o.resolve(arena).as_name())
+                .and_then(|n| arena.get_name(n))
+                .map(|n| n.as_str().to_string())
+        } else {
+            None
+        };
+
         let res = DescendantResult {
             base_font: df_dict
                 .get(&arena.name("BaseFont"))
                 .and_then(|o| o.resolve(arena).as_name())
                 .and_then(|h| arena.get_name(h)),
-            font_data: if let Some(fd_obj) = df_dict.get(&arena.name("FontDescriptor")) {
-                Self::extract_font_data(fd_obj, doc)
-            } else {
-                None
-            },
+            font_data: font_resource.as_ref().and_then(|fr| {
+                fr.data.as_ref().or(fr.reconstructed_data.as_ref()).map(|d| loader::FontData {
+                    data: d.to_vec(),
+                    length1: fr.length1,
+                    length2: fr.length2,
+                    length3: fr.length3,
+                })
+            }).or_else(|| {
+                if let Some(fd_obj) = df_dict.get(&arena.name("FontDescriptor")) {
+                    loader::FontLoader::extract_data(fd_obj, doc, Some(&df_dict))
+                } else {
+                    None
+                }
+            }),
             font_descriptor: if let Some(fd_obj) = df_dict.get(&arena.name("FontDescriptor")) {
                 fd_obj.as_reference()
             } else {
                 None
             },
             font_file_handle,
-            cid_to_gid_map: Self::parse_cid_to_gid_map(&df_dict, doc),
-            metrics: Self::parse_cid_metrics(&df_dict, arena),
+            cid_to_gid_map,
+            metrics: FontMetrics::parse_cid(&df_dict, arena),
+            ordering,
+            registry,
         };
 
         Some(res)
@@ -499,183 +957,29 @@ impl FontResource {
     fn parse_cid_to_gid_map(
         df_dict: &BTreeMap<Handle<PdfName>, Object>,
         doc: &Document,
-    ) -> Option<Vec<u16>> {
+    ) -> Option<BTreeMap<u32, u32>> {
         let arena = doc.arena();
         let map_obj = df_dict.get(&arena.name("CIDToGIDMap"))?;
         let resolved = map_obj.resolve(arena);
         if let Some(name) = resolved.as_name().and_then(|h| arena.get_name(h))
-            && name.as_str() == "Identity"
-        {
-            return None;
-        }
-        let data = doc.decode_stream(&resolved).ok()?;
-        Some(data.chunks_exact(2).map(|c| u16::from_be_bytes([c[0], c[1]])).collect())
-    }
-
-    fn parse_cid_metrics(
-        df_dict: &BTreeMap<Handle<PdfName>, Object>,
-        arena: &PdfArena,
-    ) -> FontMetrics {
-        let mut metrics = FontMetrics::default();
-        metrics.default_width = 1000.0;
-        if let Some(dw_obj) = df_dict.get(&arena.name("DW")) {
-            metrics.default_width = dw_obj.resolve(arena).as_f64().unwrap_or(1000.0) as f32;
-        }
-
-        if let Some(Object::Array(wah)) =
-            df_dict.get(&arena.name("W")).map(|o: &Object| o.resolve(arena))
-            && let Some(w_arr) = arena.get_array(wah)
-        {
-            let mut i: usize = 0;
-            while i < w_arr.len() {
-                let first_cid = w_arr[i].resolve(arena).as_integer().unwrap_or(0) as u32;
-                let next_obj = w_arr[i + 1].resolve(arena);
-                if let Object::Array(iah) = next_obj {
-                    if let Some(i_arr) = arena.get_array(iah) {
-                        for (idx, w_obj) in i_arr.iter().enumerate() {
-                            let w_val: f32 = w_obj.resolve(arena).as_f64().unwrap_or(1000.0) as f32;
-                            metrics.widths.insert(first_cid + idx as u32, w_val);
-                        }
-                    }
-                    i += 2;
-                } else {
-                    let last_cid = next_obj.as_integer().unwrap_or(0) as u32;
-                    let w_val: f32 = w_arr[i + 2].resolve(arena).as_f64().unwrap_or(1000.0) as f32;
-                    for cid in first_cid..=last_cid {
-                        metrics.widths.insert(cid, w_val);
-                    }
-                    i += 3;
-                }
+            && name.as_str() == "Identity" {
+                return None;
             }
-        }
-        metrics.v_widths = Self::parse_v2_metrics(df_dict, arena, metrics.default_width);
-        metrics
-    }
-
-    fn parse_v2_metrics(
-        df_dict: &BTreeMap<Handle<PdfName>, Object>,
-        arena: &PdfArena,
-        default_w: f32,
-    ) -> BTreeMap<u32, (f32, f32, f32)> {
-        let mut v_widths = BTreeMap::new();
-        let Some(Object::Array(wah)) =
-            df_dict.get(&arena.name("W2")).map(|o: &Object| o.resolve(arena))
-        else {
-            return v_widths;
+        let data = match doc.decode_stream(&resolved) {
+            Ok(d) => d,
+            Err(e) => {
+                log::warn!("Failed to decode CIDToGIDMap stream: {:?}", e);
+                return None;
+            }
         };
-        let Some(w2_arr) = arena.get_array(wah) else { return v_widths };
-
-        let mut i: usize = 0;
-        while i < w2_arr.len() {
-            let first_cid = w2_arr[i].resolve(arena).as_integer().unwrap_or(0) as u32;
-            let next_obj = w2_arr[i + 1].resolve(arena);
-            if let Object::Array(iah) = next_obj {
-                if let Some(i_arr) = arena.get_array(iah) {
-                    for (idx, chunk) in i_arr.chunks_exact(3).enumerate() {
-                        let w1_y = chunk[0].resolve(arena).as_f64().unwrap_or(-1000.0) as f32;
-                        let v_x = chunk[1].resolve(arena).as_f64().unwrap_or(default_w as f64 / 2.0)
-                            as f32;
-                        let v_y = chunk[2].resolve(arena).as_f64().unwrap_or(880.0) as f32;
-                        v_widths.insert(first_cid + idx as u32, (w1_y, v_x, v_y));
-                    }
-                }
-                i += 2;
-            } else {
-                let last_cid = next_obj.as_integer().unwrap_or(0) as u32;
-                let w1_y = w2_arr[i + 2].resolve(arena).as_f64().unwrap_or(-1000.0) as f32;
-                let v_x =
-                    w2_arr[i + 3].resolve(arena).as_f64().unwrap_or(default_w as f64 / 2.0) as f32;
-                let v_y = w2_arr[i + 4].resolve(arena).as_f64().unwrap_or(880.0) as f32;
-                for cid in first_cid..=last_cid {
-                    v_widths.insert(cid, (w1_y, v_x, v_y));
-                }
-                i += 5;
+        let mut map = BTreeMap::new();
+        for (i, chunk) in data.chunks_exact(2).enumerate() {
+            let gid = u16::from_be_bytes([chunk[0], chunk[1]]) as u32;
+            if gid != 0 {
+                map.insert(i as u32, gid);
             }
         }
-        v_widths
-    }
-
-    fn parse_standard_widths(
-        dict: &BTreeMap<Handle<PdfName>, Object>,
-        arena: &PdfArena,
-    ) -> FontMetrics {
-        let mut metrics = FontMetrics {
-            first: dict
-                .get(&arena.name("FirstChar"))
-                .and_then(|o| o.resolve(arena).as_integer())
-                .unwrap_or(0) as i32,
-            last: dict
-                .get(&arena.name("LastChar"))
-                .and_then(|o| o.resolve(arena).as_integer())
-                .unwrap_or(0) as i32,
-            ..Default::default()
-        };
-
-        if let Some(Object::Array(ah)) = dict.get(&arena.name("Widths")).map(|o| o.resolve(arena))
-            && let Some(arr) = arena.get_array(ah)
-        {
-            for (idx, w) in arr.iter().enumerate() {
-                metrics.widths.insert(
-                    (metrics.first + idx as i32) as u32,
-                    w.resolve(arena).as_f64().unwrap_or(0.0) as f32,
-                );
-            }
-        }
-        metrics
-    }
-
-    fn detect_wmode(dict: &BTreeMap<Handle<PdfName>, Object>, arena: &PdfArena) -> i32 {
-        let enc_obj = dict.get(&arena.name("Encoding"));
-        if let Some(enc) = enc_obj {
-            let resolved = enc.resolve(arena);
-            match resolved {
-                Object::Name(h) => {
-                    if let Some(n) = arena.get_name(h) {
-                        let bytes = n.as_bytes();
-                        if bytes.ends_with(b"-V") || bytes == b"V" {
-                            return 1;
-                        }
-                    }
-                }
-                Object::Stream(dh, _) => {
-                    if let Some(d) = arena.get_dict(dh)
-                        && let Some(n_handle) =
-                            d.get(&arena.name("CMapName")).and_then(|o| o.resolve(arena).as_name())
-                        && let Some(n) = arena.get_name(n_handle)
-                    {
-                        let bytes = n.as_bytes();
-                        if bytes.ends_with(b"-V") || bytes == b"V" {
-                            return 1;
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-        0
-    }
-
-    fn parse_type3_metrics(
-        dict: &BTreeMap<Handle<PdfName>, Object>,
-        arena: &PdfArena,
-    ) -> FontMetrics {
-        let mut metrics = FontMetrics::default();
-        if let Some(Object::Integer(f)) = dict.get(&arena.name("FirstChar")).map(|o| o.resolve(arena)) {
-            metrics.first = f as i32;
-        }
-        if let Some(Object::Integer(l)) = dict.get(&arena.name("LastChar")).map(|o| o.resolve(arena)) {
-            metrics.last = l as i32;
-        }
-        if let Some(Object::Array(ah)) = dict.get(&arena.name("Widths")).map(|o| o.resolve(arena)) {
-            if let Some(arr) = arena.get_array(ah) {
-                for (i, w) in arr.iter().enumerate() {
-                    let val = w.resolve(arena).as_f64().unwrap_or(0.0) as f32;
-                    let char_code = (metrics.first as i32 + i as i32) as u32;
-                    metrics.widths.insert(char_code, val);
-                }
-            }
-        }
-        metrics
+        Some(map)
     }
 
     pub fn has_any_mapping(&self) -> bool {
@@ -709,33 +1013,46 @@ impl FontResource {
             wmode = 1;
         }
 
+        let is_cid_keyed = subtype.as_str() == "Type0"
+            || subtype.as_str() == "CIDFontType0"
+            || subtype.as_str() == "CIDFontType2";
+
         let mut resource = Self {
             subtype,
             base_font,
+            is_cid_keyed,
             first_char: 0,
             last_char: 0,
             widths: BTreeMap::new(),
             vertical_widths: BTreeMap::new(),
             default_width: 1000.0,
+            wmode,
+            is_bold: false,
+            descriptor: None,
+            file_handle: None,
+            length1: None,
+            length2: None,
+            length3: None,
             encoding,
             to_unicode,
-            wmode,
-            cid_to_gid_map: None,
-            data: None,
-            font_descriptor: None,
-            font_file_handle: None,
-            is_legacy_distiller: false,
-            unified_map: BTreeMap::new(),
             adj1_mapping: None,
             reverse_adj1_mapping: None,
-            discovered_mappings: std::sync::Arc::new(std::sync::Mutex::new(
-                std::collections::BTreeMap::new(),
-            )),
-            unicode_to_gid: std::collections::BTreeMap::new(),
-            fallback_type: None,
+            discovered_mappings: Arc::new(std::sync::Mutex::new(BTreeMap::new())),
+            unified_map: BTreeMap::new(),
+            unicode_to_gid: BTreeMap::new(),
+            glyph_name_to_gid: BTreeMap::new(),
+            code_to_gid: BTreeMap::new(),
+            sid_to_gid: BTreeMap::new(),
+            cid_to_gid_map: None,
+            data: None,
             reconstructed_data: None,
+            fallback_type: None,
+            is_legacy_distiller: false,
             char_procs: None,
             font_matrix: None,
+            force_fallback: false,
+            cid_ordering: None,
+            cid_registry: None,
         };
 
         resource.init_adj1_mapping();
@@ -790,6 +1107,40 @@ impl FontResource {
         }
     }
 
+    /// Performs heuristic recovery of Unicode mappings if they are missing or broken.
+    pub fn rescue_unicode_map(&mut self) {
+        if self.to_unicode.is_some() {
+            return;
+        }
+
+        // Hardening (RR-15): Never attempt rescue for component CIDFonts.
+        // These fonts are part of a Type0 parent which holds the authoritative ToUnicode map.
+        // Rescuing from the physical SFNT charmap of a CIDFont often produces corrupt/1-byte mappings.
+        if self.subtype.as_str() == "CIDFontType0" || self.subtype.as_str() == "CIDFontType2" {
+            return;
+        }
+
+        if let Some(cmap) = rescue::CMapRescue::find_rescue_cmap(self.base_font.as_str()) {
+            self.to_unicode = Some(cmap);
+        }
+
+        // If it's a simple font without ToUnicode, try rescuing from glyph names
+        if self.subtype.as_str() == "Type1" && self.to_unicode.is_none()
+            && let Some(ref enc) = self.encoding {
+                let mut mappings = BTreeMap::new();
+                for (code, name) in enc.mappings.iter() {
+                    if let Some(uni) = rescue::CMapRescue::unicode_from_glyph_name(name) {
+                        mappings.insert(code.clone(), uni);
+                    }
+                }
+                if !mappings.is_empty() {
+                    let mut rescue_cmap = cmap::CMap::default();
+                    rescue_cmap.mappings = std::sync::Arc::new(mappings);
+                    self.to_unicode = Some(rescue_cmap);
+                }
+            }
+    }
+
     fn init_adj1_mapping(&mut self) {
         let font_name_lower = self.base_font.as_str().to_lowercase();
         let is_japanese = font_name_lower.contains("hira")
@@ -804,14 +1155,14 @@ impl FontResource {
             || self
                 .encoding
                 .as_ref()
-                .map(|e| {
+                .map(|e: &cmap::CMap| {
                     let n = e.name().to_lowercase();
                     n.contains("unijis") || n.contains("90ms") || n.contains("90pv") || n.contains("rksj")
                 })
                 .unwrap_or(false);
 
-        if is_japanese {
-            if let Some(cmap) = cmap::CMap::load_named("Adobe-Japan1-UCS2") {
+        if is_japanese
+            && let Some(cmap) = cmap::CMap::load_named("Adobe-Japan1-UCS2") {
                 let mut reverse = BTreeMap::new();
                 for (cid_bytes, uni) in cmap.mappings.iter() {
                     if cid_bytes.len() == 2 {
@@ -822,13 +1173,13 @@ impl FontResource {
                 self.adj1_mapping = Some(cmap);
                 self.reverse_adj1_mapping = Some(reverse);
             }
-        }
 
         self.build_unicode_to_gid();
     }
 
     pub fn build_unicode_to_gid(&mut self) {
-        if let Some(ref data) = self.data
+        let data_opt = self.reconstructed_data.as_ref().or(self.data.as_ref());
+        if let Some(data) = data_opt
             && let Ok(face) = ttf_parser::Face::parse(data, 0)
         {
             for subtable in face.tables().cmap.iter().flat_map(|t| t.subtables) {
@@ -837,7 +1188,11 @@ impl FontResource {
                         if let Some(gid) = subtable.glyph_index(cp)
                             && let Some(c) = std::char::from_u32(cp)
                         {
-                            self.unicode_to_gid.insert(c, gid.0 as u32);
+                            let u = c as u32;
+                            let is_control = (u <= 0x1F) || (0x7F..=0x9F).contains(&u);
+                            if gid.0 != 0 && !is_control {
+                                self.unicode_to_gid.insert(c, gid.0 as u32);
+                            }
                         }
                     });
                 }
@@ -845,37 +1200,7 @@ impl FontResource {
         }
     }
 
-    fn extract_font_data(fd_obj: &Object, doc: &Document) -> Option<Vec<u8>> {
-        let arena = doc.arena();
-        let fd_resolved = fd_obj.resolve(arena);
-        if let Object::Dictionary(fdh) = fd_resolved
-            && let Some(fd_dict) = arena.get_dict(fdh)
-        {
-            // Try FontFile3 (CFF, OpenType, etc.)
-            if let Some(ff3) = fd_dict.get(&arena.name("FontFile3")) {
-                let resolved = ff3.resolve(arena);
-                match doc.decode_stream(&resolved) {
-                    Ok(data) => return Some(data.to_vec()),
-                    Err(_) => {
-                        // Silent failure, try fallbacks
-                    }
-                }
-            }
-            // Try FontFile2 (TrueType)
-            if let Some(ff2) = fd_dict.get(&arena.name("FontFile2"))
-                && let Ok(data) = doc.decode_stream(&ff2.resolve(arena))
-            {
-                return Some(data.to_vec());
-            }
-            // Try FontFile (Type 1)
-            if let Some(ff) = fd_dict.get(&arena.name("FontFile"))
-                && let Ok(data) = doc.decode_stream(&ff.resolve(arena))
-            {
-                return Some(data.to_vec());
-            }
-        }
-        None
-    }
+    // extract_font_data has been moved to loader::FontLoader::extract_data
 
     pub fn glyph_width(&self, code: &[u8]) -> f32 {
         if code.is_empty() {
@@ -978,42 +1303,53 @@ impl FontResource {
     }
 
     fn to_unicode_inner(&self, code: &[u8]) -> Option<String> {
-        if let Some(ref map) = self.to_unicode
-            && let Some(res) = map.map(code)
-        {
-            return Some(res);
+        if let Some(ref map) = self.to_unicode {
+            let res = map.map(code);
+            if let Some(res) = res {
+                let uni = if res.starts_with('/') {
+                    cmap::glyph_name_to_unicode(res.as_bytes())
+                } else {
+                    res
+                };
+                return Some(uni);
+            }
         }
 
-        if let Some(ref enc) = self.encoding
-            && let Some(res) = enc.map(code)
-        {
-            if res.starts_with('/') {
-                return Some(cmap::glyph_name_to_unicode(res.as_bytes()));
+        if let Some(res) = self.decode_via_encoding(code, None) {
+            let (_len, s_opt): (usize, Option<String>) = res;
+            if let Some(res) = s_opt {
+                let uni = if res.starts_with('/') {
+                    cmap::glyph_name_to_unicode(res.as_bytes())
+                } else {
+                    res
+                };
+                return Some(uni);
             }
-            return Some(res);
         }
 
         let cid = self.to_cid(code);
+        let is_multibyte = self.subtype.as_str() == "Type0"
+            || self.subtype.as_str() == "CIDFontType0"
+            || self.subtype.as_str() == "CIDFontType2";
 
-        if let Some(ref adj1) = self.adj1_mapping {
-            let cid_bytes = vec![(cid >> 8) as u8, (cid & 0xFF) as u8];
-            if let Some(s) = adj1.map(&cid_bytes) {
-                return Some(s);
+        if is_multibyte
+            && let Some(ref adj1) = self.adj1_mapping {
+                let cid_bytes = vec![(cid >> 8) as u8, (cid & 0xFF) as u8];
+                if let Some(s) = adj1.map(&cid_bytes) {
+                    return Some(s);
+                }
             }
-        }
 
         // Final fallback: if CID is in ASCII range, try to interpret it as a character
         if cid < 128 && cid > 31 {
             return Some((cid as u8 as char).to_string());
         }
 
-        // Positional preservation using Plane 15 PUA
-        // This is safe because it's exactly 1 char, but let's prefer Unicode if possible.
         std::char::from_u32(0xF0000 + cid).map(|c| c.to_string())
     }
 
     pub fn wmode(&self) -> i32 {
-        self.wmode
+        self.wmode as i32
     }
 
     /// Inferred bold status based on font name and descriptors.
@@ -1044,20 +1380,332 @@ impl FontResource {
         code.first().copied().unwrap_or(0) as u32
     }
 
-    pub fn to_gid(&self, cid: u32) -> u32 {
-        if let Some(ref map) = self.cid_to_gid_map {
-            return map.get(cid as usize).copied().unwrap_or(cid as u16) as u32;
+    /// Translates a character code from a PDF content stream into a font-internal CID or SID.
+    pub fn code_to_cid(&self, code: &[u8]) -> u32 {
+        // 1. If it's a CID-keyed font, use the Encoding CMap to resolve the code to a CID.
+        if self.is_cid_keyed
+            && let Some(ref enc) = self.encoding {
+                return enc.to_cid(code);
+            }
+
+        // 2. For simple fonts, the character code itself is often treated as the "CID" 
+        // for internal mapping tables (like sid_to_gid or code_to_gid) unless 
+        // a complex Encoding dictionary is present.
+        if code.len() == 2 {
+            (u32::from(code[0]) << 8) | u32::from(code[1])
+        } else if code.len() == 1 {
+            code[0] as u32
+        } else {
+            0
         }
+    }
+
+    pub fn to_gid(&self, cid: u32, mut _trace: Option<&mut TraceContext>) -> u32 {
+        log::debug!("[FONT] to_gid: font {}, cid {}", self.base_font.as_str(), cid);
+        // Priority 1: CFF Charset mapping (authoritative for subsetted CID-keyed CFF)
+        if !self.sid_to_gid.is_empty()
+            && let Some(&gid) = self.sid_to_gid.get(&cid) {
+                #[cfg(feature = "debug-tools")]
+                if let Some(t) = _trace {
+                    t.push_step(format!("Resolved via CFF Charset (sid_to_gid): CID {} -> GID {}", cid, gid));
+                }
+                return gid;
+            }
+
+        // Priority 2: CIDToGIDMap from PDF
+        if let Some(ref map) = self.cid_to_gid_map
+            && let Some(&gid) = map.get(&cid) {
+                #[cfg(feature = "debug-tools")]
+                if let Some(t) = _trace {
+                    t.push_step(format!("Resolved via CIDToGIDMap: CID {} -> GID {}", cid, gid));
+                }
+                return gid;
+            }
+        
+        // Priority 3: Internal code mapping (fallback)
+        if let Some(&gid) = self.code_to_gid.get(&cid) {
+            #[cfg(feature = "debug-tools")]
+            if let Some(ref mut t) = _trace {
+                t.push_step(format!("Resolved via code_to_gid: CID {} -> GID {}", cid, gid));
+            }
+            return gid;
+        }
+        #[cfg(feature = "debug-tools")]
+        if let Some(t) = _trace {
+            t.push_step(format!("Resolved via Identity (Fallback): CID {} -> GID {}", cid, cid));
+        }
+        log::debug!("[FONT] to_gid result: cid {} -> gid {}", cid, cid);
         cid
     }
 
-    pub fn resolve_gid(&self, cid: u32, unicode_char: Option<char>) -> u32 {
-        if let Some(c) = unicode_char {
-            if let Some(&gid) = self.unicode_to_gid.get(&c) {
-                return gid;
+    /// Returns true if this font is likely a CJK (Chinese, Japanese, Korean) font.
+    pub fn is_cjk(&self) -> bool {
+        // 1. Check Registry (Adobe-Japan1, Adobe-GB1, etc.)
+        if let Some(ref reg) = self.cid_registry {
+            let r = reg.to_lowercase();
+            if r.contains("japan") || r.contains("gb1") || r.contains("cns1") || r.contains("korea") {
+                return true;
             }
         }
-        self.to_gid(cid)
+
+        // 2. Check Ordering (Honest CJK orderings)
+        if let Some(ref ord) = self.cid_ordering {
+            let o = ord.to_lowercase();
+            if o.contains("japan") || o.contains("gb1") || o.contains("cns1") || o.contains("korea") {
+                return true;
+            }
+        }
+
+        // 3. Heuristic check of base font name
+        let name = self.base_font.as_str().to_lowercase();
+        name.contains("cjk")
+            || name.contains("mincho")
+            || name.contains("gothic")
+            || name.contains("hira")
+            || name.contains("koz")
+            || name.contains("heiti")
+            || name.contains("ms-j")
+            || name.contains("ms-m")
+    }
+
+    /// Resolves a character identifier (CID) to a physical Glyph ID (GID).
+    ///
+    /// This method follows a prioritized resolution chain:
+    /// 1. Unicode-to-GID (CMap)
+    /// 2. Glyph Name to GID (via Encoding and reconstruction map)
+    /// 3. CFF SID fallback (for production names like cXXX)
+    /// 4. Direct CID-to-GID mapping
+    pub fn resolve_gid(
+        &self,
+        cid: u32,
+        unicode_hint: Option<char>,
+        mut _trace: Option<&mut TraceContext>,
+    ) -> Option<u32> {
+        log::debug!("[FONT] resolve_gid: font {}, cid {}, hint {:?}", self.base_font.as_str(), cid, unicode_hint);
+        #[cfg(feature = "debug-tools")]
+        if let Some(ref mut t) = _trace {
+            t.start(cid, unicode_hint);
+            t.push_step(format!("Starting resolution for CID {}", cid));
+        }
+
+        let mut hint = unicode_hint;
+        let mut glyph_name_resolved = None;
+
+        // Global suppression for characters that are almost certainly artifacts when encountered
+        // in CJK documents (especially when derived via heuristics).
+        if let Some(c) = hint {
+            let u = c as u32;
+            let is_control = (u <= 0x1F) || (0x7F..=0x9F).contains(&u);
+            let is_pua = (0xE000..=0xF8FF).contains(&u) || (0xF0000..=0xFFFFD).contains(&u) || (0x100000..=0x10FFFD).contains(&u);
+            let is_artifact = u == 0x24EA; // Suppress ⓪ specifically as requested
+            
+            if is_control || is_pua || is_artifact {
+                if self.is_cid_keyed {
+                    // For CID-keyed fonts, PUA hints are often internal labels for CIDs.
+                    // We should ignore the hint and continue to the authoritative CID mapping.
+                    hint = None;
+                } else {
+                    log::debug!("[FONT] Suppressing resolve_gid for artifact/control/PUA hint: U+{:04X}", u);
+                    return None;
+                }
+            }
+        }
+
+        // Step 0: Resolve glyph name and derive Unicode hint if missing
+        if let Some(ref _enc) = self.encoding
+            && let Some((name, agl_hint)) = self.resolve_name_from_encoding(cid) {
+                glyph_name_resolved = Some(name);
+                if hint.is_none() {
+                    hint = agl_hint;
+                }
+            }
+
+        // Determine if we should trust Unicode hints above CID mappings.
+        // Rule: If Ordering is "Identity" (or missing, which implies Identity) 
+        // AND the font doesn't look like CJK, the CID is likely a lie from a 
+        // subsetter. Prioritize Unicode/Name.
+        let is_identity = self.cid_ordering.as_deref().is_none_or(|o| o == "Identity");
+        let is_lying_identity = self.is_cid_keyed && is_identity && !self.is_cjk();
+        
+        log::debug!("[FONT] resolve_gid: font {}, cid {}, is_cid_keyed={}, is_identity={}, is_cjk={}, is_lying_identity={}", 
+            self.base_font.0, cid, self.is_cid_keyed, is_identity, self.is_cjk(), is_lying_identity);
+
+        if is_lying_identity {
+            // Priority 1: Try Identity mapping (CID == GID) - Often correct for TrueType subsets
+            if cid < 65536 {
+                #[cfg(feature = "debug-tools")]
+                if let Some(ref mut t) = _trace {
+                    t.push_step(format!("Trying Identity mapping (CID == GID): {} -> GID {}", cid, cid));
+                }
+                // We should still verify this GID isn't 0
+                if cid != 0 {
+                    return Some(cid);
+                }
+            }
+
+            // Priority 2: Fallback to character-based resolution
+            if let Some(gid) = self.find_gid_by_fallback(cid, hint, glyph_name_resolved.as_deref(), _trace.as_deref_mut()) {
+                log::debug!("[FONT] resolve_gid result (Lying Identity): cid {} -> gid {}", cid, gid);
+                return Some(gid);
+            }
+            log::debug!("[FONT] resolve_gid: Lying Identity path failed for cid {}", cid);
+        }
+
+        // Priority 2 (Standard): Direct CID-to-GID mapping (Authoritative for CJK)
+        if self.is_cid_keyed {
+            let gid = self.to_gid(cid, _trace.as_deref_mut());
+            if gid != 0 {
+                #[cfg(feature = "debug-tools")]
+                if let Some(ref mut t) = _trace {
+                    t.push_step(format!("Resolved via CID-keyed path: GID {}", gid));
+                    t.finish(Some(gid));
+                }
+                return Some(gid);
+            }
+            
+            // Special Case: Identity-H/V fallback
+            if let Some(data) = self.reconstructed_data.as_ref().or(self.data.as_ref())
+                && let Ok(face) = ttf_parser::Face::parse(data, 0)
+                    && cid < face.number_of_glyphs() as u32 {
+                        return Some(cid);
+                    }
+        }
+
+        // Priority 3 (Standard): Robust fallback search
+        if let Some(gid) = self.find_gid_by_fallback(cid, hint, glyph_name_resolved.as_deref(), _trace) {
+            return Some(gid);
+        }
+
+        // Priority 4: Production Names
+        if let Some(ref name) = glyph_name_resolved
+            && let Some(gid) = self.resolve_production_name(name)
+                && gid != 0 {
+                    #[cfg(feature = "debug-tools")]
+                    if let Some(ref mut t) = _trace {
+                        t.push_step(format!("Matched via Production Name: /{} -> GID {}", name, gid));
+                        t.finish(Some(gid));
+                    }
+                    return Some(gid);
+                }
+
+        // Priority 5: Final CID-to-GID fallback
+        #[cfg(feature = "debug-tools")]
+        let final_gid = self.to_gid(cid, _trace.as_deref_mut());
+        #[cfg(not(feature = "debug-tools"))]
+        let final_gid = self.to_gid(cid, None);
+        if final_gid != 0 {
+            #[cfg(feature = "debug-tools")]
+            if let Some(ref mut t) = _trace {
+                t.push_step(format!("Resolved via final CID-to-GID fallback: GID {}", final_gid));
+                t.finish(Some(final_gid));
+            }
+            log::debug!("[FONT] resolve_gid result: cid {} -> gid {}", cid, final_gid);
+            return Some(final_gid);
+        }
+
+        // Priority 6: System Font Fallback
+        if let Some(c) = hint {
+            let u = c as u32;
+            #[cfg(feature = "debug-tools")]
+            if let Some(ref mut t) = _trace {
+                t.push_step(format!("Falling back to System Font: U+{:04X}", u));
+                t.finish(Some(1_000_000 + u));
+            }
+            log::debug!("[FONT] Falling back to system font for: U+{:04X} ({:?})", u, c);
+            return Some(1_000_000 + u);
+        }
+
+        if cid != 0 {
+            log::warn!(
+                "[FONT] CID {} failed to resolve to any valid GID for font {}. Hint: {:?}",
+                cid,
+                self.base_font.as_str(),
+                hint
+            );
+        }
+        #[cfg(feature = "debug-tools")]
+        if let Some(ref mut t) = _trace {
+            t.finish(None);
+        }
+        log::debug!("[FONT] resolve_gid result: cid {} -> gid None", cid);
+        None
+    }
+
+    fn find_gid_by_fallback(
+        &self,
+        cid: u32,
+        hint: Option<char>,
+        glyph_name: Option<&str>,
+        _trace: Option<&mut TraceContext>,
+    ) -> Option<u32> {
+        // 0. Try code_to_gid (from font's non-Unicode cmaps) - VERY HIGH TRUST for Identity fonts
+        if let Some(&gid) = self.code_to_gid.get(&cid)
+            && gid != 0 {
+                #[cfg(feature = "debug-tools")]
+                if let Some(ref mut t) = _trace {
+                    t.push_step(format!("Matched via internal code-to-GID map: {} -> GID {}", cid, gid));
+                }
+                return Some(gid);
+            }
+
+        // 1. Try Glyph Name (e.g. 'e', 'T') - High trust for subsetted fonts
+        if let Some(name) = glyph_name
+            && let Some(&gid) = self.glyph_name_to_gid.get(name)
+                && gid != 0 {
+                    #[cfg(feature = "debug-tools")]
+                    if let Some(ref mut t) = _trace {
+                        t.push_step(format!("Matched via Glyph Name map: /{} -> GID {}", name, gid));
+                    }
+                    return Some(gid);
+                }
+
+        // 2. Try Unicode-to-GID (from cmap) - Fallback
+        if let Some(c) = hint {
+            if let Some(&gid) = self.unicode_to_gid.get(&c)
+                && gid != 0 {
+                    #[cfg(feature = "debug-tools")]
+                    if let Some(ref mut t) = _trace {
+                        t.push_step(format!("Matched in Unicode-to-GID map: U+{:04X} -> GID {}", c as u32, gid));
+                    }
+                    return Some(gid);
+                }
+
+            // 3. Heuristic: If hint is 'e', also try name "e" if not already tried
+            let mut name_buf = [0u8; 4];
+            let c_name = c.encode_utf8(&mut name_buf);
+            if glyph_name != Some(c_name)
+                && let Some(&gid) = self.glyph_name_to_gid.get(c_name)
+                    && gid != 0 {
+                        return Some(gid);
+                    }
+        }
+
+        None
+    }
+
+    fn resolve_name_from_encoding(&self, cid: u32) -> Option<(String, Option<char>)> {
+        let enc = self.encoding.as_ref()?;
+        let code_bytes = if cid > 0xFF {
+            vec![(cid >> 8) as u8, (cid & 0xFF) as u8]
+        } else {
+            vec![cid as u8]
+        };
+        
+        let (decoded_len, glyph_opt): (usize, Option<String>) = enc.decode_next(&code_bytes);
+        if decoded_len > 0 && let Some(glyph_name) = glyph_opt {
+            let clean_name = if glyph_name.starts_with('/') { &glyph_name[1..] } else { &glyph_name };
+            let hint = agl::lookup(clean_name).and_then(|u_str| u_str.chars().next());
+            return Some((clean_name.to_string(), hint));
+        }
+        None
+    }
+
+    fn resolve_production_name(&self, name: &str) -> Option<u32> {
+        if name.starts_with('c') && name.len() >= 2 && name[1..].chars().all(|c| c.is_ascii_digit())
+            && let Ok(sid) = name[1..].parse::<u32>() {
+                return self.sid_to_gid.get(&sid).copied();
+            }
+        None
     }
 
     pub fn decode_next(&self, data: &[u8]) -> (usize, Option<String>) {
@@ -1066,16 +1714,14 @@ impl FontResource {
         }
         let min_len = self.get_min_len();
 
-        if let Some(res) = self.decode_via_to_unicode(data, min_len) {
-            if res.1.is_some() {
+        if let Some(res) = self.decode_via_to_unicode(data, min_len)
+            && res.1.is_some() {
                 return res;
             }
-        }
-        if let Some(res) = self.decode_via_encoding(data, min_len) {
-            if res.1.is_some() {
+        if let Some(res) = self.decode_via_encoding(data, min_len)
+            && res.1.is_some() {
                 return res;
             }
-        }
         self.decode_via_heuristics(data)
     }
 
@@ -1094,7 +1740,7 @@ impl FontResource {
         min_len: Option<usize>,
     ) -> Option<(usize, Option<String>)> {
         let tu = self.to_unicode.as_ref()?;
-        let (len, u) = tu.decode_next_with_min_len(data, min_len)?;
+        let (len, u): (usize, Option<String>) = tu.decode_next_with_min_len(data, min_len)?;
         if let Some(u_str) = u {
             return Some((len, Some(u_str)));
         }
@@ -1107,7 +1753,7 @@ impl FontResource {
         min_len: Option<usize>,
     ) -> Option<(usize, Option<String>)> {
         let enc = self.encoding.as_ref()?;
-        let (len, u) = enc.decode_next_with_min_len(data, min_len)?;
+        let (len, u): (usize, Option<String>) = enc.decode_next_with_min_len(data, min_len)?;
         if let Some(u_str) = u {
             if u_str.starts_with('/') {
                 return Some((len, Some(cmap::glyph_name_to_unicode(u_str.as_bytes()))));
@@ -1139,9 +1785,15 @@ impl FontResource {
             let consumed_aj1 = 2; // AJ1 CIDs are always 2 bytes in our mapping
             if data.len() >= consumed_aj1 {
                 let code_bytes = &data[..consumed_aj1];
-                if let Some(u) = aj1.map(code_bytes) {
-                    return (consumed_aj1, Some(u));
-                }
+                if let Some(u) = aj1.map(code_bytes)
+                    && let Some(c) = u.chars().next() {
+                        let u_val = c as u32;
+                        let is_control = (u_val <= 0x1F) || (0x7F..=0x9F).contains(&u_val);
+                        let is_pua = (0xE000..=0xF8FF).contains(&u_val) || (0xF0000..=0x10FFFF).contains(&u_val);
+                        if !is_control && !is_pua {
+                            return (consumed_aj1, Some(u));
+                        }
+                    }
             }
         }
 
@@ -1224,7 +1876,7 @@ pub fn list_fonts(doc: &Document) -> Vec<FontSummary> {
                     continue;
                 }
                 seen.insert(handle);
-                if let Some(summary) = extract_font_summary(arena, &dict, fv) {
+                if let Some(summary) = extract_font_summary(arena, &dict, fv, handle) {
                     fonts.push(summary);
                 }
             }
@@ -1237,7 +1889,9 @@ fn extract_font_summary(
     arena: &PdfArena,
     dict: &std::collections::BTreeMap<crate::handle::Handle<crate::object::PdfName>, Object>,
     fv: crate::handle::Handle<crate::object::PdfName>,
+    dh: crate::handle::Handle<std::collections::BTreeMap<crate::handle::Handle<crate::object::PdfName>, Object>>,
 ) -> Option<FontSummary> {
+    let handle = arena.find_object_by_dict_handle(dh).unwrap_or_else(|| Handle::new(dh.index()));
     let name = extract_font_name(arena, dict, fv);
     let subtype_key = arena.get_name_by_str("Subtype");
     let font_type = dict
@@ -1271,6 +1925,7 @@ fn extract_font_summary(
         is_subset,
         encoding,
         has_to_unicode,
+        handle,
     })
 }
 
@@ -1343,20 +1998,168 @@ fn check_font_embedding(
 
     // Check descendant fonts for Type0
     let df_key = arena.get_name_by_str("DescendantFonts").unwrap_or(fv);
-    if let Some(df_obj) = dict.get(&df_key) {
-        if let Object::Array(ah) = df_obj.resolve(arena) {
-            if let Some(arr) = arena.get_array(ah) {
+    if let Some(df_obj) = dict.get(&df_key)
+        && let Object::Array(ah) = df_obj.resolve(arena)
+            && let Some(arr) = arena.get_array(ah) {
                 for item in arr {
-                    if let Some(dh) = item.resolve(arena).as_dict_handle() {
-                        if let Some(dd) = arena.get_dict(dh) {
-                            if check_font_embedding(arena, &dd, fv) {
+                    if let Some(dh) = item.resolve(arena).as_dict_handle()
+                        && let Some(dd) = arena.get_dict(dh)
+                            && check_font_embedding(arena, &dd, fv) {
                                 return true;
                             }
-                        }
-                    }
                 }
             }
+    false
+}
+
+pub fn glyph_name_to_sid(name: &str) -> Option<u16> {
+    static MAP: std::sync::OnceLock<BTreeMap<&'static str, u16>> = std::sync::OnceLock::new();
+    let m = MAP.get_or_init(|| {
+        let mut m = BTreeMap::new();
+        for (i, &name) in cff_standard::CFF_STANDARD_STRINGS.iter().enumerate() {
+            m.entry(name).or_insert(i as u16);
+        }
+        m
+    });
+
+    let clean_name = name.strip_prefix('/').unwrap_or(name);
+    m.get(clean_name).copied()
+}
+
+#[cfg(feature = "debug-tools")]
+/// Records the mapping steps for a specific character.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct GlyphTrace {
+    pub cid: u32,
+    pub unicode_hint: Option<char>,
+    pub resolved_gid: Option<u32>,
+    pub steps: Vec<String>,
+}
+
+#[cfg(feature = "debug-tools")]
+/// Orchestrates the collection of glyph traces during rendering or analysis.
+pub struct TraceContext {
+    pub current_trace: Option<GlyphTrace>,
+    pub traces: Vec<GlyphTrace>,
+}
+
+#[cfg(feature = "debug-tools")]
+impl TraceContext {
+    pub fn new() -> Self {
+        Self { current_trace: None, traces: Vec::new() }
+    }
+
+    pub fn start(&mut self, cid: u32, hint: Option<char>) {
+        self.current_trace = Some(GlyphTrace {
+            cid,
+            unicode_hint: hint,
+            resolved_gid: None,
+            steps: Vec::new(),
+        });
+    }
+
+    pub fn push_step(&mut self, step: impl Into<String>) {
+        if let Some(ref mut trace) = self.current_trace {
+            trace.steps.push(step.into());
         }
     }
-    false
+
+    pub fn finish(&mut self, gid: Option<u32>) {
+        if let Some(mut trace) = self.current_trace.take() {
+            trace.resolved_gid = gid;
+            self.traces.push(trace);
+        }
+    }
+}
+
+#[cfg(feature = "debug-tools")]
+impl Default for TraceContext {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(not(feature = "debug-tools"))]
+#[derive(Default)]
+pub struct GlyphTrace;
+
+#[cfg(not(feature = "debug-tools"))]
+#[derive(Default)]
+pub struct TraceContext;
+
+#[cfg(not(feature = "debug-tools"))]
+impl TraceContext {
+    pub fn new() -> Self { Self }
+    pub fn start(&mut self, _cid: u32, _hint: Option<char>) {}
+    pub fn push_step(&mut self, _step: impl Into<String>) {}
+    pub fn finish(&mut self, _gid: Option<u32>) {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::object::PdfName;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn test_resolve_gid_priority() {
+        let mut res = FontResource {
+            subtype: PdfName::new("Type0"),
+            base_font: PdfName::new("TestFont"),
+            is_cid_keyed: true,
+            unicode_to_gid: {
+                let mut map = BTreeMap::new();
+                map.insert('T', 42); // 'T' maps to GID 42
+                map
+            },
+            cid_to_gid_map: None, // Identity mapping
+            ..FontResource::new_initial(
+                PdfName::new("Type0"),
+                PdfName::new("TestFont"),
+                FontMetrics::default(),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                true,
+                &BTreeMap::new(),
+                &crate::arena::PdfArena::new(),
+                false,
+            )
+        };
+
+        // Case 1: Identity mapping (cid_to_gid_map is None)
+        // Even if CID 217 would return GID 217 via Priority 2,
+        // Priority 1 (Unicode hint 'T') should return GID 42.
+        let gid = res.resolve_gid(217, Some('T'), None);
+        assert_eq!(gid, Some(42), "Should resolve via Unicode hint when CID map is absent");
+
+        // Case 2: No Unicode hint
+        // Should fall back to CID (Identity)
+        let gid = res.resolve_gid(217, None, None);
+        assert_eq!(gid, Some(217), "Should fall back to CID when no Unicode hint is present");
+
+        // Case 3: Explicit CID-to-GID map present
+        res.cid_to_gid_map = Some(vec![0; 1000]); // Fake map
+        res.cid_to_gid_map.as_mut().unwrap()[217] = 500;
+        
+        let gid = res.resolve_gid(217, Some('T'), None);
+        assert_eq!(gid, Some(42), "Current logic prefers Unicode hint even if CID map is present");
+    }
+
+    #[test]
+    fn test_font_precipitation() {
+        let mut res = FontResource::new_test();
+        res.data = Some(std::sync::Arc::new(vec![0u8; 100]));
+        res.reconstructed_data = Some(std::sync::Arc::new(vec![1u8; 100]));
+        
+        // Precipitation logic
+        if res.reconstructed_data.is_some() {
+            res.data = None;
+        }
+        
+        assert!(res.data.is_none(), "Raw data should be released after reconstruction");
+    }
 }

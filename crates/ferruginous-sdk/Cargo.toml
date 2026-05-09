@@ -7,6 +7,8 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+
+
 [dependencies]
 ferruginous-core = { path = "../ferruginous-core" }
 ferruginous-render = { path = "../ferruginous-render" }
@@ -23,6 +25,8 @@ pollster = "0.3"
 flate2 = { workspace = true }
 lopdf = { workspace = true }
 chrono = { workspace = true }
+log = { workspace = true }
+env_logger = "0.11"
 
 [dev-dependencies]
 

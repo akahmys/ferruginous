@@ -1,7 +1,7 @@
 use lopdf::Document;
 
 fn main() {
-    let path = "/Users/jun/Downloads/UnicodeStandard-16.0.pdf";
+    let path = "samples/unicode_16.pdf";
     match Document::load(path) {
         Ok(mut doc) => {
             println!("Is Encrypted: {}", doc.is_encrypted());

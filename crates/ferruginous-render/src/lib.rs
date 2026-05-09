@@ -8,9 +8,18 @@ use ferruginous_core::{BlendMode, Color, LineCap, LineJoin, PixelFormat, StrokeS
 use kurbo::{Affine, BezPath, Cap, Join, Stroke};
 use std::sync::Arc;
 use vello::Scene;
+use vello::peniko::{Blob, ImageAlphaType, ImageData, ImageFormat};
 
 // Re-export core types for convenience
 pub use ferruginous_core::font::FallbackFontType;
+
+#[derive(Debug, Clone)]
+pub struct SMaskData {
+    pub data: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+    pub format: PixelFormat,
+}
 
 pub trait RenderBackend {
     fn transform(&mut self, transform: Affine);
@@ -26,15 +35,23 @@ pub trait RenderBackend {
     fn set_fill_color(&mut self, color: Color);
     fn set_stroke_color(&mut self, color: Color);
     fn set_blend_mode(&mut self, mode: BlendMode);
-    fn draw_image(&mut self, image: &[u8], width: u32, height: u32, format: PixelFormat);
+    fn draw_image(
+        &mut self,
+        image: &[u8],
+        width: u32,
+        height: u32,
+        format: PixelFormat,
+        smask: Option<SMaskData>,
+    );
     fn define_font(
         &mut self,
         name: &str,
         base_name: Option<&str>,
         data: Option<Arc<Vec<u8>>>,
         index: Option<usize>,
-        cid_to_gid_map: Option<Vec<u16>>,
+        cid_to_gid_map: Option<std::collections::BTreeMap<u32, u32>>,
         fallback_type: FallbackFontType,
+        is_cid_keyed: bool,
     );
     fn set_font(&mut self, name: &str);
     fn set_text_render_mode(&mut self, mode: TextRenderingMode);
@@ -90,21 +107,25 @@ struct VelloState {
     clip_count: u32,
     font_data: Option<Arc<Vec<u8>>>,
     font_index: Option<usize>,
-    cid_to_gid_map: Option<Vec<u16>>,
+    cid_to_gid_map: Option<std::collections::BTreeMap<u32, u32>>,
     text_render_mode: i32,
     char_spacing: f64,
     word_spacing: f64,
     font_name: Option<String>,
+    is_cid_keyed: bool,
     font_id: u64,
+    is_fallback: bool,
+    fallback_type: FallbackFontType,
 }
 
 struct FontCacheEntry {
     font_id: u64,
     data: Option<Arc<Vec<u8>>>,
     collection_index: Option<usize>,
-    cid_to_gid_map: Option<Vec<u16>>,
+    cid_to_gid_map: Option<std::collections::BTreeMap<u32, u32>>,
     base_name: Option<String>,
     fallback_type: FallbackFontType,
+    is_cid_keyed: bool,
 }
 
 impl VelloBackend {
@@ -151,7 +172,10 @@ impl VelloBackend {
                 char_spacing: 0.0,
                 word_spacing: 0.0,
                 font_name: None,
+                is_cid_keyed: false,
                 font_id: 0,
+                is_fallback: false,
+                fallback_type: FallbackFontType::Default,
             },
             state_stack: Vec::new(),
             font_cache: std::collections::BTreeMap::new(),
@@ -172,34 +196,54 @@ impl VelloBackend {
     fn render_single_glyph(
         scene: &mut Scene,
         skrifa_bridge: &mut crate::text::SkrifaBridge,
+        system_fonts: &Arc<std::collections::BTreeMap<FallbackFontType, Arc<Vec<u8>>>>,
         state: &VelloState,
         glyph: &TextGlyph,
         ctx: &GlyphRenderContext,
     ) -> (f64, bool) {
-        let is_cid = state.cid_to_gid_map.is_some();
-        let is_japanese =
-            state.font_name.as_ref().map(|n| n.to_lowercase().contains("mincho")).unwrap_or(false);
+        let is_cid = state.is_cid_keyed;
+        let is_japanese = state.font_name.as_ref().map(|n| {
+            let n = n.to_lowercase();
+            n.contains("mincho") || n.contains("gothic") || n.contains("hira") || n.contains("koz")
+        }).unwrap_or(false);
+
+        let mut font_data = ctx.data_ref;
+        let is_fallback = state.is_fallback;
+
+        // CRITICAL: If this is a subsetted simple font but we are using a GID resolved via system fallback,
+        // we MUST use the system font data for rendering, otherwise Skrifa will fail to find the glyph.
+        // However, we MUST NOT do this for CID-keyed fonts where GIDs > 256 are valid and expected.
+        if !is_fallback && !is_cid && glyph.gid >= 256 {
+            if let Some(sys_data) = system_fonts.get(&state.fallback_type) {
+                font_data = sys_data;
+            }
+        }
 
         let skrifa_ctx = crate::text::GlyphExtractionContext {
             font_id: state.font_id,
-            data: ctx.data_ref,
+            data: font_data,
             gid: glyph.gid,
             char_code: glyph.char_code,
-            cid_to_gid_map: state.cid_to_gid_map.as_deref(),
+            cid_to_gid_map: state.cid_to_gid_map.as_ref(),
             is_vertical: ctx.is_vertical,
             unicode_fallback: glyph.unicode.chars().next(),
             is_japanese,
             is_cid,
             collection_index: state.font_index.unwrap_or(0) as u32,
+            is_fallback: is_fallback || (font_data != ctx.data_ref),
         };
 
         if let Some(path) = skrifa_bridge.extract_path(&skrifa_ctx) {
             let upem = skrifa_bridge.get_units_per_em(ctx.data_ref).unwrap_or(1000);
             let scale = ctx.size / upem as f64;
+            
+            // In vertical writing mode, horizontal scaling (th) results in a scale factor 
+            // of 1.0 for the x dimension and th for the y dimension.
             let h_scale = if ctx.is_vertical { 1.0 } else { ctx.th };
+            let v_scale = if ctx.is_vertical { ctx.th } else { 1.0 };
 
             // local_to_pt: Align glyph in EM box and scale to point size
-            let local_to_pt = Affine::scale_non_uniform(scale * h_scale, scale)
+            let local_to_pt = Affine::scale_non_uniform(scale * h_scale, scale * v_scale)
                 * Affine::translate(kurbo::Vec2::new(-glyph.vx as f64, -glyph.vy as f64));
 
             // pt_to_page: Move to text advance and apply page transform
@@ -253,19 +297,22 @@ impl VelloBackend {
         th: f64,
         is_vertical: bool,
     ) -> f64 {
-        let mut advance = f64::from(glyph.width) / 1000.0 * size;
-        if !is_vertical {
-            advance *= th;
-            advance += tc * th;
+        let char_width = f64::from(glyph.width) / 1000.0 * size;
+        let advance = if !is_vertical {
+            let mut adv = (char_width + tc) * th;
             if glyph.char_code == 0x20 {
-                advance += tw * th;
+                adv += tw * th;
             }
+            adv
         } else {
-            advance -= tc;
+            // In vertical writing mode, Tz (th) applies to the y dimension.
+            // Spacing Tc and Tw are subtracted from the natively negative vertical advance.
+            let mut adv = (char_width * th) - tc;
             if glyph.char_code == 0x20 {
-                advance -= tw;
+                adv -= tw;
             }
-        }
+            adv
+        };
         current_advance + advance
     }
 }
@@ -365,7 +412,83 @@ impl RenderBackend for VelloBackend {
         self.state.blend_mode = mode;
     }
 
-    fn draw_image(&mut self, _image: &[u8], _width: u32, _height: u32, _format: PixelFormat) {}
+    fn draw_image(
+        &mut self,
+        image_data: &[u8],
+        width: u32,
+        height: u32,
+        format: PixelFormat,
+        smask: Option<SMaskData>,
+    ) {
+        // We will convert everything to RGBA8
+        let mut rgba_data = match format {
+            PixelFormat::Rgba8 => image_data.to_vec(),
+            PixelFormat::Gray8 => {
+                let mut data = Vec::with_capacity(image_data.len() * 4);
+                for &g in image_data {
+                    data.extend_from_slice(&[g, g, g, 255]);
+                }
+                data
+            }
+            PixelFormat::Rgb8 => {
+                let mut data = Vec::with_capacity(image_data.len() / 3 * 4);
+                for chunk in image_data.chunks_exact(3) {
+                    data.extend_from_slice(&[chunk[0], chunk[1], chunk[2], 255]);
+                }
+                data
+            }
+            PixelFormat::Cmyk8 => {
+                let mut data = Vec::with_capacity(image_data.len() / 4 * 4);
+                for chunk in image_data.chunks_exact(4) {
+                    let c = f64::from(chunk[0]) / 255.0;
+                    let m = f64::from(chunk[1]) / 255.0;
+                    let y = f64::from(chunk[2]) / 255.0;
+                    let k = f64::from(chunk[3]) / 255.0;
+                    let r = ((1.0 - c) * (1.0 - k) * 255.0) as u8;
+                    let g = ((1.0 - m) * (1.0 - k) * 255.0) as u8;
+                    let b = ((1.0 - y) * (1.0 - k) * 255.0) as u8;
+                    data.extend_from_slice(&[r, g, b, 255]);
+                }
+                data
+            }
+        };
+
+        // Apply SMask if provided and dimensions match (common for PDF icons)
+        if let Some(mask) = smask {
+            if mask.width == width && mask.height == height {
+                for (i, chunk) in rgba_data.chunks_exact_mut(4).enumerate() {
+                    let mask_val = match mask.format {
+                        PixelFormat::Gray8 => mask.data[i],
+                        PixelFormat::Rgba8 => mask.data[i * 4 + 3], // Use alpha channel
+                        PixelFormat::Rgb8 => {
+                            let r = f64::from(mask.data[i * 3]);
+                            let g = f64::from(mask.data[i * 3 + 1]);
+                            let b = f64::from(mask.data[i * 3 + 2]);
+                            // Standard Luminance formula: 0.299R + 0.587G + 0.114B
+                            ((0.299 * r) + (0.587 * g) + (0.114 * b)) as u8
+                        }
+                        _ => 255,
+                    };
+                    // Apply mask to alpha channel
+                    chunk[3] = ((f64::from(chunk[3]) * f64::from(mask_val)) / 255.0) as u8;
+                }
+            }
+        }
+
+        let image = ImageData {
+            data: Blob::new(std::sync::Arc::new(rgba_data)),
+            format: ImageFormat::Rgba8,
+            alpha_type: ImageAlphaType::Alpha,
+            width,
+            height,
+        };
+
+        let m = self.state.transform
+            * Affine::translate(kurbo::Vec2::new(0.0, 1.0))
+            * Affine::scale_non_uniform(1.0 / f64::from(width), -1.0 / f64::from(height));
+
+        self.scene.draw_image(&image, m);
+    }
 
     fn define_font(
         &mut self,
@@ -373,9 +496,18 @@ impl RenderBackend for VelloBackend {
         base_name: Option<&str>,
         data: Option<Arc<Vec<u8>>>,
         index: Option<usize>,
-        cid_to_gid_map: Option<Vec<u16>>,
+        cid_to_gid_map: Option<std::collections::BTreeMap<u32, u32>>,
         fallback_type: FallbackFontType,
+        is_cid_keyed: bool,
     ) {
+        log::debug!(
+            "[RENDER] define_font: {} (id {}), has_data: {}, is_cid: {}, has_map: {}",
+            name,
+            self.next_font_id,
+            data.is_some(),
+            is_cid_keyed,
+            cid_to_gid_map.is_some()
+        );
         self.font_cache.insert(
             name.to_string(),
             FontCacheEntry {
@@ -383,6 +515,7 @@ impl RenderBackend for VelloBackend {
                 data,
                 collection_index: index,
                 cid_to_gid_map,
+                is_cid_keyed,
                 base_name: base_name.map(|s| s.to_string()),
                 fallback_type: fallback_type,
             },
@@ -392,14 +525,28 @@ impl RenderBackend for VelloBackend {
 
     fn set_font(&mut self, name: &str) {
         if let Some(entry) = self.font_cache.get(name) {
+            let is_fallback = entry.data.is_none();
             self.state.font_data = entry.data.clone().or_else(|| {
                 // Fallback to system font if no embedded data
                 self.system_fonts.get(&entry.fallback_type).cloned()
             });
+            log::debug!(
+                "[RENDER] set_font: {} (id {}), has_data: {}, is_fallback: {}, is_cid: {}",
+                name,
+                entry.font_id,
+                self.state.font_data.is_some(),
+                is_fallback,
+                entry.is_cid_keyed
+            );
             self.state.font_index = entry.collection_index;
             self.state.cid_to_gid_map = entry.cid_to_gid_map.clone();
+            self.state.is_cid_keyed = entry.is_cid_keyed;
             self.state.font_name = entry.base_name.clone();
             self.state.font_id = entry.font_id;
+            self.state.is_fallback = is_fallback;
+            self.state.fallback_type = entry.fallback_type;
+        } else {
+            log::warn!("[RENDER] set_font: {} NOT FOUND in cache", name);
         }
     }
 
@@ -421,6 +568,8 @@ impl RenderBackend for VelloBackend {
         text_state: TextState,
         _op_index: usize,
     ) {
+        let _is_fallback = self.state.is_fallback;
+
         let data_arc = self.state.font_data.clone();
         let data_ref = data_arc.as_deref().map(|v| v.as_slice()).unwrap_or(&[]);
         let brush = to_vello_brush(&self.state.fill_color, self.state.fill_alpha as f32);
@@ -440,6 +589,7 @@ impl RenderBackend for VelloBackend {
             let (new_advance, _success) = Self::render_single_glyph(
                 &mut self.scene,
                 &mut self.skrifa_bridge,
+                &self.system_fonts,
                 &self.state,
                 glyph,
                 &ctx,
@@ -472,5 +622,6 @@ fn to_vello_brush(color: &Color, alpha: f32) -> vello::peniko::Brush {
             let b_u8 = (b.clamp(0.0, 1.0) * 255.0) as u8;
             vello::peniko::Brush::Solid(vello::peniko::Color::from_rgba8(r_u8, g_u8, b_u8, a))
         }
+        Color::Lab(..) => to_vello_brush(&color.to_rgb(), alpha),
     }
 }

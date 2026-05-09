@@ -1,6 +1,6 @@
 use crate::interpreter::Interpreter;
 use ferruginous_core::graphics::{BlendMode, Color, PixelFormat, StrokeStyle, WindingRule};
-use ferruginous_core::{Document, Handle, Object, PdfArena, PdfName, PdfResult};
+use ferruginous_core::{Document, Handle, Object, PdfArena, PdfResult};
 use ferruginous_render::{FallbackFontType, RenderBackend, TextGlyph, TextState};
 use kurbo::{Affine, BezPath};
 use std::collections::BTreeMap;
@@ -51,7 +51,15 @@ impl RenderBackend for TextExtractionBackend {
     fn stroke_path(&mut self, _path: &BezPath, _color: &Color, _style: &StrokeStyle) {}
     fn push_clip(&mut self, _path: &BezPath, _rule: WindingRule) {}
     fn pop_clip(&mut self) {}
-    fn draw_image(&mut self, _data: &[u8], _width: u32, _height: u32, _format: PixelFormat) {}
+    fn draw_image(
+        &mut self,
+        _data: &[u8],
+        _width: u32,
+        _height: u32,
+        _format: PixelFormat,
+        _smask: Option<ferruginous_render::SMaskData>,
+    ) {
+    }
     fn set_fill_alpha(&mut self, _alpha: f64) {}
     fn set_stroke_alpha(&mut self, _alpha: f64) {}
     fn set_fill_color(&mut self, _color: Color) {}
@@ -63,8 +71,9 @@ impl RenderBackend for TextExtractionBackend {
         _base: Option<&str>,
         _data: Option<Arc<Vec<u8>>>,
         _index: Option<usize>,
-        _cid_map: Option<Vec<u16>>,
+        _cid_map: Option<BTreeMap<u32, u32>>,
         _fallback: FallbackFontType,
+        _is_cid: bool,
     ) {
     }
     fn set_font(&mut self, _name: &str) {}
@@ -104,7 +113,15 @@ impl RenderBackend for CollectorBackend {
     fn pop_state(&mut self) {}
     fn push_clip(&mut self, _path: &BezPath, _rule: WindingRule) {}
     fn pop_clip(&mut self) {}
-    fn draw_image(&mut self, _data: &[u8], _w: u32, _h: u32, _fmt: PixelFormat) {}
+    fn draw_image(
+        &mut self,
+        _data: &[u8],
+        _w: u32,
+        _h: u32,
+        _fmt: PixelFormat,
+        _smask: Option<ferruginous_render::SMaskData>,
+    ) {
+    }
     fn fill_path(&mut self, _path: &BezPath, _color: &Color, _rule: WindingRule) {}
     fn stroke_path(&mut self, _path: &BezPath, _color: &Color, _style: &StrokeStyle) {}
     fn set_fill_alpha(&mut self, _alpha: f64) {}
@@ -156,8 +173,9 @@ impl RenderBackend for CollectorBackend {
         base: Option<&str>,
         _data: Option<Arc<Vec<u8>>>,
         _index: Option<usize>,
-        _cid_map: Option<Vec<u16>>,
+        _cid_map: Option<BTreeMap<u32, u32>>,
         _fallback: FallbackFontType,
+        _is_cid: bool,
     ) {
         if let Some(base_name) = base {
             self.fonts.insert(name.to_string(), base_name.to_string());
@@ -190,12 +208,9 @@ impl<'a> HeuristicEngine<'a> {
         for i in 0..page_count {
             let page = doc.get_page(i)?;
             let mut collector = CollectorBackend::new();
-            let res_handle = page
-                .resolve_attribute("Resources")
-                .and_then(|o| o.as_dict_handle())
-                .unwrap_or_else(|| self.arena.alloc_dict(BTreeMap::new()));
+            let res_dh = page.resources_handle();
             let mut interpreter =
-                Interpreter::new(&mut collector, doc, res_handle, kurbo::Affine::IDENTITY);
+                Interpreter::new(&mut collector, doc, res_dh, kurbo::Affine::IDENTITY);
             if let Some(contents) = page.resolve_attribute("Contents") {
                 let data = doc.decode_stream(&contents)?;
                 let _ = interpreter.execute_raw(&data);
@@ -387,11 +402,8 @@ impl<'a> HeuristicEngine<'a> {
         let page = doc.get_page(page_idx)?;
         let arena = doc.arena();
         let mut collector = CollectorBackend::new();
-        let res_h = page
-            .resolve_attribute("Resources")
-            .and_then(|o| o.as_dict_handle())
-            .unwrap_or_else(|| arena.alloc_dict(BTreeMap::new()));
-        let mut interpreter = Interpreter::new(&mut collector, doc, res_h, kurbo::Affine::IDENTITY);
+        let res_dh = page.resources_handle();
+        let mut interpreter = Interpreter::new(&mut collector, doc, res_dh, kurbo::Affine::IDENTITY);
         if let Some(contents) = page.resolve_attribute("Contents") {
             interpreter.execute_raw(&doc.decode_stream(&contents)?)?;
         }
@@ -413,9 +425,7 @@ impl<'a> HeuristicEngine<'a> {
                     op_to_mcid.insert(span.op_index, (tag.clone(), mcid as i32));
                 }
             }
-            let page_obj = Object::Dictionary(page.dict_handle());
-            let page_ref =
-                arena.find_object(&page_obj).unwrap_or_else(|| arena.alloc_object(page_obj));
+            let page_ref = page.obj_handle();
             let mut elem_dict = BTreeMap::new();
             elem_dict.insert(arena.name("Type"), Object::Name(arena.name("StructElem")));
             elem_dict.insert(arena.name("S"), Object::Name(arena.name(&tag)));
@@ -425,18 +435,19 @@ impl<'a> HeuristicEngine<'a> {
             page_struct_elements
                 .push(Object::Reference(arena.alloc_object(Object::Dictionary(elem_h))));
         }
-        self.update_page_contents(doc, page.dict_handle(), op_to_mcid)?;
+        self.update_page_contents(doc, page.obj_handle(), op_to_mcid)?;
         Ok(page_struct_elements)
     }
 
     fn update_page_contents(
         &self,
         doc: &Document,
-        page_h: Handle<BTreeMap<Handle<PdfName>, Object>>,
+        page_obj_h: Handle<Object>,
         op_to_mcid: BTreeMap<usize, (String, i32)>,
     ) -> PdfResult<()> {
         let arena = doc.arena();
-        let page_dict = arena.get_dict(page_h).unwrap_or_default();
+        let page_dh = doc.resolve_to_dict(page_obj_h)?;
+        let page_dict = arena.get_dict(page_dh).unwrap_or_default();
         if let Some(contents) = page_dict.get(&arena.name("Contents")) {
             let data = doc.decode_stream(contents)?;
             let rewriter = ferruginous_core::content::ContentRewriter::new(arena, data);
@@ -453,10 +464,10 @@ impl<'a> HeuristicEngine<'a> {
                     bytes::Bytes::from(new_data),
                 )),
             ));
-            let mut updated_dict = arena.get_dict(page_h).unwrap_or_default();
+            let mut updated_dict = arena.get_dict(page_dh).unwrap_or_default();
             updated_dict.insert(arena.name("Contents"), Object::Reference(new_contents));
             updated_dict.insert(arena.name("Tabs"), Object::Name(arena.name("S")));
-            arena.set_dict(page_h, updated_dict);
+            arena.set_dict(page_dh, updated_dict);
         }
         Ok(())
     }
@@ -468,12 +479,13 @@ impl<'a> HeuristicEngine<'a> {
         root_dict.insert(arena.name("K"), Object::Array(arena.alloc_array(struct_elements)));
         let root_ref = arena.alloc_object(Object::Dictionary(arena.alloc_dict(root_dict)));
         if let Some(cah) = doc.catalog_handle() {
-            let mut catalog = arena.get_dict(cah).unwrap_or_default();
+            let cadh = doc.resolve_to_dict(cah)?;
+            let mut catalog = arena.get_dict(cadh).unwrap_or_default();
             catalog.insert(arena.name("StructTreeRoot"), Object::Reference(root_ref));
             let mut mark_info = BTreeMap::new();
             mark_info.insert(arena.name("Marked"), Object::Boolean(true));
             catalog.insert(arena.name("MarkInfo"), Object::Dictionary(arena.alloc_dict(mark_info)));
-            arena.set_dict(cah, catalog);
+            arena.set_dict(cadh, catalog);
         }
         Ok(())
     }

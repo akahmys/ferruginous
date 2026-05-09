@@ -15,9 +15,9 @@ use std::sync::Arc;
 #[pdf_dict(clause = "7.7.2")]
 pub struct PdfCatalog {
     #[pdf_key("Pages")]
-    pub pages: Handle<BTreeMap<Handle<PdfName>, Object>>,
+    pub pages: Handle<Object>,
     #[pdf_key("StructTreeRoot")]
-    pub struct_tree_root: Option<Handle<BTreeMap<Handle<PdfName>, Object>>>,
+    pub struct_tree_root: Option<Handle<Object>>,
     #[pdf_key("MarkInfo")]
     pub mark_info: Option<Object>,
     #[pdf_key("Metadata")]
@@ -51,6 +51,7 @@ pub struct Document {
     pub system_fonts: Arc<BTreeMap<FallbackFontType, Arc<Vec<u8>>>>,
     /// Parsed FontResource cache to prevent redundant parsing across pages.
     pub font_cache: Arc<RwLock<BTreeMap<Handle<Object>, Arc<FontResource>>>>,
+    pub force_fallback: bool,
 }
 
 impl Document {
@@ -63,6 +64,7 @@ impl Document {
             ingestion_issues: Vec::new(),
             system_fonts: Arc::new(BTreeMap::new()),
             font_cache: Arc::new(RwLock::new(BTreeMap::new())),
+            force_fallback: false,
         }
     }
 
@@ -80,6 +82,7 @@ impl Document {
             ingestion_issues: issues,
             system_fonts: Arc::new(BTreeMap::new()),
             font_cache: Arc::new(RwLock::new(BTreeMap::new())),
+            force_fallback: false,
         }
     }
 
@@ -101,6 +104,16 @@ impl Document {
         let ingested = crate::ingest::Ingestor::ingest(&mut lopdf_doc, options)?;
         let mut doc =
             Self::with_issues(ingested.arena, ingested.root, ingested.info, ingested.issues);
+        doc.force_fallback = options.force_fallback;
+        
+        // Populate font cache from ingestion
+        {
+            let mut cache = doc.font_cache.write();
+            for (idx, res) in ingested.font_cache {
+                cache.insert(Handle::new(idx), res);
+            }
+        }
+
         doc.load_system_fonts();
         doc.normalize_resources();
         doc.normalize_page_tree();
@@ -177,8 +190,8 @@ impl Document {
     }
 
     /// Returns the catalog dictionary handle.
-    pub fn catalog_handle(&self) -> Option<Handle<BTreeMap<Handle<PdfName>, Object>>> {
-        self.arena.get_object(self.root).and_then(|obj| obj.as_dict_handle())
+    pub fn catalog_handle(&self) -> Option<Handle<Object>> {
+        Some(self.root)
     }
 
     /// Returns the handle to the document info dictionary, if it exists.
@@ -191,6 +204,26 @@ impl Document {
         self.arena
             .get_object(*handle)
             .ok_or_else(|| PdfError::Arena("Failed to resolve handle".into()))
+    }
+
+    /// Retrieves a font resource, loading it if not already cached.
+    pub fn get_font(&self, handle: Handle<Object>) -> PdfResult<Arc<FontResource>> {
+        {
+            let cache = self.font_cache.read();
+            if let Some(res) = cache.get(&handle) {
+                return Ok(Arc::clone(res));
+            }
+        }
+
+        let obj = self.resolve(&handle)?;
+        let dict_h = obj.as_dict_handle().ok_or_else(|| PdfError::Other("Not a dictionary".into()))?;
+        let dict = self.arena.get_dict(dict_h).ok_or_else(|| PdfError::Other("Missing dictionary".into()))?;
+        
+        let font_res = FontResource::load(&dict, self)?;
+        let arc_res = Arc::new(font_res);
+        
+        self.font_cache.write().insert(handle, Arc::clone(&arc_res));
+        Ok(arc_res)
     }
 
     /// Decodes a stream object.
@@ -211,12 +244,21 @@ impl Document {
         }
     }
 
+    /// Resolves an indirect object handle to its current dictionary pool handle.
+    pub fn resolve_to_dict(&self, handle: Handle<Object>) -> PdfResult<DictHandle> {
+        self.arena
+            .get_object(handle)
+            .and_then(|obj| obj.as_dict_handle())
+            .ok_or_else(|| PdfError::Other(format!("Object {:?} is not a dictionary", handle).into()))
+    }
+
     /// Returns the total number of pages in the document.
     pub fn page_count(&self) -> PdfResult<usize> {
-        let pages_root = self.get_pages_root()?;
+        let pages_root_h = self.get_pages_root()?;
+        let pages_root_dh = self.resolve_to_dict(pages_root_h)?;
         let dict = self
             .arena
-            .get_dict(pages_root)
+            .get_dict(pages_root_dh)
             .ok_or_else(|| PdfError::Other("Invalid Pages root dictionary".into()))?;
 
         let count_key = self
@@ -236,7 +278,46 @@ impl Document {
         self.find_page_recursive(root_handle, index, Vec::new())
     }
 
-    fn get_pages_root(&self) -> PdfResult<Handle<BTreeMap<Handle<PdfName>, Object>>> {
+    /// Returns a list of all page object handles in the document.
+    pub fn find_all_pages(&self) -> Vec<Handle<Object>> {
+        let mut pages = Vec::new();
+        if let Ok(root) = self.get_pages_root() {
+            let _ = self.walk_pages_recursive(root, &mut pages, 0);
+        }
+        pages
+    }
+
+    fn walk_pages_recursive(&self, node_h: Handle<Object>, out: &mut Vec<Handle<Object>>, depth: usize) -> PdfResult<()> {
+        if depth > 32 { return Err(PdfError::Other("Page tree depth limit exceeded".into())); }
+        
+        let dict_h = self.resolve_to_dict(node_h)?;
+        let dict = self.arena.get_dict(dict_h).ok_or_else(|| PdfError::Other("Invalid node in page tree".into()))?;
+
+        let type_key = self.arena.name("Type");
+        let node_type = dict.get(&type_key)
+            .and_then(|o| o.resolve(&self.arena).as_name())
+            .and_then(|h| self.arena.get_name(h));
+
+        if let Some(name) = node_type && name.as_str() == "Page" {
+            out.push(node_h);
+            return Ok(());
+        }
+
+        let kids_key = self.arena.name("Kids");
+        if let Some(kids_obj) = dict.get(&kids_key) {
+            let ah = kids_obj.resolve(&self.arena).as_array().ok_or_else(|| PdfError::Other("Invalid Kids array".into()))?;
+            if let Some(kids) = self.arena.get_array(ah) {
+                for kid in kids {
+                    if let Some(h) = kid.resolve(&self.arena).as_reference() {
+                        let _ = self.walk_pages_recursive(h, out, depth + 1);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn get_pages_root(&self) -> PdfResult<Handle<Object>> {
         let catalog_obj = self
             .arena
             .get_object(self.root)
@@ -247,9 +328,9 @@ impl Document {
 
     fn find_page_recursive(
         &self,
-        root_node: Handle<BTreeMap<Handle<PdfName>, Object>>,
+        root_node: Handle<Object>,
         mut target_index: usize,
-        _unused_path: Vec<Handle<BTreeMap<Handle<PdfName>, Object>>>,
+        _unused_path: Vec<Handle<Object>>,
     ) -> PdfResult<Page<'_>> {
         let mut current_node = root_node;
         let mut path = Vec::new();
@@ -260,9 +341,10 @@ impl Document {
                 return Err(PdfError::Other("Page tree depth limit exceeded".into()));
             }
 
+            let dict_h = self.resolve_to_dict(current_node)?;
             let dict = self
                 .arena
-                .get_dict(current_node)
+                .get_dict(dict_h)
                 .ok_or_else(|| PdfError::Other("Invalid node in page tree".into()))?;
 
             let type_key = self.arena.name("Type");
@@ -294,13 +376,13 @@ impl Document {
 
             for kid_obj in kids {
                 let kid_handle = kid_obj
-                    .resolve(&self.arena)
-                    .as_dict_handle()
-                    .ok_or_else(|| PdfError::Other("Invalid kid object".into()))?;
+                    .as_reference()
+                    .ok_or_else(|| PdfError::Other("Invalid kid object (not a reference)".into()))?;
 
+                let kid_dict_h = self.resolve_to_dict(kid_handle)?;
                 let kid_dict = self
                     .arena
-                    .get_dict(kid_handle)
+                    .get_dict(kid_dict_h)
                     .ok_or_else(|| PdfError::Other("Invalid kid dictionary".into()))?;
 
                 let count = self.get_node_count(&kid_dict);
@@ -378,7 +460,7 @@ impl Document {
     }
 
     /// Returns the handle to the Structure Tree Root dictionary, if it exists.
-    pub fn get_structure_root(&self) -> PdfResult<Option<DictHandle>> {
+    pub fn get_structure_root(&self) -> PdfResult<Option<Handle<Object>>> {
         let catalog_obj = self
             .arena
             .get_object(self.root)
@@ -400,6 +482,9 @@ impl Document {
     /// Normalizes document resources at load-time (Phase 3).
     /// Group fonts by BaseFont and CIDSystemInfo to share ToUnicode mappings.
     pub fn normalize_resources(&mut self) {
+        // Clear font cache to force re-parsing with potential new system fonts
+        self.font_cache.write().clear();
+
         let (font_groups, best_to_unicode) = self.discover_font_groups();
         self.propagate_tounicode_mappings(font_groups, best_to_unicode);
         self.resolve_missing_font_data();
@@ -420,28 +505,21 @@ impl Document {
         for i in 0..count {
             if let Ok(page) = self.get_page(i) {
                 // We want to keep the original handle if possible to preserve references (e.g. from /Annots /P)
-                // find_page_recursive gives us a Page struct with the dictionary handle.
-                let dh = page.dict_handle();
-
-                // We need to find the OBJECT handle that points to this dictionary.
-                // In our arena, usually 1 Object (Indirect) -> 1 Dictionary.
-                // We'll search for the object handle.
-                if let Some(ph) = arena.find_object_by_dict_handle(dh) {
+                let ph = page.obj_handle();
+                if let Some(Object::Dictionary(dh)) = arena.get_object(ph) {
                     let mut dict = arena.get_dict(dh).unwrap_or_default();
 
                     // Flatten inherited attributes (ISO 32000-2:2020 Clause 7.7.3.3)
                     let attrs = ["Resources", "MediaBox", "CropBox", "Rotate"];
                     for attr in attrs {
                         let attr_name = arena.name(attr);
-                        if !dict.contains_key(&attr_name) {
-                            if let Some(val) = page.resolve_attribute(attr) {
+                        if !dict.contains_key(&attr_name)
+                            && let Some(val) = page.resolve_attribute(attr) {
                                 dict.insert(attr_name, val);
                             }
-                        }
                     }
 
                     // Set Parent to the new root (we'll set the root handle later)
-                    // For now, just mark it.
                     arena.set_dict(dh, dict);
                     page_handles.push(Object::Reference(ph));
                 }
@@ -468,21 +546,21 @@ impl Document {
 
         // 3. Update Parent for all pages
         for page_ref in &page_handles {
-            if let Object::Reference(ph) = page_ref {
-                if let Some(Object::Dictionary(dh)) = arena.get_object(*ph) {
+            if let Object::Reference(ph) = page_ref
+                && let Some(Object::Dictionary(dh)) = arena.get_object(*ph) {
                     let mut dict = arena.get_dict(dh).unwrap_or_default();
                     dict.insert(arena.name("Parent"), Object::Reference(pages_root_h));
                     arena.set_dict(dh, dict);
                 }
-            }
         }
 
         // 4. Update Catalog
-        if let Some(cat_dh) = self.catalog_handle() {
-            let mut cat_dict = arena.get_dict(cat_dh).unwrap_or_default();
-            cat_dict.insert(pages_root_key, Object::Reference(pages_root_h));
-            arena.set_dict(cat_dh, cat_dict);
-        }
+        if let Some(cat_obj_h) = self.catalog_handle()
+            && let Ok(cat_dh) = self.resolve_to_dict(cat_obj_h) {
+                let mut cat_dict = arena.get_dict(cat_dh).unwrap_or_default();
+                cat_dict.insert(pages_root_key, Object::Reference(pages_root_h));
+                arena.set_dict(cat_dh, cat_dict);
+            }
     }
 
     fn resolve_missing_font_data(&mut self) {
@@ -492,14 +570,12 @@ impl Document {
         let mut cache_write = cache.write();
         for res in cache_write.values_mut() {
             let res_mut = Arc::make_mut(res);
-            if res_mut.data.is_none() {
-                if let Some(ftype) = res_mut.fallback_type {
-                    if let Some(sys_data) = system_fonts.get(&ftype) {
+            if res_mut.data.is_none()
+                && let Some(ftype) = res_mut.fallback_type
+                    && let Some(sys_data) = system_fonts.get(&ftype) {
                         res_mut.data = Some(Arc::clone(sys_data));
                         let _ = res_mut.perform_reconstruction();
                     }
-                }
-            }
         }
     }
 

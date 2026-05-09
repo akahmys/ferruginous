@@ -4,7 +4,9 @@
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use ferruginous_sdk::{PdfDocument, PdfStandard};
+use ferruginous_core::handle::Handle;
+use ferruginous_core::Object;
+use ferruginous_sdk::{PdfDocument, PdfStandard, TraceContext};
 use inquire::Confirm;
 use std::path::PathBuf;
 
@@ -19,6 +21,9 @@ struct IngestionArgs {
     /// Use relaxed color validation policy
     #[arg(long)]
     relaxed_color: bool,
+    /// Force fallback to system fonts if embedded font parsing fails
+    #[arg(long)]
+    force_fallback: bool,
 }
 
 impl From<IngestionArgs> for ferruginous_core::ingest::IngestionOptions {
@@ -31,6 +36,7 @@ impl From<IngestionArgs> for ferruginous_core::ingest::IngestionOptions {
             } else {
                 ferruginous_core::ingest::ColorPolicy::Strict
             },
+            force_fallback: args.force_fallback,
         }
     }
 }
@@ -353,10 +359,45 @@ enum DebugSubcommands {
         #[command(flatten)]
         ingest: IngestionArgs,
     },
+    /// Display arena memory and object statistics
+    Stats {
+        /// Input PDF file
+        input: PathBuf,
+        /// Ingestion control options
+        #[command(flatten)]
+        ingest: IngestionArgs,
+    },
+    /// Extract raw font data
+    ExtractFont {
+        /// Input PDF file
+        input: PathBuf,
+        /// Object ID of the font
+        obj_num: u32,
+        /// Output file path
+        output: PathBuf,
+        /// Ingestion control options
+        #[command(flatten)]
+        ingest: IngestionArgs,
+    },
+    /// Trace glyph mapping for a specific character
+    TraceGlyph {
+        /// Input PDF file
+        input: PathBuf,
+        /// Unicode character or hex code (e.g., "A" or "U+0041")
+        #[arg(short, long)]
+        unicode: String,
+        /// Specific font name to trace (optional, scans all if omitted)
+        #[arg(short, long)]
+        font: Option<String>,
+        /// Ingestion control options
+        #[command(flatten)]
+        ingest: IngestionArgs,
+    },
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    env_logger::init();
     let cli = Cli::parse();
 
     match cli.command {
@@ -424,6 +465,15 @@ async fn main() -> Result<()> {
             }
             DebugSubcommands::Structure { input, ingest } => {
                 handle_debug_structure(input, ingest)?;
+            }
+            DebugSubcommands::Stats { input, ingest } => {
+                handle_debug_stats(input, ingest)?;
+            }
+            DebugSubcommands::ExtractFont { input, obj_num, output, ingest } => {
+                handle_extract_font(input, obj_num, output, ingest)?;
+            }
+            DebugSubcommands::TraceGlyph { input, unicode, font, ingest } => {
+                handle_debug_trace_glyph(input, unicode, font, ingest)?;
             }
         },
         Commands::Credits => {
@@ -665,7 +715,7 @@ fn handle_debug_dump(
         .map_err(|e| anyhow::anyhow!("{:?}", e))?;
 
     let arena = doc.inner().arena();
-    let id = ferruginous_core::Object::Reference(ferruginous_core::Handle::new(obj_id));
+    let id = ferruginous_core::Object::Reference(Handle::new(obj_id));
     let resolved = id.resolve(arena);
 
     println!("\n--- [ OBJECT {} ] ---", obj_id);
@@ -678,7 +728,13 @@ fn handle_debug_dump(
                         .get_name(k.clone())
                         .map(|n| n.as_str().to_string())
                         .unwrap_or_else(|| format!("Unknown_{:?}", k));
-                    println!("  /{} -> {:?}", name, v);
+                    let val_str = match v {
+                        ferruginous_core::Object::Name(vh) => {
+                            arena.get_name(*vh).map(|n| format!("Name(/{})", n.as_str())).unwrap_or_else(|| format!("{:?}", v))
+                        }
+                        _ => format!("{:?}", v),
+                    };
+                    println!("  /{} -> {}", name, val_str);
                 }
             } else {
                 println!("Error: Dictionary handle {:?} not found in arena", h);
@@ -731,6 +787,28 @@ fn handle_debug_structure(input: PathBuf, ingest: IngestionArgs) -> Result<()> {
 
     let tree = doc.print_structure().map_err(|e| anyhow::anyhow!("{:?}", e))?;
     println!("\n--- [ DOCUMENT STRUCTURE ] ---\n{}", tree);
+    Ok(())
+}
+
+fn handle_debug_stats(input: PathBuf, ingest: IngestionArgs) -> Result<()> {
+    println!("fepdf debug stats: Analyzing memory usage for {:?}", input);
+    let data = std::fs::read(&input).with_context(|| "Failed to read input")?;
+    let ingest_options: ferruginous_core::ingest::IngestionOptions = ingest.into();
+    let doc = PdfDocument::open_with_options(data.into(), &ingest_options)
+        .map_err(|e| anyhow::anyhow!("{:?}", e))?;
+
+    let stats = doc.inner().arena().get_stats();
+
+    println!("\n--- [ ARENA STATISTICS ] ---");
+    println!("PDF Version:      {}", stats.version);
+    println!("Indirect Objects: {}", stats.object_count);
+    println!("Dictionaries:     {}", stats.dictionary_count);
+    println!("Arrays:           {}", stats.array_count);
+    println!("\n--- [ FONT RESOURCES ] ---");
+    for font in doc.inner().fonts() {
+        println!("  Handle {:>3}: {:<30} ({})", font.handle.index(), font.name, font.font_type);
+    }
+    
     Ok(())
 }
 
@@ -1062,7 +1140,10 @@ fn render_font_text(summary: &ferruginous_sdk::DocumentSummary) {
             "{:<30} | {:<10} | {:<4} | {:<4} | {:<4} | {:<4} | {:<10}",
             "Font Name", "Type", "Emb", "T3", "Sub", "ToU", "Encoding"
         );
-        println!("{:-<30}-+-{:-<10}-+-{:-<4}-+-{:-<4}-+-{:-<4}-+-{:-<4}-+-{:-<10}", "", "", "", "", "", "", "");
+        println!(
+            "{:-<30}-+-{:-<10}-+-{:-<4}-+-{:-<4}-+-{:-<4}-+-{:-<4}-+-{:-<10}",
+            "", "", "", "", "", "", ""
+        );
         for f in &summary.fonts {
             println!(
                 "{:<30} | {:<10} | {:<4} | {:<4} | {:<4} | {:<4} | {:<10}",
@@ -1090,5 +1171,129 @@ fn render_audit_text(summary: &ferruginous_sdk::DocumentSummary) {
     if !summary.compliance.iso_clauses.is_empty() {
         println!("\n--- [ ISO 32000-2 COMPLIANCE ] ---");
         println!("Validated Clauses: {}", summary.compliance.iso_clauses.join(", "));
+    }
+}
+fn handle_extract_font(
+    input: PathBuf,
+    obj_num: u32,
+    _output: PathBuf,
+    ingest: IngestionArgs,
+) -> Result<()> {
+    let data = std::fs::read(&input).with_context(|| "Failed to read input")?;
+    let ingest_options: ferruginous_core::ingest::IngestionOptions = ingest.into();
+    let doc = PdfDocument::open_with_options(data.into(), &ingest_options)
+        .map_err(|e| anyhow::anyhow!("{:?}", e))?;
+
+    let obj_id = obj_num;
+    let handle = Handle::new(obj_id);
+    let obj = doc.inner().arena().get_object(handle);
+    
+    let font_resource = if let Some(Object::Dictionary(dh)) = obj {
+        if let Some(dict) = doc.inner().arena().get_dict(dh) {
+            ferruginous_core::font::FontResource::load(&dict, doc.inner()).ok()
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    if let Some(mut resource) = font_resource {
+        resource.perform_reconstruction().ok();
+        let data = resource.reconstructed_data.as_ref().or(resource.data.as_ref());
+        if let Some(arc_data) = data {
+            let extension = if resource.reconstructed_data.is_some() { "otf" } else { "cid" };
+            let filename = format!("exports/font-{:04}.{}", obj_id, extension);
+            std::fs::write(&filename, &**arc_data).with_context(|| "Failed to write output")?;
+            println!("SUCCESS: Extracted font to {} ({} bytes)", filename, arc_data.len());
+        } else {
+            anyhow::bail!("No data for font {}", obj_id);
+        }
+    } else {
+        anyhow::bail!("Failed to load font resource for {}", obj_id);
+    }
+    Ok(())
+}
+
+fn handle_debug_trace_glyph(
+    input: PathBuf,
+    unicode_str: String,
+    font_filter: Option<String>,
+    ingest: IngestionArgs,
+) -> Result<()> {
+    println!("fepdf debug trace-glyph: Analyzing mapping for '{}' in {:?}", unicode_str, input);
+
+    let target_char = parse_unicode(&unicode_str)?;
+    let data = std::fs::read(&input).with_context(|| "Failed to read input")?;
+    let ingest_options: ferruginous_core::ingest::IngestionOptions = ingest.into();
+    let doc = PdfDocument::open_with_options(data.into(), &ingest_options)
+        .map_err(|e| anyhow::anyhow!("{:?}", e))?;
+
+    let font_summaries = doc.inner().fonts();
+    let mut found_any = false;
+
+    for summary in font_summaries {
+        let name = summary.name.as_str();
+        if let Some(ref filter) = font_filter {
+            if !name.contains(filter) {
+                continue;
+            }
+        }
+
+        let font = match doc.inner().get_font(summary.handle) {
+            Ok(f) => f,
+            Err(e) => {
+                println!("Warning: Failed to load font {}: {:?}", name, e);
+                continue;
+            }
+        };
+
+        found_any = true;
+        println!("\n--- [ FONT: {} ] ---", name);
+        println!("Handle: {:?}", summary.handle);
+
+        let mut ctx = TraceContext::new();
+        // Priority 1 in resolve_gid uses the Unicode hint.
+        // We find the CID match only for informational purposes here, 
+        // as resolve_gid will prioritize the Unicode hint anyway.
+        let cid_match = font.unicode_to_gid.get(&target_char).copied();
+        if let Some(cid) = cid_match {
+            println!("Note: Unicode character maps to CID {} in this font's CMap", cid);
+        }
+
+        let gid = font.resolve_gid(cid_match.unwrap_or(0), Some(target_char), Some(&mut ctx));
+
+        #[cfg(feature = "debug-tools")]
+        for (i, step) in ctx.traces.iter().flat_map(|t| t.steps.iter()).enumerate() {
+            println!("  {:>2}. {}", i + 1, step);
+        }
+
+        match gid {
+            Some(g) => {
+                let cid = cid_match.unwrap_or(0);
+                let w = font.glyph_width_by_cid(cid);
+                let (v_w, vx, vy) = font.glyph_vertical_metrics(cid);
+                println!("RESULT: GID {} (w: {}, vx: {}, vy: {}, v_adv: {})", g, w, vx, vy, v_w);
+            }
+            None => println!("RESULT: FAILED TO RESOLVE"),
+        }
+    }
+
+    if !found_any {
+        println!("No fonts matched the filter: {:?}", font_filter);
+    }
+
+    Ok(())
+}
+
+fn parse_unicode(s: &str) -> Result<char> {
+    if s.starts_with("U+") || s.starts_with("u+") {
+        let hex = &s[2..];
+        let val = u32::from_str_radix(hex, 16).with_context(|| "Invalid hex code")?;
+        std::char::from_u32(val).ok_or_else(|| anyhow::anyhow!("Invalid unicode scalar: U+{:04X}", val))
+    } else if s.chars().count() == 1 {
+        Ok(s.chars().next().unwrap())
+    } else {
+        anyhow::bail!("Invalid unicode input. Use single char or U+XXXX format (e.g. 'A' or 'U+6C38')")
     }
 }

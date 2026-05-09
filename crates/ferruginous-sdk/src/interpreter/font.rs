@@ -5,6 +5,14 @@ use std::sync::Arc;
 
 impl Interpreter<'_> {
     pub(crate) fn resolve_font_resource(&mut self, name: &PdfName) -> PdfResult<Arc<FontResource>> {
+        if name.as_str() == "Fallback-Sans" {
+            let res = FontResource::load_fallback(
+                ferruginous_core::font::FallbackFontType::SansSerif,
+                self.doc,
+            )?;
+            return Ok(Arc::new(res));
+        }
+
         let entry =
             self.find_resource(&self.doc.arena().intern_name(PdfName::new("Font")), name)?;
         let h =
@@ -46,6 +54,13 @@ impl Interpreter<'_> {
                     if desc_res.to_unicode.is_none() {
                         desc_res.to_unicode.clone_from(&initial_res.to_unicode);
                     }
+                    // RE-POPULATE after propagating ToUnicode/Encoding
+                    desc_res.build_unified_map();
+                    desc_res.populate_embedded_unicode_map(self.doc);
+                    
+                    // CRITICAL: Re-trigger reconstruction after unified_map is populated with inherited resources
+                    let _ = desc_res.perform_reconstruction();
+                    
                     initial_res = desc_res;
                 }
                 Arc::new(initial_res)
@@ -66,7 +81,20 @@ impl Interpreter<'_> {
         let backend_name = format!("{}_{}", name, h.index());
 
         if !self.defined_fonts.contains(backend_name.as_str()) {
-            let data = res.reconstructed_data.clone().or_else(|| res.data.clone());
+            let mut data = res.reconstructed_data.clone().or_else(|| res.data.clone());
+            
+            // Check if the font data is in a format supported by the renderer (SFNT).
+            // Raw Type 1 (PFB/PFA) is not supported and must be replaced by fallback font data.
+            let is_sfnt = data.as_ref().map(|d| {
+                d.len() >= 4 && (d.starts_with(b"OTTO") || d.starts_with(&[0, 1, 0, 0]) || d.starts_with(b"true"))
+            }).unwrap_or(false);
+
+            if !is_sfnt {
+                let fallback_type = res.fallback_type.unwrap_or(ferruginous_core::font::FallbackFontType::Default);
+                log::debug!("[SDK] Font {} is not SFNT, using fallback data for type {:?}", backend_name, fallback_type);
+                data = self.doc.system_fonts.get(&fallback_type).cloned();
+            }
+
             self.backend.define_font(
                 backend_name.as_str(),
                 Some(res.base_font.as_str()),
@@ -74,6 +102,7 @@ impl Interpreter<'_> {
                 None,
                 res.cid_to_gid_map.clone(),
                 res.fallback_type.unwrap_or(ferruginous_core::font::FallbackFontType::Default),
+                res.is_cid_keyed,
             );
             self.defined_fonts.insert(backend_name.clone());
         }

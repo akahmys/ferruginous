@@ -1,52 +1,33 @@
-#![allow(unused_imports)]
-#![allow(missing_docs)]
-use bytes::Bytes;
-use ferruginous_render::{RenderBackend, headless};
-use ferruginous_sdk::PdfDocument;
-use std::path::Path;
+use ferruginous_render::VelloBackend;
+use ferruginous_sdk::{Interpreter, PdfDocument};
+use kurbo::Affine;
+use vello::Scene;
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args: Vec<String> = std::env::args().collect();
-    let pdf_path = if args.len() > 1 { &args[1] } else { "samples/nihonkokukenpou.pdf" };
-    let output_dir = "artifacts";
-    std::fs::create_dir_all(output_dir)?;
-    let output_path = "artifacts/debug_render_output.png";
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let data = std::fs::read("samples/fy05.pdf")?;
+    let mut doc = PdfDocument::open(bytes::Bytes::from(data))?;
 
-    println!("Loading PDF: {}", pdf_path);
-    let data = Bytes::from(std::fs::read(pdf_path)?);
-    let doc = PdfDocument::open(data)?;
+    // Load system fonts for fallback
+    let system_fonts = VelloBackend::load_system_fonts();
+    doc.set_system_fonts((*system_fonts).clone());
 
-    let page_index = 0;
+    let page = doc.get_page(0)?;
 
-    let mut backend = ferruginous_render::VelloBackend::new(
-        ferruginous_render::VelloBackend::load_system_fonts(),
-    );
-    let (p_w, p_h) = doc.get_page_size(page_index).unwrap_or((595.0, 842.0));
+    println!("--- Rendering Page 1 of fy05.pdf ---");
+    let mut scene = Scene::new();
+    let mut backend = VelloBackend::new(system_fonts);
 
-    // High-resolution render (200 DPI approx)
-    let width = 1654;
-    let height = 2339;
-    let scale_x = width as f64 / p_w;
-    let scale_y = height as f64 / p_h;
-    let initial_transform = kurbo::Affine::new([scale_x, 0.0, 0.0, -scale_y, 0.0, p_h * scale_y]);
+    // Page is ferruginous_core::document::page::Page
+    // We need its resources and contents.
 
-    doc.render_page(page_index, &mut backend, initial_transform)?;
-    let scene = backend.scene();
+    let mut interpreter =
+        Interpreter::new(&mut backend, doc.inner(), page.resources_handle(), Affine::IDENTITY);
 
-    // High-resolution render (200 DPI approx)
-    let width = 1654;
-    let height = 2339;
+    for ch in page.contents_handles() {
+        interpreter.execute(ch)?;
+    }
 
-    headless::render_to_image(
-        scene,
-        width,
-        height,
-        Path::new(output_path),
-        image::ImageFormat::Png,
-    )
-    .await?;
+    println!("--- Rendering Complete ---");
 
-    println!("Render complete. Please check {}", output_path);
     Ok(())
 }

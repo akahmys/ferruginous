@@ -17,3 +17,8 @@ bytes = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+env_logger = "0.11"
+image.workspace = true
+
+[features]
+debug-tools = ["ferruginous-core/debug-tools"]

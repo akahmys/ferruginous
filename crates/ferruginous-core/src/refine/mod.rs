@@ -253,6 +253,7 @@ impl ParallelRefinery {
         depth: usize,
         issues: &mut Vec<String>,
     ) -> RefinedObject {
+        log::debug!("Refinery: refining stream {:?}", id);
         let mut refined_dict = BTreeMap::new();
         for (k, v) in &s.dict {
             refined_dict.insert(
@@ -280,12 +281,10 @@ impl ParallelRefinery {
             return RefinedObject::Stream(refined_dict, Bytes::copy_from_slice(distilled_data));
         }
 
-        // Content Stream Restructuring
+        // Content Stream Restructuring (Sublimation Phase 2)
         let subtype = refined_dict.get(&PdfName::new("Subtype")).and_then(|o| o.as_str());
         let is_form = subtype == Some("Form");
-        let _is_likely_content = subtype.is_none() || is_form;
-        let _is_font_data = refined_dict.contains_key(&PdfName::new("Length1"))
-            || refined_dict.contains_key(&PdfName::new("Length2"));
+        let is_likely_content = subtype.is_none() || is_form;
 
         let (content, was_decompressed) = match s.decompressed_content() {
             Ok(c) => (Bytes::from(c), true),
@@ -296,6 +295,18 @@ impl ParallelRefinery {
             refined_dict.remove(&PdfName::new("Filter"));
             refined_dict.remove(&PdfName::new("DecodeParms"));
         }
+
+        if is_likely_content
+            && let Some(handle) = table.get(&id)
+                && let Some(context) = _stream_contexts.get(&handle.index())
+            {
+                let mut sublimator = crate::object::sublimation::parser::Sublimator::new(context);
+                let commands = sublimator.sublimate(&content);
+                return RefinedObject::Sublimated(
+                    refined_dict,
+                    crate::object::SublimatedData::Commands(commands),
+                );
+            }
 
         RefinedObject::Stream(refined_dict, content)
     }
@@ -333,15 +344,28 @@ pub fn commit_to_arena(arena: &PdfArena, refined: RefinedObject, depth: usize) -
             Object::Dictionary(arena.alloc_dict(committed))
         }
         RefinedObject::Stream(dict, bytes) => {
-            let committed_dict = dict
+            let committed_dict: BTreeMap<Handle<PdfName>, Object> = dict
                 .into_iter()
                 .map(|(k, v)| (arena.intern_name(k), commit_to_arena(arena, v, depth + 1)))
                 .collect();
-            let dh = arena.alloc_dict(committed_dict);
+            // Sublimation Phase 1: Pre-decode Images or compress other large streams
+            let is_image = committed_dict
+                .get(&arena.name("Subtype"))
+                .and_then(|o: &Object| o.resolve(arena).as_name())
+                .and_then(|n: Handle<PdfName>| arena.get_name(n))
+                .map(|n: PdfName| n.as_str() == "Image")
+                .unwrap_or(false);
 
-            // Perform basic sublimation (Zstd) for large non-content streams
-            // Perform basic sublimation (Zstd) for large non-content streams
-            let sublimated = if bytes.len() > 4096 {
+            let sublimated = if is_image {
+                arena.sublimate_image(&bytes, &committed_dict).unwrap_or_else(|_| {
+                    let compressed =
+                        zstd::encode_all(&*bytes, 3).unwrap_or_else(|_| bytes.to_vec());
+                    crate::object::SublimatedData::Compressed {
+                        original_len: bytes.len(),
+                        data: compressed,
+                    }
+                })
+            } else if bytes.len() > 4096 {
                 let compressed = zstd::encode_all(&*bytes, 3).unwrap_or_else(|_| bytes.to_vec());
                 crate::object::SublimatedData::Compressed {
                     original_len: bytes.len(),
@@ -350,10 +374,12 @@ pub fn commit_to_arena(arena: &PdfArena, refined: RefinedObject, depth: usize) -
             } else {
                 crate::object::SublimatedData::Raw(bytes)
             };
+
+            let dh = arena.alloc_dict(committed_dict);
             Object::Stream(dh, std::sync::Arc::new(sublimated))
         }
         RefinedObject::Sublimated(dict, data) => {
-            let committed_dict = dict
+            let committed_dict: BTreeMap<Handle<PdfName>, Object> = dict
                 .into_iter()
                 .map(|(k, v)| (arena.intern_name(k), commit_to_arena(arena, v, depth + 1)))
                 .collect();

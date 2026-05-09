@@ -10,6 +10,10 @@ use std::marker::PhantomData;
 /// A typesafe handle to an object in the `PdfArena`.
 ///
 /// ### Technical Design:
+/// Alias for a handle to an Object.
+pub type ObjHandle = Handle<crate::Object>;
+/// Alias for a handle to a Name.
+pub type NameHandle = Handle<crate::PdfName>;
 /// - **Zero-Cost Abstraction**: `Handle` is a 32-bit integer wrapper with `PhantomData`. It has no runtime
 ///   overhead compared to a raw `u32`.
 /// - **Type Safety**: The `PhantomData<T>` marker ensures that a `Handle<Object>` cannot be accidentally

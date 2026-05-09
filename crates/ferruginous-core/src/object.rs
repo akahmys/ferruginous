@@ -52,17 +52,15 @@ impl FromPdfObject for Handle<Vec<Object>> {
 }
 
 impl FromPdfObject for Handle<Object> {
-    fn from_pdf_object(obj: Object, arena: &PdfArena) -> PdfResult<Self> {
-        let resolved = obj.resolve(arena);
-        match resolved {
+    fn from_pdf_object(obj: Object, _arena: &PdfArena) -> PdfResult<Self> {
+        match obj {
             Object::Reference(h) => Ok(h),
             _ => {
                 // If it's not a reference, we can't really have a "handle to the object"
-                // in the sense of an indirect reference, but we can return the handle if it's already in the arena.
-                // For simplicity, we mostly expect references here.
+                // in the sense of an indirect reference.
                 Err(crate::PdfError::Parse {
                     pos: 0,
-                    message: format!("Expected reference handle, got {:?}", resolved).into(),
+                    message: format!("Expected reference handle, got {:?}", obj).into(),
                 })
             }
         }
@@ -219,8 +217,10 @@ pub enum Object {
 /// A container for sublimated (normalized) data in the Arena.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SublimatedData {
-    /// Fully parsed high-level commands (for Content Streams).
+    /// Pre-parsed drawing commands (Content Streams).
     Commands(Vec<sublimation::Command>),
+    /// Pre-decoded image data (RGBA).
+    Image { width: u32, height: u32, format: crate::graphics::PixelFormat, data: Vec<u8> },
     /// Zstd-compressed raw bytes (for Images/Fonts/Thumbnails).
     Compressed { original_len: usize, data: Vec<u8> },
     /// Raw uncompressed bytes.

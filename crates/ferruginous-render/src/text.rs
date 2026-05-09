@@ -1,8 +1,10 @@
 use kurbo::{BezPath, Point};
-use skrifa::MetadataProvider;
-use skrifa::instance::{LocationRef, Size};
+use read_fonts::TableProvider;
+use read_fonts::types::GlyphId;
+use skrifa::instance::Size as SkrifaSize;
 use skrifa::outline::{DrawSettings, OutlinePen};
-use skrifa::raw::{FileRef, TableProvider};
+use skrifa::prelude::LocationRef;
+use skrifa::{FontRef, MetadataProvider};
 use std::collections::BTreeMap;
 
 pub struct KurboPen {
@@ -69,11 +71,7 @@ impl SkrifaBridge {
     }
 
     pub fn get_units_per_em(&self, data: &[u8]) -> Option<u16> {
-        if let Ok(file) = FileRef::new(data) {
-            let font = match file {
-                FileRef::Font(f) => f,
-                FileRef::Collection(c) => c.get(0).ok()?,
-            };
+        if let Ok(font) = FontRef::from_index(data, 0) {
             return Some(font.head().ok()?.units_per_em());
         }
         None
@@ -85,12 +83,13 @@ pub struct GlyphExtractionContext<'a> {
     pub data: &'a [u8],
     pub gid: u32,
     pub char_code: u32,
-    pub cid_to_gid_map: Option<&'a [u16]>,
+    pub cid_to_gid_map: Option<&'a BTreeMap<u32, u32>>,
     pub is_vertical: bool,
     pub unicode_fallback: Option<char>,
     pub is_japanese: bool,
     pub is_cid: bool,
     pub collection_index: u32,
+    pub is_fallback: bool,
 }
 
 impl SkrifaBridge {
@@ -100,16 +99,18 @@ impl SkrifaBridge {
         }
 
         let final_gid = ctx.gid;
+        let unicode = ctx.unicode_fallback;
 
-        // Normalize-at-Load ensures that ctx.data contains either the embedded font data
-        // or the resolved system fallback data. The renderer no longer performs heuristics.
         let path = self.try_extract_from_data(
             ctx.data,
+            ctx.font_id,
             final_gid,
             ctx.char_code,
             ctx.is_cid,
             ctx.collection_index,
-            ctx.unicode_fallback,
+            unicode,
+            ctx.is_fallback,
+            ctx.cid_to_gid_map,
         );
 
         if path.is_none() && !self.is_blank_char(ctx.unicode_fallback) {
@@ -136,50 +137,70 @@ impl SkrifaBridge {
     }
 
     fn try_extract_from_data(
-        &self,
+        &mut self,
         data: &[u8],
+        _font_id: u64,
         final_gid: u32,
-        char_code: u32,
+        _char_code: u32,
         is_cid: bool,
         collection_index: u32,
         unicode: Option<char>,
+        is_fallback: bool,
+        cid_to_gid_map: Option<&BTreeMap<u32, u32>>,
     ) -> Option<BezPath> {
         if data.is_empty() {
             return None;
         }
 
-        let font = match skrifa::raw::FontRef::from_index(data, collection_index) {
+        let font = match FontRef::from_index(data, collection_index) {
             Ok(f) => f,
-            Err(_e) => {
+            Err(e) => {
+                log::error!("[SKRIFA] Failed to parse font from data (size {}): {:?}", data.len(), e);
                 return None;
             }
         };
 
-        let gid = if is_cid {
-            skrifa::GlyphId::new(final_gid)
-        } else if let Some(u) = unicode
-            && !(u >= '\u{E000}' && u <= '\u{F8FF}')
-            && !(u >= '\u{F0000}' && u <= '\u{FFFFD}')
-        {
-            font.charmap().map(u).unwrap_or_else(|| {
-                font.charmap().map(char_code).unwrap_or_else(|| skrifa::GlyphId::new(final_gid))
-            })
-        } else {
-            font.charmap().map(char_code).unwrap_or_else(|| skrifa::GlyphId::new(final_gid))
-        };
+        let mut final_gid = GlyphId::new(final_gid as u32);
+
+        // Map character code to GID only if:
+        // 1. This is a system fallback font (where CID/GID mapping is irrelevant)
+        // 2. We hit GID 0 (.notdef) and want to try a rescue
+        if is_fallback || final_gid.to_u32() == 0 {
+            if let Some(u) = unicode {
+                if let Some(gid) = font.charmap().map(u) {
+                    final_gid = gid;
+                }
+            }
+        }
+
+        // 3. Last resort: If still GID 0 but we have a CIDToGIDMap, try manual mapping
+        if final_gid.to_u32() == 0 && is_cid && let Some(map) = cid_to_gid_map {
+            if let Some(&gid) = map.get(&_char_code) {
+                final_gid = GlyphId::new(gid as u32);
+            }
+        }
+
+        if final_gid.to_u32() == 0 {
+            return None;
+        }
 
         let upem = font.head().map(|h| h.units_per_em()).unwrap_or(1000);
         let mut pen = KurboPen::new();
-        let Some(glyph) = font.outline_glyphs().get(gid) else {
+        let Some(glyph) = font.outline_glyphs().get(final_gid) else {
+            log::warn!("[SKRIFA] GID {} not found in font outlines", final_gid);
             return None;
         };
-        if let Err(_e) = glyph
-            .draw(DrawSettings::unhinted(Size::new(upem as f32), LocationRef::default()), &mut pen)
-        {
+        if let Err(e) = glyph.draw(
+            DrawSettings::unhinted(SkrifaSize::new(upem as f32), LocationRef::default()),
+            &mut pen,
+        ) {
+            log::warn!("[SKRIFA] Drawing failed for GID {}: {:?}", final_gid, e);
             return None;
         }
         let path = pen.finish();
-        if path.segments().count() == 0 && !self.is_blank_char(unicode) {
+        let seg_count = path.segments().count();
+        if seg_count == 0 && !self.is_blank_char(unicode) {
+            log::warn!("[SKRIFA] GID {} resulted in 0 segments", final_gid);
             return None;
         }
         Some(path)

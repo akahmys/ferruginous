@@ -9,13 +9,16 @@ repository.workspace = true
 
 [dependencies]
 ferruginous-core = { path = "../ferruginous-core" }
+log.workspace = true
 vello.workspace = true
+peniko = "0.6"
 kurbo.workspace = true
 wgpu = "=28.0.0"
 serde.workspace = true
 thiserror.workspace = true
 bytes.workspace = true
 skrifa.workspace = true
+read-fonts.workspace = true
 ttf-parser.workspace = true
 image.workspace = true
 pollster = "0.4"

@@ -22,7 +22,7 @@ Three critical issues were identified through deep-dive diagnostic hex audits:
 -   **Production Quality Requires Rituals**: The "Ritual" of running Clippy (`-D warnings`) and full tests revealed latent issues in the SDK (missing docs, stylistic lints) that were resolved as part of this phase closure, improving overall project health.
 
 ## Verification Result
-Successfully rendered Page 3 of `nihonkokukenpou.pdf` with **100% accurate Kanji mapping** (e.g., 「九」「際」「紛」「争」).
+Successfully rendered Page 3 of `constitution.pdf` with **100% accurate Kanji mapping** (e.g., 「九」「際」「紛」「争」).
 
 ---
 *Status: Closed. CJK Support Integrated into Production Baseline.*

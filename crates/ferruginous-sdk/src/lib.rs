@@ -10,6 +10,7 @@ use bytes::Bytes;
 pub use ferruginous_core::{
     Document, Handle, Object, Page, PdfArena, PdfError, PdfName, PdfResult, SublimatedData,
 };
+pub use ferruginous_core::font::{GlyphTrace, TraceContext};
 pub use ferruginous_render::{FallbackFontType, VelloBackend};
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -206,9 +207,10 @@ impl PdfDocument {
         }
 
         if let Some(cah) = self.inner.catalog_handle() {
-            let mut catalog = arena.get_dict(cah).unwrap_or_default();
+            let cadh = self.inner.resolve_to_dict(cah)?;
+            let mut catalog = arena.get_dict(cadh).unwrap_or_default();
             catalog.insert(arena.name("DSS"), Object::Dictionary(arena.alloc_dict(dss_dict)));
-            arena.set_dict(cah, catalog);
+            arena.set_dict(cadh, catalog);
         }
 
         Ok(())
@@ -217,6 +219,11 @@ impl PdfDocument {
     /// Returns the total number of pages.
     pub fn page_count(&self) -> PdfResult<usize> {
         self.inner.page_count()
+    }
+
+    /// Retrieves a specific page by its 0-based index.
+    pub fn get_page(&self, index: usize) -> PdfResult<ferruginous_core::document::page::Page<'_>> {
+        self.inner.get_page(index)
     }
 
     /// Sets the system fallback fonts for the document (Phase 4).
@@ -288,7 +295,8 @@ impl PdfDocument {
         let count = source.page_count()?;
         for i in 0..count {
             let source_page = source.inner.get_page(i)?;
-            let cloned = cloner.clone_object(&Object::Dictionary(source_page.dict_handle()))?;
+            let source_dh = source.inner.resolve_to_dict(source_page.obj_handle())?;
+            let cloned = cloner.clone_object(&Object::Dictionary(source_dh))?;
             if let Object::Dictionary(dh) = cloned {
                 let mut dict = target_arena.get_dict(dh).unwrap_or_default();
                 dict.insert(parent_key, Object::Reference(pages_root_h));
@@ -307,10 +315,11 @@ impl PdfDocument {
         cloner: &mut cloning::ObjectCloner,
     ) {
         if let Some(cah) = source.inner.catalog_handle()
+            && let Ok(cadh) = source.inner.resolve_to_dict(cah)
             && let Some(af_obj) = source
                 .inner
                 .arena()
-                .get_dict(cah)
+                .get_dict(cadh)
                 .and_then(|c| c.get(&target_arena.name("AcroForm")).cloned())
             && let Some(afh) = af_obj.resolve(source.inner.arena()).as_dict_handle()
             && let Some(af_dict) = source.inner.arena().get_dict(afh)
@@ -334,10 +343,11 @@ impl PdfDocument {
         cloner: &mut cloning::ObjectCloner,
     ) {
         if let Some(cah) = source.inner.catalog_handle()
+            && let Ok(cadh) = source.inner.resolve_to_dict(cah)
             && let Some(outlines_obj) = source
                 .inner
                 .arena()
-                .get_dict(cah)
+                .get_dict(cadh)
                 .and_then(|c| c.get(&target_arena.name("Outlines")).cloned())
             && let Some(oh) = outlines_obj.resolve(source.inner.arena()).as_dict_handle()
             && let Some(o_dict) = source.inner.arena().get_dict(oh)
@@ -482,10 +492,10 @@ impl PdfDocument {
 
         for i in indices {
             let source_page = self.inner.get_page(i)?;
-            let source_page_handle = source_page.dict_handle();
+            let source_dh = self.inner.resolve_to_dict(source_page.obj_handle())?;
 
             let cloned_page_dict_obj =
-                cloner.clone_object(&Object::Dictionary(source_page_handle))?;
+                cloner.clone_object(&Object::Dictionary(source_dh))?;
 
             if let Object::Dictionary(dh) = cloned_page_dict_obj {
                 let mut dict = target_arena.get_dict(dh).unwrap_or_default();
@@ -557,10 +567,10 @@ impl PdfDocument {
             // Further stripping: remove Metadata entry from catalog
             let root_handle = *self.inner.root_handle();
             let arena = self.inner.arena();
-            if let Some(Object::Dictionary(dh)) = arena.get_object(root_handle) {
-                let mut dict = arena.get_dict(dh).unwrap_or_default();
+            if let Ok(rdh) = self.inner.resolve_to_dict(root_handle) {
+                let mut dict = arena.get_dict(rdh).unwrap_or_default();
                 dict.remove(&arena.name("Metadata"));
-                arena.set_dict(dh, dict);
+                arena.set_dict(rdh, dict);
             }
         }
 
@@ -721,7 +731,7 @@ impl PdfDocument {
         widget_h: Handle<Object>,
     ) -> PdfResult<()> {
         let page = self.inner.get_page(page_idx)?;
-        let dh = page.dict_handle();
+        let dh = self.inner.resolve_to_dict(page.obj_handle())?;
         let mut dict =
             arena.get_dict(dh).ok_or_else(|| PdfError::Other("Page dict missing".into()))?;
 
@@ -799,53 +809,48 @@ impl PdfDocument {
     ) -> PdfResult<()> {
         let page = self.inner.get_page(index)?;
         let arena = self.inner.arena();
-        let res_obj = page.resolve_attribute("Resources").unwrap_or_else(|| {
-            Object::Dictionary(arena.alloc_dict(std::collections::BTreeMap::new()))
-        });
+        let res_dh = page.resources_handle();
+        let mut interpreter = Interpreter::new(backend, &self.inner, res_dh, initial_transform);
+        let contents_obj = page
+            .resolve_attribute("Contents")
+            .ok_or_else(|| PdfError::Other("Page has no contents".into()))?;
 
-        if let Object::Dictionary(rh) = res_obj {
-            let mut interpreter = Interpreter::new(backend, &self.inner, rh, initial_transform);
-            let contents_obj = page
-                .resolve_attribute("Contents")
-                .ok_or_else(|| PdfError::Other("Page has no contents".into()))?;
+        let resolved_contents = match contents_obj {
+            Object::Reference(h) => self.inner.resolve(&h)?,
+            _ => contents_obj,
+        };
 
-            let resolved_contents = match contents_obj {
-                Object::Reference(h) => self.inner.resolve(&h)?,
-                _ => contents_obj,
-            };
-
-            match resolved_contents {
-                Object::Stream(dh, ref data) => {
-                    if let SublimatedData::Commands(cmds) = &**data {
-                        interpreter.execute_commands(cmds)?;
-                    } else {
-                        let data =
-                            self.inner.decode_stream(&Object::Stream(dh, (*data).clone()))?;
-                        interpreter.execute_raw(&data)?;
-                    }
+        match resolved_contents {
+            Object::Stream(dh, ref data) => {
+                if let SublimatedData::Commands(cmds) = &**data {
+                    interpreter.execute_commands(cmds)?;
+                } else {
+                    let data =
+                        self.inner.decode_stream(&Object::Stream(dh, (*data).clone()))?;
+                    interpreter.execute_raw(&data)?;
                 }
-                Object::Array(ah) => {
-                    if let Some(arr) = arena.get_array(ah) {
-                        for item in arr {
-                            let resolved_item = match item {
-                                Object::Reference(h) => self.inner.resolve(&h)?,
-                                _ => item,
-                            };
-                            if let Object::Stream(_, ref data) = resolved_item {
-                                if let SublimatedData::Commands(cmds) = &**data {
-                                    interpreter.execute_commands(cmds)?;
-                                } else {
-                                    let data = self.inner.decode_stream(&resolved_item)?;
-                                    interpreter.execute_raw(&data)?;
-                                }
+            }
+            Object::Array(ah) => {
+                if let Some(arr) = arena.get_array(ah) {
+                    for item in arr {
+                        let resolved_item = match item {
+                            Object::Reference(h) => self.inner.resolve(&h)?,
+                            _ => item,
+                        };
+                        if let Object::Stream(_, ref data) = resolved_item {
+                            if let SublimatedData::Commands(cmds) = &**data {
+                                interpreter.execute_commands(cmds)?;
+                            } else {
+                                let data = self.inner.decode_stream(&resolved_item)?;
+                                interpreter.execute_raw(&data)?;
                             }
                         }
                     }
                 }
-                _ => {
-                    let data = self.inner.decode_stream(&resolved_contents)?;
-                    interpreter.execute_raw(&data)?;
-                }
+            }
+            _ => {
+                let data = self.inner.decode_stream(&resolved_contents)?;
+                interpreter.execute_raw(&data)?;
             }
         }
         Ok(())
@@ -897,11 +902,11 @@ impl PdfDocument {
     /// Sets the rotation of a specific page.
     pub fn set_page_rotation(&mut self, index: usize, angle: i32) -> PdfResult<()> {
         let page = self.inner.get_page(index)?;
-        let dh = page.dict_handle();
+        let page_dh = self.inner.resolve_to_dict(page.obj_handle())?;
         let arena = self.inner.arena();
-        let mut dict = arena.get_dict(dh).unwrap_or_default();
+        let mut dict = arena.get_dict(page_dh).unwrap_or_default();
         dict.insert(arena.name("Rotate"), Object::Integer(i64::from(angle)));
-        arena.set_dict(dh, dict);
+        arena.set_dict(page_dh, dict);
         Ok(())
     }
 

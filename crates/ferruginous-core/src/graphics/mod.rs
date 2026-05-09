@@ -13,6 +13,41 @@ pub enum Color {
     Gray(f64),
     Rgb(f64, f64, f64),
     Cmyk(f64, f64, f64, f64),
+    /// Lab color space (Placeholder)
+    Lab(f64, f64, f64),
+}
+
+impl Color {
+    /// Normalizes the color to sRGB.
+    pub fn to_rgb(&self) -> Self {
+        match *self {
+            Color::Rgb(..) => *self,
+            Color::Gray(g) => Color::Rgb(g, g, g),
+            Color::Cmyk(c, m, y, k) => {
+                let r = (1.0 - c) * (1.0 - k);
+                let g = (1.0 - m) * (1.0 - k);
+                let b = (1.0 - y) * (1.0 - k);
+                Color::Rgb(r, g, b)
+            }
+            Color::Lab(l, a, b) => {
+                // STUB: Simple conversion (D65 white point)
+                // In a real implementation, this would use a proper ICC profile or Lab-to-RGB matrix.
+                let y = (l + 16.0) / 116.0;
+                let x = a / 500.0 + y;
+                let z = y - b / 200.0;
+
+                let x = 0.95047 * if x > 0.008856 { x.powi(3) } else { (x - 16.0 / 116.0) / 7.787 };
+                let y = 1.00000 * if y > 0.008856 { y.powi(3) } else { (y - 16.0 / 116.0) / 7.787 };
+                let z = 1.08883 * if z > 0.008856 { z.powi(3) } else { (z - 16.0 / 116.0) / 7.787 };
+
+                let r = x * 3.2406 + y * -1.5372 + z * -0.4986;
+                let g = x * -0.9689 + y * 1.8758 + z * 0.0415;
+                let b = x * 0.0557 + y * -0.2040 + z * 1.0570;
+
+                Color::Rgb(r.clamp(0.0, 1.0), g.clamp(0.0, 1.0), b.clamp(0.0, 1.0))
+            }
+        }
+    }
 }
 
 /// Standard PDF Blend Modes (ISO 32000-2 Table 141)
@@ -101,6 +136,11 @@ impl Matrix {
         let res = self.as_affine() * other.as_affine();
         Self(res.as_coeffs())
     }
+
+    pub fn pre_concat(&self, other: &Self) -> Self {
+        let res = other.as_affine() * self.as_affine();
+        Self(res.as_coeffs())
+    }
 }
 
 /// A simple axis-aligned rectangle (ISO 32000-2 Clause 7.3.6)
@@ -125,6 +165,14 @@ impl Rect {
             y2: self.y2.max(other.y2),
         }
     }
+
+    pub fn width(&self) -> f64 {
+        (self.x2 - self.x1).abs()
+    }
+
+    pub fn height(&self) -> f64 {
+        (self.y2 - self.y1).abs()
+    }
 }
 
 /// Graphics State Parameters (ISO 32000-2 Table 52)
@@ -139,6 +187,7 @@ pub struct GraphicsState {
     pub blend_mode: BlendMode,
     pub text_state: TextState,
     pub clip_count: usize,
+    pub smask: Option<crate::object::Object>,
 }
 
 impl Default for GraphicsState {
@@ -159,6 +208,7 @@ impl Default for GraphicsState {
             blend_mode: BlendMode::Normal,
             text_state: TextState::default(),
             clip_count: 0,
+            smask: None,
         }
     }
 }

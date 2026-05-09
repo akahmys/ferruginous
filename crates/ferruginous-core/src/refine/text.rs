@@ -123,7 +123,7 @@ fn restructure_string(input: &[u8], font: &FontResource) -> Vec<u8> {
 
         let original_bytes = &input[i..i + consumed];
 
-        if let Some(u) = unicode_opt {
+        if let Some(u) = unicode_opt.as_ref() {
             let mut mapped = false;
 
             // Only try to map if it's NOT already Identity-H or if we have a clear unified map.
@@ -136,11 +136,13 @@ fn restructure_string(input: &[u8], font: &FontResource) -> Vec<u8> {
                     if let Some(c) = u.chars().next()
                         && let Some(gid) = font.unicode_to_gid.get(&c)
                     {
-                        result.push((gid >> 8) as u8);
-                        result.push((gid & 0xFF) as u8);
+                        let high = (gid >> 8) as u8;
+                        let low = (gid & 0xFF) as u8;
+                        result.push(high);
+                        result.push(low);
                         mapped = true;
                     }
-                } else if let Some(code) = font.unified_map.get(&u) {
+                } else if let Some(code) = font.unified_map.get(u) {
                     result.push(*code as u8);
                     mapped = true;
                 }
@@ -183,7 +185,7 @@ pub fn recover_string(bytes: &[u8]) -> String {
     } else {
         // HEURISTIC: Check for naked UTF-16BE (common in some non-compliant PDFs)
         // Look for alternating null bytes (0x00 0xXX or 0xXX 0x00)
-        if bytes.len() >= 4 && (bytes.len() % 2 == 0) {
+        if bytes.len() >= 4 && bytes.len().is_multiple_of(2) {
             let be_zeros = bytes.chunks_exact(2).filter(|c| c[0] == 0).count();
             let le_zeros = bytes.chunks_exact(2).filter(|c| c[1] == 0).count();
             let total_chunks = bytes.len() / 2;
@@ -223,8 +225,8 @@ pub fn recover_string(bytes: &[u8]) -> String {
         }
 
         // Fallback to PDFDocEncoding (which is mostly ISO-8859-1 / ASCII)
-        let res = String::from_utf8_lossy(bytes).to_string();
-        res
+        
+        String::from_utf8_lossy(bytes).to_string()
     }
 }
 

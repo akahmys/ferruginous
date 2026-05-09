@@ -52,4 +52,7 @@ p256 = { version = "0.13", features = ["ecdsa", "pkcs8"] }
 signature = "2.2"
 sha1 = "0.10"
 
+[features]
+debug-tools = []
+
 [dev-dependencies]

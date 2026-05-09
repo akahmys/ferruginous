@@ -38,3 +38,8 @@ To maintain execution momentum during session finalization:
 
 - **Rule**: If a structured edit tool (`replace_file_content` or `multi_replace_file_content`) fails more than once on a non-source-code artifact (e.g., `task.md`, `walkthrough.md`, `implementation_plan.md`), the AI SHOULD immediately switch to `write_to_file` with `Overwrite: true`.
 - **Purpose**: Prevent turn-token waste and session stalls caused by minor formatting mismatches in descriptive documentation.
+
+## 7. Pre-Implementation Review
+- **Rule**: All implementation tasks, regardless of whether they are new features or corrective fixes, require explicit user approval of the Implementation Plan before any code is modified.
+- **Purpose**: Maintain human-in-the-loop oversight and ensure strategic alignment.
+- **Compliance Criterion**: Evidence of user approval must be noted in the session history before execution of implementation tasks.

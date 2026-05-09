@@ -57,10 +57,6 @@ impl CMap {
     }
 
     pub fn map(&self, code: &[u8]) -> Option<String> {
-        self.map_internal(code)
-    }
-
-    fn map_internal(&self, code: &[u8]) -> Option<String> {
         if let Some(s) = self.mappings.get(code) {
             return Some(s.clone());
         }
@@ -144,16 +140,21 @@ impl CMap {
     pub fn decode_next_with_min_len(
         &self,
         data: &[u8],
-        _min_len: Option<usize>,
+        min_len: Option<usize>,
     ) -> Option<(usize, Option<String>)> {
         if data.is_empty() {
             return None;
         }
 
+        let target_len = min_len.unwrap_or(1);
+
         // 1. Try codespace ranges first to determine valid length
         if !self.codespace_ranges.is_empty() {
             for (start, end) in &self.codespace_ranges {
                 let len = start.len();
+                if len < target_len {
+                    continue;
+                }
                 if data.len() >= len {
                     let segment = &data[0..len];
                     if segment >= start.as_slice() && segment <= end.as_slice() {
@@ -161,25 +162,14 @@ impl CMap {
                         if let Some(m) = self.map(segment) {
                             return Some((len, Some(m)));
                         }
-                        // If no mapping found in codespace, don't return Some(None)
-                        // This allows falling back to other decoders/heuristics.
                     }
-                }
-            }
-        } else {
-            // 2. Fallback: Try 1-byte then 2-byte mapping if no codespace defined (common in ToUnicode)
-            if let Some(m) = self.map(&data[..1]) {
-                return Some((1, Some(m)));
-            }
-            if data.len() >= 2 {
-                if let Some(m) = self.map(&data[..2]) {
-                    return Some((2, Some(m)));
                 }
             }
         }
 
-        // 2. Fallback to direct mapping search if no ranges defined (legacy)
-        for len in [4, 3, 2, 1] {
+        // 2. Fallback to direct mapping search if no ranges defined or found
+        // Start from longest possible (up to 4) down to target_min_len
+        for len in (target_len..=4).rev() {
             if data.len() >= len {
                 let segment = &data[0..len];
                 if let Some(m) = self.map(segment) {
@@ -188,7 +178,13 @@ impl CMap {
             }
         }
 
-        // 3. Last resort: Return None to allow heuristics to try.
+        // 3. Last resort: if we have a target_len and it's 2, but we didn't find anything,
+        // we should probably still consume target_len bytes and return None to indicate unmapped.
+        if let Some(tl) = min_len
+            && data.len() >= tl {
+                return Some((tl, None));
+            }
+
         None
     }
 
@@ -342,14 +338,17 @@ fn handle_cmap_token(
     depth: usize,
 ) -> usize {
     match tokens[i] {
-        b"usecmap" => handle_usecmap(cmap, mappings, mappings_cid, tokens, i, depth),
-        b"/CMapName" => handle_cmap_name(cmap, tokens, i),
-        b"/WMode" => handle_wmode(cmap, tokens, i),
         b"begincodespacerange" => handle_codespacerange(cmap, tokens, i),
         b"beginbfchar" => handle_bfchar(cmap, mappings, tokens, i),
         b"beginbfrange" => handle_bfrange(cmap, mappings, tokens, i),
         b"begincidchar" => handle_cidchar(mappings_cid, tokens, i),
         b"begincidrange" => handle_cidrange(cmap, mappings_cid, tokens, i),
+        b"/CMapName" => handle_cmap_name(cmap, tokens, i),
+        b"/WMode" => handle_wmode(cmap, tokens, i),
+        b"usecmap" => {
+            handle_usecmap(cmap, mappings, mappings_cid, tokens, i, depth);
+            i + 1
+        }
         _ => i + 1,
     }
 }
@@ -416,7 +415,7 @@ fn handle_codespacerange(cmap: &mut CMap, tokens: &[&[u8]], i: usize) -> usize {
 }
 
 fn handle_bfchar(
-    cmap: &CMap,
+    _cmap: &CMap,
     mappings: &mut BTreeMap<Vec<u8>, String>,
     tokens: &[&[u8]],
     i: usize,
@@ -434,7 +433,7 @@ fn handle_bfchar(
 
             // NORMALIZATION: If key is shorter than expected codespace, pad it (Legacy Distiller case)
             if src.len() == 1
-                && cmap.codespace_ranges.iter().any(|(s, _): &(Vec<u8>, Vec<u8>)| s.len() == 2)
+                && _cmap.codespace_ranges.iter().any(|(s, _): &(Vec<u8>, Vec<u8>)| s.len() == 2)
             {
                 src.insert(0, 0);
             }
@@ -483,9 +482,9 @@ fn process_bfrange_entry(
         s_raw.insert(0, 0);
         e_raw.insert(0, 0);
     }
+    let (s_val, e_val) = (vec_to_u32(&s_raw), vec_to_u32(&e_raw));
 
     if dst_base.starts_with(b"<") || dst_base.starts_with(b"(") {
-        let (s_val, e_val) = (vec_to_u32(&s_raw), vec_to_u32(&e_raw));
         let mut u_val = vec_to_u32(&parse_cmap_bytes(dst_base));
         if e_val - s_val > 100 {
             cmap.bf_ranges.push(CMapRange {

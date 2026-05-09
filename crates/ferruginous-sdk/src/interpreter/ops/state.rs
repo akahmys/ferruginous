@@ -1,5 +1,5 @@
 use crate::interpreter::Interpreter;
-use ferruginous_core::{Matrix, Object, PdfName, PdfResult};
+use ferruginous_core::{FromPdfObject, Matrix, Object, PdfName, PdfResult};
 
 impl Interpreter<'_> {
     #[allow(clippy::many_single_char_names)]
@@ -32,9 +32,9 @@ impl Interpreter<'_> {
                 let c = self.pop_f64()?;
                 let b = self.pop_f64()?;
                 let a = self.pop_f64()?;
-                let m = Matrix::new(a, b, c, d, e, f);
-                self.state.ctm = self.state.ctm.concat(&m);
-                self.backend.transform(m.as_affine());
+                let mat = Matrix::new(a, b, c, d, e, f);
+                self.state.ctm = self.state.ctm.concat(&mat);
+                self.backend.set_transform(self.state.ctm.as_affine());
             }
             "gs" => {
                 let name = self.pop_name()?;
@@ -54,6 +54,8 @@ impl Interpreter<'_> {
         {
             let ca_key = self.doc.arena().intern_name(PdfName::new("ca"));
             let ca_up_key = self.doc.arena().intern_name(PdfName::new("CA"));
+            let bm_key = self.doc.arena().intern_name(PdfName::new("BM"));
+            let smask_key = self.doc.arena().intern_name(PdfName::new("SMask"));
 
             if let Some(ca) = gs_dict.get(&ca_key).and_then(|o| o.as_f64()) {
                 self.state.fill_alpha = ca;
@@ -62,6 +64,26 @@ impl Interpreter<'_> {
             if let Some(ca_up) = gs_dict.get(&ca_up_key).and_then(|o| o.as_f64()) {
                 self.state.stroke_alpha = ca_up;
                 self.backend.set_stroke_alpha(ca_up);
+            }
+            if let Some(bm_obj) = gs_dict.get(&bm_key) {
+                if let Ok(bm) = ferruginous_core::graphics::BlendMode::from_pdf_object(bm_obj.resolve(self.doc.arena()), self.doc.arena()) {
+                    self.state.blend_mode = bm;
+                    // FIXME: Tell backend about blend mode
+                }
+            }
+            if let Some(smask_obj) = gs_dict.get(&smask_key) {
+                let resolved = smask_obj.resolve(self.doc.arena());
+                match resolved {
+                    Object::Name(n) => {
+                        if self.doc.arena().get_name(n).map(|nn| nn.as_str() == "None").unwrap_or(false) {
+                            self.state.smask = None;
+                        }
+                    }
+                    Object::Dictionary(_) => {
+                        self.state.smask = Some(resolved);
+                    }
+                    _ => {}
+                }
             }
         }
         Ok(())

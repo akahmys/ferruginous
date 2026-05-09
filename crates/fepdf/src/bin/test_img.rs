@@ -3,7 +3,7 @@ use ferruginous_sdk::PdfDocument;
 use std::fs;
 
 fn main() {
-    let data = fs::read("samples/nihonkokukenpou.pdf").expect("Failed to read sample PDF");
+    let data = fs::read("samples/constitution.pdf").expect("Failed to read sample PDF");
     let doc = PdfDocument::open(bytes::Bytes::from(data)).unwrap();
     let page_count = doc.page_count().unwrap();
 

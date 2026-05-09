@@ -18,3 +18,43 @@ During the processing of `UnicodeStandard-16.0.pdf`, we encountered **Adobe Acro
 ## Impact on Future Work
 - **Rule 18**: Any new ingestion logic must support this normalization phase.
 - **Acrobat as a Baseline**: Compliance tests MUST include a "Viewer Fidelity" check on Acrobat, as it is more pedantic than the specification itself.
+
+---
+
+# Lessons Learned: Handle Stability & PUA Invariance
+
+## Context
+During the optimization of font caching in `ferruginous-core`, we found that font resources were occasionally failing to resolve after a `ParallelRefinery` pass, despite no logical changes to the document structure.
+
+## Key Discovery
+1.  **RefCell Handle Churn**: While `PdfArena` object indices are stable, the `RefCell` handles for *Dictionaries* can change if the dictionary itself is re-allocated or refined.
+2.  **Authoritative Keys**: Caching mechanisms that use dictionary pointers/handles as keys are volatile. The only stable key for a resource is its top-level `Handle<Object>` (the indirect reference).
+3.  **PUA as Signal, not Noise**: In CJK (Japanese) CID-keyed fonts without `ToUnicode`, the `0xF0000` block is used to encode CID values. Traditional "PUA suppression" rules (designed to clean up garbage) will break CJK rendering if applied too aggressively.
+
+## Resolution
+- **Indexing Rule**: Always index resource caches by `Handle<Object>`. Never store transient `RefCell` handles in long-lived state.
+- **CJK Bypass**: Modified `resolve_gid` to explicitly allow PUA character codes when the font type is `CIDFontType0` or `CIDFontType2`.
+
+## Impact on Future Work
+- **Rule 19**: Audit all resource lookup tables (Images, XObjects) to ensure they follow the "Invariance of Handles" rule.
+- **Test Coverage**: Any character mapping change must be verified against at least one CJK document with vertical writing.
+
+---
+
+# Lessons Learned: Late-Binding & Structural Hardening
+
+## Context
+While implementing multi-pass structural remediation (UA-2 tagging), we discovered that high-level models like `Page` and `PdfCatalog` were occasionally holding "stale" dictionary handles. This occurred when one remediation pass updated a dictionary, causing its internal `DictHandle` (index) to change, which then invalidated the handles held by other modules.
+
+## Key Discovery
+1.  **Index Staleness**: Storing a `DictHandle` (an index into a `BTreeMap` in the arena) inside a persistent model like `Page` is a violation of structural stability. Any operation that modifies the arena's dictionary collection (refinement, compaction, or updates) can invalidate these indices.
+2.  **Normalization vs. Stability**: "Normalization-at-load" ensures the data is clean, but it does NOT guarantee that the *memory address* or *handle index* of that data will remain static throughout the document lifecycle.
+
+## Resolution: The "Late-Binding" Architecture
+- **Stable Modeling**: All core models (`Page`, `PdfCatalog`, `StructElement`) were refactored to hold only a `Handle<Object>` (the stable indirect reference).
+- **Just-in-Time Resolution**: Implemented a mandatory "Late-binding" pattern. Models now resolve their `Handle<Object>` to a concrete `DictHandle` only at the exact moment of access using `doc.resolve_to_dict(handle)`.
+- **Synergy with Normalization**: This architecture preserves the performance benefits of "normalization-at-load" (flattened structures, baked inheritance) while gaining the robustness of stable object references.
+
+## Impact on Future Work
+- **SDK-Wide Standard**: Late-binding is now the mandated pattern for all SDK-level structural manipulation.
+- **Refinery Safety**: The `ParallelRefinery` can now safely re-allocate and optimize dictionaries without risking dangling handles in the SDK layers.

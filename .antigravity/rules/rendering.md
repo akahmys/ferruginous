@@ -12,9 +12,10 @@ Design and implementation conventions for the Ferruginous rendering engine (Core
 - **Internal Sovereignty**: All internal logic (Interpreter, FontResource) must consistently use the **Positive Y = UP** coordinate system according to the PDF specification.
 - **Conversion Boundary**: Invert the coordinate system (Positive Y = DOWN) ONLY in the layer immediately before sending data to the rendering device (e.g., Vello). Do not flip signs in intermediate pipeline layers.
 
-## 3. Font Resource Inheritance
-- **Propagation Obligation**: Inheriting metadata (WMode, Encoding, ToUnicode) from a Type0 font to its CIDFont descendant is mandatory.
-- **Resource Loading**: Even when loading a CIDFont in isolation, initialization must always consider the parent context.
+## 3. Font Resource Normalization & Reconstruction
+- **Normalization-at-Reconstruction**: All font-specific ambiguities (e.g., Lying Identity, missing widths) MUST be resolved during the reconstruction phase. The resulting **Virtual OpenType (SFNT)** must function as the single source of truth for both paths and metrics.
+- **Propagation Obligation**: Inheriting metadata (WMode, Encoding, ToUnicode) from a Type0 font to its CIDFont descendant is mandatory during loading.
+- **Metrics Integrity**: Standalone CIDFonts MUST be parsed using CID metrics (`/W`), ensuring that inherited width maps are consistent between the Parent and Descendant resources.
 
 ## 4. CMap and Encoding Hygiene
 - **Isolation**: Each `FontResource` must have its own independent mapping table. "Rescue" logic (using common CMaps) is permitted only for clearly identified CJK fonts and must not have side effects (cache pollution).
@@ -22,7 +23,7 @@ Design and implementation conventions for the Ferruginous rendering engine (Core
 
 ## 5. Context Propagation Guard
 - **Rule**: Interpretation of document data MUST enforce type-level provision of a `Resolver` and `ResourceStack`.
-- **Purpose**: Eliminate runtime "Missing Resolver" or "Missing Resource" errors.
+- **Late-bound Initialization**: The `ResourceStack` MUST be initialized using late-bound resolution (e.g., `Page::resources_handle()`). Storing or passing `DictHandle` from previous passes for stack initialization is prohibited.
 - **Compliance Criterion**: Public high-level interpreters MUST NOT have default constructors that omit these dependencies.
 
 ## 6. High-Fidelity CJK Decoding

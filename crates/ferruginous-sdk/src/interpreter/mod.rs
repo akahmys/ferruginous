@@ -40,6 +40,10 @@ pub struct Interpreter<'a> {
     pub(crate) font_name_map: BTreeMap<Handle<Object>, String>,
     /// Index of the current operator in the content stream.
     pub op_index: usize,
+    /// Captured advance from d0/d1 operator during Type 3 glyph execution.
+    pub(crate) type3_advance: Option<(f64, f64)>,
+    /// Whether we are currently executing a Type 3 glyph stream.
+    pub(crate) in_type3_glyph: bool,
 }
 
 impl<'a> Interpreter<'a> {
@@ -57,6 +61,7 @@ impl<'a> Interpreter<'a> {
 
         backend.transform(initial_transform);
 
+
         Self {
             backend,
             doc,
@@ -72,6 +77,8 @@ impl<'a> Interpreter<'a> {
             defined_fonts: BTreeSet::new(),
             font_name_map: BTreeMap::new(),
             op_index: 0,
+            type3_advance: None,
+            in_type3_glyph: false,
         }
     }
 
@@ -82,6 +89,14 @@ impl<'a> Interpreter<'a> {
             .arena()
             .get_sublimated_data(stream_h)
             .ok_or_else(|| PdfError::Other("Not a stream object".into()))?;
+
+        // Type 3 fonts and complex Japanese CID fonts often contain operators 
+        // that are sensitive to raw stream ordering. We prefer raw execution 
+        // for these contexts to ensure rendering fidelity.
+        if self.in_type3_glyph {
+            let data = self.doc.arena().get_stream_bytes(&sublimated)?;
+            return self.execute_raw(&data);
+        }
 
         match *sublimated {
             ferruginous_core::object::SublimatedData::Commands(ref cmds) => {
@@ -111,6 +126,9 @@ impl<'a> Interpreter<'a> {
                     let op_str = op.clone();
 
                     let _ = parser.next_token()?; // Consume operator
+                    if self.in_type3_glyph {
+                        log::debug!("[TYPE3] op={}, stack={:?}", op_str, self.stack);
+                    }
                     self.op_index += 1;
                     self.execute_operator(&op_str)?;
                 }
@@ -123,12 +141,36 @@ impl<'a> Interpreter<'a> {
         Ok(())
     }
 
-    /// Executes a pre-parsed sequence of IR commands directly, bypassing tokenization.
-    pub fn execute_commands(&mut self, commands: &[Command]) -> PdfResult<()> {
-        for cmd in commands {
+    /// Executes a sequence of pre-sublimated commands.
+    pub fn execute_commands(&mut self, cmds: &[Command]) -> PdfResult<()> {
+        for cmd in cmds {
             self.execute_single_command(cmd)?;
         }
         Ok(())
+    }
+
+    pub(crate) fn push_real(&mut self, val: f64) {
+        self.stack.push(Object::Real(val));
+    }
+
+    pub(crate) fn push_integer(&mut self, val: i64) {
+        self.stack.push(Object::Integer(val));
+    }
+
+    pub(crate) fn push_name(&mut self, name: &str) {
+        let handle = self.doc.arena().intern_name(PdfName::new(name));
+        self.stack.push(Object::Name(handle));
+    }
+
+    pub(crate) fn push_affine(&mut self, m: &kurbo::Affine) {
+        for &coeff in &m.as_coeffs() {
+            self.push_real(coeff);
+        }
+    }
+
+    pub(crate) fn push_point(&mut self, p: kurbo::Point) {
+        self.push_real(p.x);
+        self.push_real(p.y);
     }
 
     fn execute_single_command(&mut self, cmd: &Command) -> PdfResult<()> {
@@ -158,6 +200,8 @@ impl<'a> Interpreter<'a> {
             | Command::SetHorizontalScaling(_)
             | Command::SetTextRenderMode(_)
             | Command::SetWritingMode(_)
+            | Command::SetTextLeading(_)
+            | Command::MoveToNextLine
             | Command::Type3SetMetrics { .. } => self.handle_text_command(cmd),
             Command::SetFillColor(_) | Command::SetStrokeColor(_) => self.handle_color_command(cmd),
             Command::DrawXObject(_)
@@ -173,10 +217,7 @@ impl<'a> Interpreter<'a> {
             Command::PushState => self.handle_state_operator("q"),
             Command::PopState => self.handle_state_operator("Q"),
             Command::Transform(m) => {
-                let c = m.as_coeffs();
-                for coeff in &c {
-                    self.stack.push(Object::Real(*coeff));
-                }
+                self.push_affine(m);
                 self.handle_state_operator("cm")
             }
             _ => Ok(()),
@@ -186,30 +227,25 @@ impl<'a> Interpreter<'a> {
     fn handle_path_command(&mut self, cmd: &Command) -> PdfResult<()> {
         match cmd {
             Command::MoveTo(p) => {
-                self.stack.push(Object::Real(p.x));
-                self.stack.push(Object::Real(p.y));
+                self.push_point(*p);
                 self.handle_path_operator("m")
             }
             Command::LineTo(p) => {
-                self.stack.push(Object::Real(p.x));
-                self.stack.push(Object::Real(p.y));
+                self.push_point(*p);
                 self.handle_path_operator("l")
             }
             Command::CurveTo(p1, p2, p3) => {
-                self.stack.push(Object::Real(p1.x));
-                self.stack.push(Object::Real(p1.y));
-                self.stack.push(Object::Real(p2.x));
-                self.stack.push(Object::Real(p2.y));
-                self.stack.push(Object::Real(p3.x));
-                self.stack.push(Object::Real(p3.y));
+                self.push_point(*p1);
+                self.push_point(*p2);
+                self.push_point(*p3);
                 self.handle_path_operator("c")
             }
             Command::ClosePath => self.handle_path_operator("h"),
             Command::Rect(r) => {
-                self.stack.push(Object::Real(r.origin().x));
-                self.stack.push(Object::Real(r.origin().y));
-                self.stack.push(Object::Real(r.width()));
-                self.stack.push(Object::Real(r.height()));
+                self.push_real(r.origin().x);
+                self.push_real(r.origin().y);
+                self.push_real(r.width());
+                self.push_real(r.height());
                 self.handle_path_operator("re")
             }
             Command::Clip(rule) => match rule {
@@ -268,6 +304,8 @@ impl<'a> Interpreter<'a> {
                 self.stack.push(Object::Name(name_h));
                 self.handle_xobject_operator()
             }
+            Command::BeginMarkedContent { .. } => Ok(()),
+            Command::EndMarkedContent => Ok(()),
             _ => Ok(()),
         }
     }
@@ -290,7 +328,28 @@ impl<'a> Interpreter<'a> {
             "Tj" | "TJ" | "'" | "\"" => self.handle_text_showing_operator(op)?,
             "Do" => self.handle_xobject_operator()?,
             "BMC" | "BDC" | "EMC" | "MP" | "DP" => self.handle_marked_content_operator(op)?,
-            _ => {}
+            "d0" => {
+                let wy = self.pop_f64()?;
+                let wx = self.pop_f64()?;
+                self.set_type3_metrics(wx, wy)?;
+            }
+            "d1" => {
+                let ury = self.pop_f64()?;
+                let urx = self.pop_f64()?;
+                let lly = self.pop_f64()?;
+                let llx = self.pop_f64()?;
+                let wy = self.pop_f64()?;
+                let wx = self.pop_f64()?;
+                self.set_type3_metrics_bbox(wx, wy, llx, lly, urx, ury)?;
+            }
+            "CS" | "cs" | "SCN" | "scn" | "sc" | "SC" | "J" | "j" | "w" | "M" | "d" | "i" => {
+                // Consume operands but do nothing (silent fallback for raw interpretation)
+            }
+            _ => {
+                if !op.is_empty() {
+                    log::warn!("Unknown or unhandled operator: {}", op);
+                }
+            }
         }
         self.stack.clear();
         Ok(())
@@ -345,12 +404,11 @@ impl<'a> Interpreter<'a> {
         let res_type_key = *res_type;
         let name_handle = self.doc.arena().intern_name(name.clone());
 
-        for res_handle in self.resource_stack.iter().rev() {
-            let h = *res_handle;
+        for &res_dh in self.resource_stack.iter().rev() {
             let dict = self
                 .doc
                 .arena()
-                .get_dict(h)
+                .get_dict(res_dh)
                 .ok_or_else(|| PdfError::Other("Invalid resource dict handle".into()))?;
 
             if let Some(entry) =
@@ -366,13 +424,6 @@ impl<'a> Interpreter<'a> {
                 }
             }
         }
-
-        let type_name = self
-            .doc
-            .arena()
-            .get_name(res_type_key)
-            .map(|n| n.as_str().to_string())
-            .unwrap_or_default();
-        Err(PdfError::Other(format!("Resource not found: {} /{}", type_name, name.as_str()).into()))
+        Err(PdfError::Other(format!("Resource not found: {:?} {}", res_type, name.as_str()).into()))
     }
 }

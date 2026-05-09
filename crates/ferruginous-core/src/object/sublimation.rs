@@ -7,8 +7,9 @@
 use kurbo::{Affine, Point};
 use serde::{Deserialize, Serialize};
 pub mod parser;
+pub mod resurrection;
 use crate::graphics::{Color, StrokeStyle, TextRenderingMode, WindingRule};
-use crate::object::{Object, PdfName};
+use crate::object::PdfName;
 
 /// A high-level, normalized drawing command.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -77,6 +78,10 @@ pub enum Command {
     SetTextRenderMode(TextRenderingMode),
     /// Set the text rise (Ts).
     SetTextRise(f64),
+    /// Set the text leading (TL).
+    SetTextLeading(f64),
+    /// Move to the start of the next line (T*).
+    MoveToNextLine,
     /// Set the writing mode (0 for horizontal, 1 for vertical).
     SetWritingMode(u8),
 
@@ -96,7 +101,7 @@ pub enum Command {
     /// Begin a marked-content sequence (BMC, BDC).
     BeginMarkedContent {
         tag: PdfName,
-        properties: Option<String>, // Tag name or resource name
+        properties: Option<IrObject>, // Tag name or resource name or inline dict
     },
     /// End a marked-content sequence (EMC).
     EndMarkedContent,
@@ -113,7 +118,21 @@ pub enum Command {
     },
 
     /// A raw PDF operator that could not be sublimated.
-    RawOperator { name: String, operands: Vec<Object> },
+    RawOperator { name: String, operands: Vec<IrObject> },
+}
+
+/// A self-contained, serializable representation of a PDF object within the IR.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum IrObject {
+    Boolean(bool),
+    Integer(i64),
+    Real(f64),
+    String(bytes::Bytes),
+    Hex(bytes::Bytes),
+    Name(String),
+    Array(Vec<IrObject>),
+    Dictionary(std::collections::BTreeMap<String, IrObject>),
+    Null,
 }
 
 /// An item in a text array (TJ).
