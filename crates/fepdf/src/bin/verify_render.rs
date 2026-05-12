@@ -26,8 +26,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let img_expected = image::open(&args.expected)?;
     let img_actual = image::open(&args.actual)?;
 
-    if (img_expected.width() as i32 - img_actual.width() as i32).abs() > 2 || 
-       (img_expected.height() as i32 - img_actual.height() as i32).abs() > 2 {
+    if (img_expected.width() as i32 - img_actual.width() as i32).abs() > 2
+        || (img_expected.height() as i32 - img_actual.height() as i32).abs() > 2
+    {
         println!("FAIL: Image dimensions differ too much.");
         println!("  Expected: {:?}", img_expected.dimensions());
         println!("  Actual:   {:?}", img_actual.dimensions());
@@ -59,7 +60,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Difference: {:.2}% ({} / {} pixels)", diff_ratio * 100.0, diff_pixels, total_pixels);
 
     if diff_ratio > args.tolerance {
-        println!("FAIL: Images differ by more than tolerance ({:.2}% > {:.2}%)", diff_ratio * 100.0, args.tolerance * 100.0);
+        println!(
+            "FAIL: Images differ by more than tolerance ({:.2}% > {:.2}%)",
+            diff_ratio * 100.0,
+            args.tolerance * 100.0
+        );
         std::process::exit(1);
     }
 

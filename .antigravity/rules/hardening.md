@@ -1,83 +1,81 @@
 # Reliable Rust-15 (RR-15) Rulebook
 
 > [!IMPORTANT]
-> A set of 15 items optimized from NASA's "Power of 10" for Rust. These are "Absolute Safety Constraints" for Ferruginous.
+> A set of 15 immutable safety constraints derived from NASA's "Power of 10," optimized for the Rust ownership model. These rules form the mandatory "Hardening Layer" of Ferruginous.
 
 ---
 
-## 1. Function Size Limit
+## 1. Function Complexity & Scale
 - **Rule**: Limit effective logic to 50 lines.
-- **Purpose**: Maintain precision of the borrow checker and reduce mental load.
-- **Compliance Criterion**: All functions (excluding test code) must stay within 50 effective logic lines. Blank lines, doc-comments, and single-line attribute macros (like `#[test]`) are excluded from this count.
+- **Purpose**: Maintain precision of the borrow checker and minimize cognitive load.
+- **Compliance**: All functions MUST stay within 50 effective logic lines. Blank lines and doc-comments are excluded.
 
-## 2. No-Panic Principle
-- **Rule**: Prohibit `unwrap()`, `expect()`, and `panic!()` for input-driven errors.
-- **Purpose**: Eradicate runtime crashes caused by malformed or unexpected data.
-- **Compliance Criterion**: In production code, there must be no paths that cause forced termination due to unrecoverable errors originating from external inputs. Use `Result` for all data-dependent operations.
+## 2. No-Panic Invariance
+- **Rule**: Strict prohibition of `unwrap()`, `expect()`, and `panic!()` for input-dependent paths.
+- **Purpose**: Eradicate runtime crashes originating from malformed or malicious data.
+- **Compliance**: All data-dependent operations MUST utilize the `Result` type. Production code must have zero termination paths triggered by external inputs.
 
-## 3. Safety Isolation
-- **Rule**: Total prohibition of `unsafe` blocks in the core layers (SDK/Render).
-- **Purpose**: Maintain 100% compiler-guaranteed memory safety.
-- **Compliance Criterion**: The `unsafe` keyword count must be zero in `crates/ferruginous-sdk` and `crates/ferruginous-render`.
+## 3. Memory Safety Isolation
+- **Rule**: Total prohibition of `unsafe` blocks in core engine layers.
+- **Purpose**: Guarantee 100% compiler-verified memory safety.
+- **Compliance**: The `unsafe` keyword count MUST be zero in `crates/ferruginous-sdk` and `crates/ferruginous-render`.
 
-## 4. Flat Nesting
-- **Rule**: Use the `?` operator for early returns. Nest `if` statements no more than 2 levels deep.
-- **Purpose**: Simplify logical paths and improve readability.
-- **Compliance Criterion**: Control flow must be linear and flat, with deep indentation eliminated.
+## 4. Logical Path Flattening
+- **Rule**: Prefer early returns (`?` operator). Limit control-flow nesting to 2 levels.
+- **Purpose**: Prevent "Indentation Hell" and simplify code auditability.
+- **Compliance**: Control flow MUST be linear and transparent.
 
-## 5. Exhaustive Match
-- **Rule**: Prohibit wildcards (`_`) in `match` statements.
-- **Purpose**: Induce compiler errors when enums are extended.
-- **Compliance Criterion**: In all `match` expressions, the compiler must be able to detect the addition of future variants.
+## 5. Exhaustive Pattern Matching
+- **Rule**: Prohibit wildcard patterns (`_`) in `match` statements.
+- **Purpose**: Leverage the compiler to enforce handling of future enum variants.
+- **Compliance**: All `match` expressions MUST explicitly account for all known variants.
 
-## 6. Stack Safety (Unbounded Recursion Guard)
-- **Rule**: Prohibit unbounded function recursion. Use an explicit stack (`Vec`) for structural traversals.
-- **Purpose**: Eradicate stack overflows and ensure compliance with ISO 32000-2 resource limits.
-- **Compliance Criterion**: Any function traversing tree-like structures (e.g., page trees or object graphs) MUST either:
-    1. Use an explicit `Vec`-based stack for iterative traversal.
-    2. Use a `depth: usize` parameter with a hard-coded safety limit (e.g., 32 or 64).
+## 6. Stack Overflow Prevention
+- **Rule**: Prohibit unbounded recursion. Use explicit heap-allocated stacks.
+- **Purpose**: Eradicate stack exhaustion in deep PDF object graphs.
+- **Compliance**: Any tree traversal MUST use an explicit `Vec`-based stack or a hard-coded depth limit (e.g., 64).
 
-## 7. Pure State Management
-- **Rule**: Prohibit global mutable state (`static mut`).
-- **Purpose**: Eliminate data races and execution order dependencies.
-- **Compliance Criterion**: Shared state must be managed solely through explicit synchronization primitives (e.g., `Arc<Mutex<T>>`) or ownership transfers.
+## 7. Mutable State Prohibition
+- **Rule**: Total prohibition of global mutable state (`static mut`).
+- **Purpose**: Eliminate data races and non-deterministic execution order.
+- **Compliance**: Shared state MUST be managed via synchronization primitives or strict ownership transfer.
 
-## 8. Type-Level Safety
-- **Rule**: Leverage enums to make invalid states physically unrepresentable.
-- **Purpose**: Minimize runtime conditional branches (assertions).
-- **Compliance Criterion**: Guard clauses checking for "impossible states" must be minimized in the codebase.
+## 8. Type-Level Correctness
+- **Rule**: Utilize enums to make invalid states physically unrepresentable.
+- **Purpose**: Shift runtime assertions to compile-time proofs.
+- **Compliance**: Minimize runtime "Guard Clauses" by enforcing invariants through the type system.
 
-## 9. Simplified Design
-- **Rule**: Owned-First approach. Eliminate unnecessary lifetime references.
-- **Purpose**: Prevent design rigidity caused by "lifetime pollution."
-- **Compliance Criterion**: Structs and function signatures must be self-contained, avoiding complex lifetime annotations.
+## 9. Ownership-First Design
+- **Rule**: Prefer owned data over complex lifetime references.
+- **Purpose**: Prevent "Lifetime Pollution" and architectural rigidity.
+- **Compliance**: Structs and signatures SHOULD be self-contained whenever possible.
 
-## 10. Deterministic Engineering
-- **Rule**: Prohibit non-deterministic `HashMap`/`HashSet`. Use `BTreeMap`/`BTreeSet`.
-- **Purpose**: Guarantee bit-perfect output for the same input.
-- **Compliance Criterion**: Internal iteration order must be fixed, eliminating non-deterministic factors like hash salts.
+## 10. Bit-Perfect Determinism
+- **Rule**: Prohibit non-deterministic collections (`HashMap`/`HashSet`). Use `BTreeMap`/`BTreeSet`.
+- **Purpose**: Guarantee identical output bytes for identical input bytes.
+- **Compliance**: Internal iteration order MUST be fixed.
 
-## 11. Explicit Error Handling
-- **Rule**: Prohibit `String` errors. Use concrete Enum types and the `thiserror` crate.
-- **Purpose**: Ensure error traceability and programmatic recoverability.
-- **Compliance Criterion**: All errors must be defined as domain-specific Enum types. Complex variants MUST use **named fields** (struct-like variants) rather than tuples. All string-based payloads MUST use `std::borrow::Cow<'static, str>` to allow zero-copy static messages and efficient dynamic context. Errors must capture mandatory contextual enrichment (e.g., `pos` for parsing, `context` for ingestion).
+## 11. Domain-Specific Error Handling
+- **Rule**: Prohibit `String` errors. Use concrete Enum types via `thiserror`.
+- **Purpose**: Ensure programmatic recoverability and precise traceability.
+- **Compliance**: Every failure mode MUST be a named enum variant with mandatory context (e.g., `pos`, `handle`).
 
-## 12. Bound & Invariant Enforcement
-- **Rule**: Enforce resource limits (e.g. 256MB input) and explicitly state logical invariants using `assert!`.
-- **Core Invariant: Handle Invariance**: The codebase MUST strictly distinguish between **Stable Handles** (`Handle<Object>`) and **Volatile Handles** (`DictHandle`, `ArrayHandle`). Models that survive refinery passes must never store volatile handles.
-- **Compliance Criterion**: Resource limits must be enforced by types or constants. `assert!` MUST ONLY be used for "impossible" logical states (e.g. violation of handle invariance) that indicate a bug in the code.
+## 12. Invariant Enforcement
+- **Rule**: Distinguish between **Stable Handles** (`Handle<Object>`) and **Volatile Handles**.
+- **Purpose**: Prevent dangling references after refinery passes.
+- **Compliance**: Persistent models MUST NOT store volatile handles. Use `assert!` ONLY for internal logical impossibilities.
 
-## 13. Zero Silent Swallowing
-- **Rule**: Prohibit discarding errors via `.ok()` or `_`. Always log or propagate.
-- **Purpose**: Early surfacing of latent bugs.
-- **Compliance Criterion**: All `Result` types must be evaluated; not a single error should be ignored. This rule extends to the **Interpretation layer**: un-sublimated `RawOperator` instances must not be silently bypassed; they must either be fully integrated into the IR or trigger an explicit `WARN` or `ERROR` if unhandled.
+## 13. Zero-Swallowing Policy
+- **Rule**: Prohibit silent error discarding (`.ok()`, `_`).
+- **Purpose**: Early detection of latent bugs.
+- **Compliance**: Every `Result` MUST be evaluated. Unhandled `RawOperator` instances MUST trigger explicit warnings.
 
-## 14. Strict Scoping
-- **Rule**: Define variables just before they are used. Limit scopes (`{}`).
-- **Purpose**: Minimize the lifetime of variables and prevent misinterpretation.
-- **Compliance Criterion**: Variable lifetimes must be the minimum necessary, with short distances between initialization and use.
+## 14. Locality of Declaration
+- **Rule**: Declare variables immediately before use. Minimize scope.
+- **Purpose**: Reduce variable "life-span" and prevent accidental reuse.
+- **Compliance**: Keep initialization and consumption distances minimal.
 
-## 15. No Magic Cloning
-- **Rule**: Prohibit `.clone()` for the purpose of avoiding borrow checker errors. Rethink ownership structure instead.
-- **Purpose**: Visualize inefficient memory allocations and design distortions.
-- **Compliance Criterion**: Use of `.clone()` must be limited to cases where "logical duplication of data" is truly required.
+## 15. Explicit Allocation
+- **Rule**: Prohibit `.clone()` for the sole purpose of satisfying the borrow checker.
+- **Purpose**: Visualize and minimize inefficient memory overhead.
+- **Compliance**: Use `.clone()` ONLY when logical duplication of data is truly intended.

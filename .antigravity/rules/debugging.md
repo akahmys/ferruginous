@@ -1,28 +1,27 @@
 # Debugging Conventions
 
-Conventions for troubleshooting and the debugging thought process in Ferruginous.
+Standard procedures for rapid troubleshooting and mathematical verification of rendering anomalies.
 
-## 1. Hypothesis-Driven Loop
-- **Rapid Hypothesis**: When facing an issue, immediately form multiple hypotheses about the cause. Do not fixate on a single possibility.
-- **Fast Disproval**: Use logs and probes to determine if a hypothesis is correct or incorrect within minutes. Rapidly discarding false hypotheses is the fastest path to truth.
+## 1. Hypothesis-Driven Verification
+- **Rapid Branching**: Formulate multiple causes (Hypotheses) immediately. Do not fixate on a single path.
+- **Fast Disproval**: Prioritize probes that can disprove a hypothesis within minutes. Discarding false leads is the fastest route to the root cause.
 
 ## 2. Visual Sincerity
-- **Literal Interpretation**: Do not dismiss rendering anomalies (overlaps, offsets, incorrect order) as "mere glitches." Interpret them as mathematical facts (inverted signs, scaling mismatches, etc.).
-- **Visual Clues**: Visual output is the primary debugging evidence. Infer which layer (CMap, Matrix, Scale) is at fault from the visual result.
+- **Anomalies as Evidence**: Never dismiss rendering glitches as "artifacts." Treat them as mathematical proofs of sign errors, scaling mismatches, or state-machine failures.
+- **Clue Inference**: Infer the faulty layer (CMap, Matrix, or Buffer) directly from visual evidence (e.g., mojibake implies CMap, offsets imply Matrix).
 
-## 3. State vs. Delta Visualization
-- **Cumulative State**: Log the accumulated state (e.g., `advance_offset`) rather than just individual incremental values (Delta).
-- **Temporal Tracking**: Track state changes over time to identify exactly when inconsistency (resets, reversals) occurs.
+## 3. State Visualization
+- **Cumulative State**: Always log the **Total Accumulated State** (e.g., current CTM, total advance) rather than incremental deltas to identify drift over time.
+- **Inconsistency Tracking**: Monitor state resets and reversals to pinpoint the exact operator causing state corruption.
 
 ## 4. Differential Debugging
-- **Reference Comparison**: Compare a "working case" against a "broken case" using identical conditions and log formats.
-- **Minimization**: Identify the minimal reproduction case (specific character, font size, or rendering mode) to eliminate noise.
+- **Ground Truth Comparison**: Compare "Working" vs. "Broken" cases using identical conditions and log formats.
+- **Reproduction Minimization**: Isolate the smallest possible reproduction case (single character, specific font size) to eliminate noise.
 
-## 6. Physical vs. Semantic Boundary
-- **Layer Isolation**: Distinguish between "Physical" issues (decryption, stream decompression, parsing) and "Semantic" issues (refinement, resource mapping, font selection).
-- **Physical Indicators**: Corrupt stream errors, "Unexpected token" panics, or truncated object streams indicate a Physical failure.
-- **Semantic Indicators**: "Invisible" text (correct positions but missing glyphs), garbled strings (mojibake), or incorrect font faces suggest a failure in the Refinery or Resource discovery phase.
+## 5. Layer Isolation
+- **Physical vs. Semantic**:
+    - **Physical**: Decryption, stream decompression, parsing. (Symptoms: Corrupt bytes, syntax errors).
+    - **Semantic**: Refinement, resource mapping, sublimation. (Symptoms: Invisible text, incorrect font face, mojibake).
 
-## 7. Layer-Aware Diagnostics
-- **Avoid Double-Sublimation**: When writing diagnostic scripts, ensure you are inspecting the correct layer. Using high-level APIs (like `Document::load`) can apply buggy sublimation logic during loading, masking the very issues being investigated.
-- **Raw Verification**: Always verify low-level rendering bugs against the raw byte stream and raw PDF tokens (via `lopdf` or raw `Lexer`) to determine the ground truth before trusting the Intermediate Representation (IR).
+## 6. Raw Data Verification
+- **Ground Truth**: Always verify rendering bugs against the **Raw PDF Byte Stream** before trusting the Intermediate Representation (IR). Buggy sublimation logic can mask the underlying issue.

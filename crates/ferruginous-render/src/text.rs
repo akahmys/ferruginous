@@ -65,6 +65,12 @@ pub struct SkrifaBridge {
     glyph_cache: BTreeMap<(u64, u32, u32), BezPath>,
 }
 
+impl Default for SkrifaBridge {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SkrifaBridge {
     pub fn new() -> Self {
         Self { glyph_cache: BTreeMap::new() }
@@ -117,25 +123,26 @@ impl SkrifaBridge {
             // Optional: log as debug in a real app
         }
 
-        if let Some(ref p) = path {
-            if p.segments().count() > 0 {
-                self.glyph_cache.insert((ctx.font_id, ctx.gid, ctx.char_code), p.clone());
-            }
+        if let Some(ref p) = path
+            && p.segments().count() > 0
+        {
+            self.glyph_cache.insert((ctx.font_id, ctx.gid, ctx.char_code), p.clone());
         }
         path
     }
 
     fn is_blank_char(&self, u: Option<char>) -> bool {
-        match u {
+        matches!(
+            u,
             Some('\u{0020}')
-            | Some('\u{00A0}')
-            | Some('\u{2000}'..='\u{200F}')
-            | Some('\u{3000}')
-            | Some('\u{202F}') => true,
-            _ => false,
-        }
+                | Some('\u{00A0}')
+                | Some('\u{2000}'..='\u{200F}')
+                | Some('\u{3000}')
+                | Some('\u{202F}')
+        )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn try_extract_from_data(
         &mut self,
         data: &[u8],
@@ -148,6 +155,10 @@ impl SkrifaBridge {
         is_fallback: bool,
         cid_to_gid_map: Option<&BTreeMap<u32, u32>>,
     ) -> Option<BezPath> {
+        if self.is_blank_char(unicode) {
+            return Some(BezPath::new());
+        }
+
         if data.is_empty() {
             return None;
         }
@@ -155,32 +166,40 @@ impl SkrifaBridge {
         let font = match FontRef::from_index(data, collection_index) {
             Ok(f) => f,
             Err(e) => {
-                log::error!("[SKRIFA] Failed to parse font from data (size {}): {:?}", data.len(), e);
+                log::error!(
+                    "[SKRIFA] Failed to parse font from data (size {}): {:?}",
+                    data.len(),
+                    e
+                );
                 return None;
             }
         };
 
-        let mut final_gid = GlyphId::new(final_gid as u32);
+        let mut final_gid = GlyphId::new(final_gid);
 
         // Map character code to GID only if:
         // 1. This is a system fallback font (where CID/GID mapping is irrelevant)
         // 2. We hit GID 0 (.notdef) and want to try a rescue
-        if is_fallback || final_gid.to_u32() == 0 {
-            if let Some(u) = unicode {
-                if let Some(gid) = font.charmap().map(u) {
-                    final_gid = gid;
-                }
-            }
+        if (is_fallback || final_gid.to_u32() == 0)
+            && let Some(u) = unicode
+            && let Some(gid) = font.charmap().map(u)
+        {
+            final_gid = gid;
         }
 
         // 3. Last resort: If still GID 0 but we have a CIDToGIDMap, try manual mapping
-        if final_gid.to_u32() == 0 && is_cid && let Some(map) = cid_to_gid_map {
-            if let Some(&gid) = map.get(&_char_code) {
-                final_gid = GlyphId::new(gid as u32);
-            }
+        if final_gid.to_u32() == 0
+            && is_cid
+            && let Some(map) = cid_to_gid_map
+            && let Some(&gid) = map.get(&_char_code)
+        {
+            final_gid = GlyphId::new(gid);
         }
 
         if final_gid.to_u32() == 0 {
+            if self.is_blank_char(unicode) {
+                return Some(kurbo::BezPath::new());
+            }
             return None;
         }
 

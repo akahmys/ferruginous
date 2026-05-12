@@ -4,8 +4,8 @@
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use ferruginous_core::handle::Handle;
 use ferruginous_core::Object;
+use ferruginous_core::handle::Handle;
 use ferruginous_sdk::{PdfDocument, PdfStandard, TraceContext};
 use inquire::Confirm;
 use std::path::PathBuf;
@@ -729,9 +729,10 @@ fn handle_debug_dump(
                         .map(|n| n.as_str().to_string())
                         .unwrap_or_else(|| format!("Unknown_{:?}", k));
                     let val_str = match v {
-                        ferruginous_core::Object::Name(vh) => {
-                            arena.get_name(*vh).map(|n| format!("Name(/{})", n.as_str())).unwrap_or_else(|| format!("{:?}", v))
-                        }
+                        ferruginous_core::Object::Name(vh) => arena
+                            .get_name(*vh)
+                            .map(|n| format!("Name(/{})", n.as_str()))
+                            .unwrap_or_else(|| format!("{:?}", v)),
                         _ => format!("{:?}", v),
                     };
                     println!("  /{} -> {}", name, val_str);
@@ -808,7 +809,7 @@ fn handle_debug_stats(input: PathBuf, ingest: IngestionArgs) -> Result<()> {
     for font in doc.inner().fonts() {
         println!("  Handle {:>3}: {:<30} ({})", font.handle.index(), font.name, font.font_type);
     }
-    
+
     Ok(())
 }
 
@@ -1187,7 +1188,7 @@ fn handle_extract_font(
     let obj_id = obj_num;
     let handle = Handle::new(obj_id);
     let obj = doc.inner().arena().get_object(handle);
-    
+
     let font_resource = if let Some(Object::Dictionary(dh)) = obj {
         if let Some(dict) = doc.inner().arena().get_dict(dh) {
             ferruginous_core::font::FontResource::load(&dict, doc.inner()).ok()
@@ -1254,7 +1255,7 @@ fn handle_debug_trace_glyph(
 
         let mut ctx = TraceContext::new();
         // Priority 1 in resolve_gid uses the Unicode hint.
-        // We find the CID match only for informational purposes here, 
+        // We find the CID match only for informational purposes here,
         // as resolve_gid will prioritize the Unicode hint anyway.
         let cid_match = font.unicode_to_gid.get(&target_char).copied();
         if let Some(cid) = cid_match {
@@ -1290,10 +1291,13 @@ fn parse_unicode(s: &str) -> Result<char> {
     if s.starts_with("U+") || s.starts_with("u+") {
         let hex = &s[2..];
         let val = u32::from_str_radix(hex, 16).with_context(|| "Invalid hex code")?;
-        std::char::from_u32(val).ok_or_else(|| anyhow::anyhow!("Invalid unicode scalar: U+{:04X}", val))
+        std::char::from_u32(val)
+            .ok_or_else(|| anyhow::anyhow!("Invalid unicode scalar: U+{:04X}", val))
     } else if s.chars().count() == 1 {
         Ok(s.chars().next().unwrap())
     } else {
-        anyhow::bail!("Invalid unicode input. Use single char or U+XXXX format (e.g. 'A' or 'U+6C38')")
+        anyhow::bail!(
+            "Invalid unicode input. Use single char or U+XXXX format (e.g. 'A' or 'U+6C38')"
+        )
     }
 }

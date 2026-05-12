@@ -6,6 +6,23 @@ use ferruginous_core::{Document, Handle, Object, PdfError, PdfName, PdfResult};
 use ferruginous_render::{RenderBackend, path::PathBuilder};
 use std::collections::{BTreeMap, BTreeSet};
 
+/// Captured advance and BBox from d0/d1 operator.
+#[derive(Debug, Clone, Copy)]
+pub struct Type3Advance {
+    /// Horizontal advance.
+    pub wx: f64,
+    /// Vertical advance.
+    pub wy: f64,
+    /// Lower-left X coordinate of the bounding box.
+    pub llx: f64,
+    /// Lower-left Y coordinate of the bounding box.
+    pub lly: f64,
+    /// Upper-right X coordinate of the bounding box.
+    pub urx: f64,
+    /// Upper-right Y coordinate of the bounding box.
+    pub ury: f64,
+}
+
 /// Font resolution and rescue logic.
 pub mod font;
 /// Operators handling submodules.
@@ -40,10 +57,12 @@ pub struct Interpreter<'a> {
     pub(crate) font_name_map: BTreeMap<Handle<Object>, String>,
     /// Index of the current operator in the content stream.
     pub op_index: usize,
-    /// Captured advance from d0/d1 operator during Type 3 glyph execution.
-    pub(crate) type3_advance: Option<(f64, f64)>,
+    /// Captured advance and BBox from d0/d1 operator during Type 3 glyph execution.
+    pub(crate) type3_advance: Option<Type3Advance>,
     /// Whether we are currently executing a Type 3 glyph stream.
     pub(crate) in_type3_glyph: bool,
+    /// The initial transformation matrix (device transform).
+    pub(crate) initial_transform: kurbo::Affine,
 }
 
 impl<'a> Interpreter<'a> {
@@ -55,12 +74,11 @@ impl<'a> Interpreter<'a> {
         initial_transform: kurbo::Affine,
     ) -> Self {
         let state = GraphicsState {
-            ctm: ferruginous_core::graphics::Matrix(initial_transform.as_coeffs()),
+            ctm: ferruginous_core::graphics::Matrix::default(),
             ..GraphicsState::default()
         };
 
-        backend.transform(initial_transform);
-
+        backend.set_transform(initial_transform);
 
         Self {
             backend,
@@ -79,7 +97,13 @@ impl<'a> Interpreter<'a> {
             op_index: 0,
             type3_advance: None,
             in_type3_glyph: false,
+            initial_transform,
         }
+    }
+
+    pub(crate) fn update_backend_transform(&mut self) {
+        let total = self.initial_transform * self.state.ctm.as_affine();
+        self.backend.set_transform(total);
     }
 
     /// Executes a content stream by parsing and processing its operators.
@@ -90,8 +114,8 @@ impl<'a> Interpreter<'a> {
             .get_sublimated_data(stream_h)
             .ok_or_else(|| PdfError::Other("Not a stream object".into()))?;
 
-        // Type 3 fonts and complex Japanese CID fonts often contain operators 
-        // that are sensitive to raw stream ordering. We prefer raw execution 
+        // Type 3 fonts and complex Japanese CID fonts often contain operators
+        // that are sensitive to raw stream ordering. We prefer raw execution
         // for these contexts to ensure rendering fidelity.
         if self.in_type3_glyph {
             let data = self.doc.arena().get_stream_bytes(&sublimated)?;
@@ -99,7 +123,7 @@ impl<'a> Interpreter<'a> {
         }
 
         match *sublimated {
-            ferruginous_core::object::SublimatedData::Commands(ref cmds) => {
+            ferruginous_core::object::SublimatedData::Commands { items: ref cmds, .. } => {
                 self.execute_commands(cmds)
             }
             _ => {
@@ -304,8 +328,36 @@ impl<'a> Interpreter<'a> {
                 self.stack.push(Object::Name(name_h));
                 self.handle_xobject_operator()
             }
-            Command::BeginMarkedContent { .. } => Ok(()),
-            Command::EndMarkedContent => Ok(()),
+            Command::BeginMarkedContent { .. } | Command::EndMarkedContent => Ok(()),
+            Command::RawOperator { name, operands } => {
+                fn ir_to_refined(ir: &ferruginous_core::object::sublimation::IrObject) -> ferruginous_core::refine::RefinedObject {
+                    use ferruginous_core::object::sublimation::IrObject;
+                    use ferruginous_core::refine::RefinedObject;
+                    match ir {
+                        IrObject::Boolean(b) => RefinedObject::Boolean(*b),
+                        IrObject::Integer(i) => RefinedObject::Integer(*i),
+                        IrObject::Real(f) => RefinedObject::Real(*f),
+                        IrObject::String(b) => RefinedObject::String(b.clone()),
+                        IrObject::Hex(b) => RefinedObject::Hex(b.clone()),
+                        IrObject::Name(n) => RefinedObject::Name(ferruginous_core::PdfName::new(n)),
+                        IrObject::Array(a) => RefinedObject::Array(a.iter().map(ir_to_refined).collect()),
+                        IrObject::Dictionary(d) => {
+                            let mut map = std::collections::BTreeMap::new();
+                            for (k, v) in d {
+                                map.insert(ferruginous_core::PdfName::new(k), ir_to_refined(v));
+                            }
+                            RefinedObject::Dictionary(map)
+                        }
+                        IrObject::Null => RefinedObject::Null,
+                    }
+                }
+
+                for op in operands {
+                    let refined = ir_to_refined(op);
+                    self.stack.push(ferruginous_core::commit_to_arena(self.doc.arena(), refined, 0));
+                }
+                self.execute_operator(name)
+            }
             _ => Ok(()),
         }
     }
@@ -347,7 +399,7 @@ impl<'a> Interpreter<'a> {
             }
             _ => {
                 if !op.is_empty() {
-                    log::warn!("Unknown or unhandled operator: {}", op);
+                    log::warn!("Unknown or unhandled operator: {op}");
                 }
             }
         }

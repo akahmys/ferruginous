@@ -1,30 +1,19 @@
 # Discovery Protocol (DP-01)
 
-This protocol defines the standard procedure for exploring the Ferruginous codebase using semantic search and static analysis.
+Standard procedure for exploring the Ferruginous codebase using conceptual and mechanical analysis.
 
 ## 1. Search Hierarchy
-When exploring the codebase to understand a feature or investigate a bug, the following hierarchy MUST be followed:
+1.  **Conceptual Discovery (`ccc search`)**: Use semantic vector search for high-level exploration of concepts (e.g., "font reconstruction," "handle stability").
+2.  **Identifier Pinpointing (`grep_search`)**: Use literal search for specific constants, trait names, or error variants identified in Phase 1.
+3.  **AST Verification (`view_file`)**: Directly inspect the implementation to verify logical flow and borrow-checker constraints.
 
-1.  **Semantic Search (`ccc`)**: Use `ccc search "<query>"` for high-level discovery and to find conceptually related code (e.g., "font mapping," "refinement depth").
-2.  **Greplike Search (`grep_search`)**: Use literal grep for pinpointing specific identifiers, trait names, or error strings identified by semantic search.
-3.  **AST Exploration (`view_file`)**: Read the implementation files directly to verify structural details and logic.
+## 2. Mechanical Accuracy Guard
+To prevent execution failures and preserve turn efficiency, the AI MUST adhere to these mechanical constraints:
 
-## 2. Maintaining the Index
-- The `cocoindex-code` daemon is responsible for background indexing.
-- If search results seem stale or if significant structural changes have been made (e.g., massive file moves), manually run `ccc index` to synchronize the vector database.
-- Use `ccc doctor` to verify embedding engine health if search results return empty or error out.
+- **Literal Matching**: `TargetContent` for file edits MUST be a 100% exact character-for-character copy of the source file.
+- **Sanitization**: Line numbers and diagnostic prefixes from tools MUST be stripped before creating a patch.
+- **Whitespace Fidelity**: Trailing spaces and indentation MUST be preserved exactly to avoid breaking the tool's matching logic.
 
-## 3. Reporting Findings
-When reporting discovery results to the user or recording them in the `implementation_plan.md`:
-- Indicate if semantic search was used to discover a pattern.
-- Record any conceptual links found that were not obvious from file names alone.
-
----
-
-## 4. Tool Precision Guard (Mechanical Accuracy)
-
-To prevent execution failures and save user turn tokens, the AI MUST adhere to the following mechanical rules:
-
-- **Literal Matching**: When using `replace_file_content` or `multi_replace_file_content`, the `TargetContent` MUST be a literal, exact copy of the file content.
-- **Line Number Stripping**: Any line numbers prefixed by the `view_file` tool MUST be explicitly removed from the `TargetContent`.
-- **Whitespace Fidelity**: Invisible characters, including trailing spaces and specific newline sequences, MUST be verified character-by-character to ensure a 1:1 match.
+## 3. Findings Externalization
+- Discoveries made via semantic search MUST be recorded in the `implementation_plan.md` to bridge the gap between "concept" and "code."
+- Non-obvious conceptual links found during discovery must be formalized as comments or documentation updates.

@@ -13,9 +13,10 @@ Design and implementation conventions for the Ferruginous rendering engine (Core
 - **Conversion Boundary**: Invert the coordinate system (Positive Y = DOWN) ONLY in the layer immediately before sending data to the rendering device (e.g., Vello). Do not flip signs in intermediate pipeline layers.
 
 ## 3. Font Resource Normalization & Reconstruction
-- **Normalization-at-Reconstruction**: All font-specific ambiguities (e.g., Lying Identity, missing widths) MUST be resolved during the reconstruction phase. The resulting **Virtual OpenType (SFNT)** must function as the single source of truth for both paths and metrics.
-- **Propagation Obligation**: Inheriting metadata (WMode, Encoding, ToUnicode) from a Type0 font to its CIDFont descendant is mandatory during loading.
-- **Metrics Integrity**: Standalone CIDFonts MUST be parsed using CID metrics (`/W`), ensuring that inherited width maps are consistent between the Parent and Descendant resources.
+- **Normalization-at-Reconstruction**: All font-specific ambiguities (e.g., "Lying Identity," missing widths) MUST be resolved during the reconstruction phase. The resulting **Virtual OpenType (SFNT)** binary serves as the absolute single source of truth.
+- **Propagation Obligation**: Mandatory inheritance of metadata (WMode, Encoding, ToUnicode) from Type 0 parents to CIDFont descendants during ingestion.
+- **Metrics Integrity**: CIDFonts MUST be parsed using CID-specific metrics (`/W`), ensuring consistency between parent and descendant resources.
+- **Path Integrity & Termination**: The `EndPath` (`n`) operator is critical for graphics state isolation. Discarding `n` during sublimation leads to "Path Leakage," where previous construction paths (e.g. clipping rectangles) are incorrectly painted by subsequent fill/stroke operators.
 
 ## 4. CMap and Encoding Hygiene
 - **Isolation**: Each `FontResource` must have its own independent mapping table. "Rescue" logic (using common CMaps) is permitted only for clearly identified CJK fonts and must not have side effects (cache pollution).

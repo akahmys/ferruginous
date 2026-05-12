@@ -212,22 +212,13 @@ impl PdfArena {
             let handle = Handle::new(i);
             if let Some(Object::Stream(dh, data_arc)) = self.get_object(handle) {
                 // If it's already structured, skip
-                if matches!(&*data_arc, SublimatedData::Commands(_) | SublimatedData::Image { .. })
+                if matches!(&*data_arc, SublimatedData::Commands { .. } | SublimatedData::Image { .. })
                 {
                     continue;
                 }
 
                 // Determine if it's a content stream
-                let is_content = if let Some(dict) = self.get_dict(dh) {
-                    let subtype: Option<String> = dict
-                        .get(&self.name("Subtype"))
-                        .and_then(|o| o.resolve(self).as_name())
-                        .and_then(|n| self.get_name(n))
-                        .map(|n| n.as_str().to_string());
-                    subtype.is_none() || subtype.as_deref() == Some("Form")
-                } else {
-                    false
-                };
+                let is_content = Object::Stream(dh, data_arc.clone()).is_likely_content_stream(self);
 
                 // Get raw bytes (decompressing if it was Compressed)
                 let raw_bytes = self.get_stream_bytes(&data_arc)?;
@@ -388,7 +379,7 @@ impl PdfArena {
                     .map_err(|e| crate::PdfError::Other(e.to_string().into()))?;
                 Ok(bytes::Bytes::from(decoded))
             }
-            crate::object::SublimatedData::Commands(cmds) => {
+            crate::object::SublimatedData::Commands { items: cmds } => {
                 let mut output = Vec::new();
                 for cmd in cmds {
                     output.extend_from_slice(format!("{:?}\n", cmd).as_bytes());

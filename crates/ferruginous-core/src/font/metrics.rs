@@ -1,7 +1,7 @@
-use std::collections::BTreeMap;
 use crate::arena::PdfArena;
-use crate::object::{Object, PdfName};
 use crate::handle::Handle;
+use crate::object::{Object, PdfName};
+use std::collections::BTreeMap;
 
 /// Container for font horizontal and vertical metrics.
 #[derive(Debug, Clone)]
@@ -27,17 +27,12 @@ impl Default for FontMetrics {
 }
 impl FontMetrics {
     /// Parses CID-keyed font metrics from a CIDFont dictionary (W and DW).
-    pub fn parse_cid(
-        df_dict: &BTreeMap<Handle<PdfName>, Object>,
-        arena: &PdfArena,
-    ) -> Self {
-        let mut metrics = Self {
-            default_width: 1000.0,
-            ..Self::default()
-        };
-        
+    pub fn parse_cid(df_dict: &BTreeMap<Handle<PdfName>, Object>, arena: &PdfArena) -> Self {
+        let mut metrics = Self { default_width: 1000.0, ..Self::default() };
+
         if let Some(dw_obj) = df_dict.get(&arena.name("DW")) {
-            metrics.default_width = Object::resolve(dw_obj, arena).as_f64().unwrap_or(1000.0) as f32;
+            metrics.default_width =
+                Object::resolve(dw_obj, arena).as_f64().unwrap_or(1000.0) as f32;
         }
 
         if let Some(Object::Array(wah)) =
@@ -51,14 +46,16 @@ impl FontMetrics {
                 if let Object::Array(iah) = next_obj {
                     if let Some(i_arr) = arena.get_array(iah) {
                         for (idx, w_obj) in i_arr.iter().enumerate() {
-                            let w_val: f32 = Object::resolve(w_obj, arena).as_f64().unwrap_or(1000.0) as f32;
+                            let w_val: f32 =
+                                Object::resolve(w_obj, arena).as_f64().unwrap_or(1000.0) as f32;
                             metrics.widths.insert(first_cid + idx as u32, w_val);
                         }
                     }
                     i += 2;
                 } else {
                     let last_cid = next_obj.as_integer().unwrap_or(0) as u32;
-                    let w_val: f32 = Object::resolve(&w_arr[i + 2], arena).as_f64().unwrap_or(1000.0) as f32;
+                    let w_val: f32 =
+                        Object::resolve(&w_arr[i + 2], arena).as_f64().unwrap_or(1000.0) as f32;
                     for cid in first_cid..=last_cid {
                         metrics.widths.insert(cid, w_val);
                     }
@@ -66,7 +63,7 @@ impl FontMetrics {
                 }
             }
         }
-        
+
         metrics.v_widths = Self::parse_v2(df_dict, arena, metrics.default_width);
         metrics
     }
@@ -92,19 +89,25 @@ impl FontMetrics {
             if let Object::Array(iah) = next_obj {
                 if let Some(i_arr) = arena.get_array(iah) {
                     for (idx, chunk) in i_arr.chunks_exact(3).enumerate() {
-                        let w1_y = Object::resolve(&chunk[0], arena).as_f64().unwrap_or(-1000.0) as f32;
-                        let v_x = Object::resolve(&chunk[1], arena).as_f64().unwrap_or(default_w as f64 / 2.0)
+                        let w1_y =
+                            Object::resolve(&chunk[0], arena).as_f64().unwrap_or(-1000.0) as f32;
+                        let v_x = Object::resolve(&chunk[1], arena)
+                            .as_f64()
+                            .unwrap_or(default_w as f64 / 2.0)
                             as f32;
-                        let v_y = Object::resolve(&chunk[2], arena).as_f64().unwrap_or(880.0) as f32;
+                        let v_y =
+                            Object::resolve(&chunk[2], arena).as_f64().unwrap_or(880.0) as f32;
                         v_widths.insert(first_cid + idx as u32, (w1_y, v_x, v_y));
                     }
                 }
                 i += 2;
             } else {
                 let last_cid = next_obj.as_integer().unwrap_or(0) as u32;
-                let w1_y = Object::resolve(&w2_arr[i + 2], arena).as_f64().unwrap_or(-1000.0) as f32;
-                let v_x =
-                    Object::resolve(&w2_arr[i + 3], arena).as_f64().unwrap_or(default_w as f64 / 2.0) as f32;
+                let w1_y =
+                    Object::resolve(&w2_arr[i + 2], arena).as_f64().unwrap_or(-1000.0) as f32;
+                let v_x = Object::resolve(&w2_arr[i + 3], arena)
+                    .as_f64()
+                    .unwrap_or(default_w as f64 / 2.0) as f32;
                 let v_y = Object::resolve(&w2_arr[i + 4], arena).as_f64().unwrap_or(880.0) as f32;
                 for cid in first_cid..=last_cid {
                     v_widths.insert(cid, (w1_y, v_x, v_y));
@@ -116,10 +119,7 @@ impl FontMetrics {
     }
 
     /// Parses standard horizontal metrics (FirstChar, LastChar, Widths).
-    pub fn parse_standard(
-        dict: &BTreeMap<Handle<PdfName>, Object>,
-        arena: &PdfArena,
-    ) -> Self {
+    pub fn parse_standard(dict: &BTreeMap<Handle<PdfName>, Object>, arena: &PdfArena) -> Self {
         let mut metrics = Self {
             first: dict
                 .get(&arena.name("FirstChar"))
@@ -132,7 +132,8 @@ impl FontMetrics {
             ..Default::default()
         };
 
-        if let Some(Object::Array(ah)) = dict.get(&arena.name("Widths")).map(|o: &Object| Object::resolve(o, arena))
+        if let Some(Object::Array(ah)) =
+            dict.get(&arena.name("Widths")).map(|o: &Object| Object::resolve(o, arena))
             && let Some(arr) = arena.get_array(ah)
         {
             for (idx, w) in arr.iter().enumerate() {
@@ -146,10 +147,7 @@ impl FontMetrics {
     }
 
     /// Parses Type 3 font metrics.
-    pub fn parse_type3(
-        dict: &BTreeMap<Handle<PdfName>, Object>,
-        arena: &PdfArena,
-    ) -> Self {
+    pub fn parse_type3(dict: &BTreeMap<Handle<PdfName>, Object>, arena: &PdfArena) -> Self {
         let mut metrics = Self::default();
         if let Some(Object::Integer(f)) =
             dict.get(&arena.name("FirstChar")).map(|o: &Object| Object::resolve(o, arena))
@@ -161,7 +159,8 @@ impl FontMetrics {
         {
             metrics.last = l as i32;
         }
-        if let Some(Object::Array(ah)) = dict.get(&arena.name("Widths")).map(|o: &Object| Object::resolve(o, arena))
+        if let Some(Object::Array(ah)) =
+            dict.get(&arena.name("Widths")).map(|o: &Object| Object::resolve(o, arena))
             && let Some(arr) = arena.get_array(ah)
         {
             for (idx, w) in arr.iter().enumerate() {
@@ -191,8 +190,9 @@ pub fn detect_wmode(dict: &BTreeMap<Handle<PdfName>, Object>, arena: &PdfArena) 
             }
             Object::Stream(dh, _) => {
                 if let Some(d) = arena.get_dict(dh)
-                    && let Some(n_handle) =
-                        d.get(&arena.name("CMapName")).and_then(|o: &Object| Object::resolve(o, arena).as_name())
+                    && let Some(n_handle) = d
+                        .get(&arena.name("CMapName"))
+                        .and_then(|o: &Object| Object::resolve(o, arena).as_name())
                     && let Some(n) = arena.get_name(n_handle)
                 {
                     let bytes = n.as_bytes();

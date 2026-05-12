@@ -43,17 +43,21 @@ impl CMapRescue {
 
     /// Guesses Unicode from a glyph name (e.g., "uni3042" -> "あ").
     pub fn unicode_from_glyph_name(name: &str) -> Option<String> {
-        if name.starts_with("uni") && name.len() >= 7
+        if name.starts_with("uni")
+            && name.len() >= 7
             && let Ok(hex) = u32::from_str_radix(&name[3..7], 16)
-                && let Some(c) = std::char::from_u32(hex) {
-                    return Some(c.to_string());
-                }
+            && let Some(c) = std::char::from_u32(hex)
+        {
+            return Some(c.to_string());
+        }
 
-        if name.starts_with('u') && name.len() >= 5
+        if name.starts_with('u')
+            && name.len() >= 5
             && let Ok(hex) = u32::from_str_radix(&name[1..5], 16)
-                && let Some(c) = std::char::from_u32(hex) {
-                    return Some(c.to_string());
-                }
+            && let Some(c) = std::char::from_u32(hex)
+        {
+            return Some(c.to_string());
+        }
 
         None
     }

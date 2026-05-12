@@ -105,7 +105,7 @@ impl Document {
         let mut doc =
             Self::with_issues(ingested.arena, ingested.root, ingested.info, ingested.issues);
         doc.force_fallback = options.force_fallback;
-        
+
         // Populate font cache from ingestion
         {
             let mut cache = doc.font_cache.write();
@@ -216,12 +216,16 @@ impl Document {
         }
 
         let obj = self.resolve(&handle)?;
-        let dict_h = obj.as_dict_handle().ok_or_else(|| PdfError::Other("Not a dictionary".into()))?;
-        let dict = self.arena.get_dict(dict_h).ok_or_else(|| PdfError::Other("Missing dictionary".into()))?;
-        
+        let dict_h =
+            obj.as_dict_handle().ok_or_else(|| PdfError::Other("Not a dictionary".into()))?;
+        let dict = self
+            .arena
+            .get_dict(dict_h)
+            .ok_or_else(|| PdfError::Other("Missing dictionary".into()))?;
+
         let font_res = FontResource::load(&dict, self)?;
         let arc_res = Arc::new(font_res);
-        
+
         self.font_cache.write().insert(handle, Arc::clone(&arc_res));
         Ok(arc_res)
     }
@@ -246,10 +250,9 @@ impl Document {
 
     /// Resolves an indirect object handle to its current dictionary pool handle.
     pub fn resolve_to_dict(&self, handle: Handle<Object>) -> PdfResult<DictHandle> {
-        self.arena
-            .get_object(handle)
-            .and_then(|obj| obj.as_dict_handle())
-            .ok_or_else(|| PdfError::Other(format!("Object {:?} is not a dictionary", handle).into()))
+        self.arena.get_object(handle).and_then(|obj| obj.as_dict_handle()).ok_or_else(|| {
+            PdfError::Other(format!("Object {:?} is not a dictionary", handle).into())
+        })
     }
 
     /// Returns the total number of pages in the document.
@@ -287,25 +290,41 @@ impl Document {
         pages
     }
 
-    fn walk_pages_recursive(&self, node_h: Handle<Object>, out: &mut Vec<Handle<Object>>, depth: usize) -> PdfResult<()> {
-        if depth > 32 { return Err(PdfError::Other("Page tree depth limit exceeded".into())); }
-        
+    fn walk_pages_recursive(
+        &self,
+        node_h: Handle<Object>,
+        out: &mut Vec<Handle<Object>>,
+        depth: usize,
+    ) -> PdfResult<()> {
+        if depth > 32 {
+            return Err(PdfError::Other("Page tree depth limit exceeded".into()));
+        }
+
         let dict_h = self.resolve_to_dict(node_h)?;
-        let dict = self.arena.get_dict(dict_h).ok_or_else(|| PdfError::Other("Invalid node in page tree".into()))?;
+        let dict = self
+            .arena
+            .get_dict(dict_h)
+            .ok_or_else(|| PdfError::Other("Invalid node in page tree".into()))?;
 
         let type_key = self.arena.name("Type");
-        let node_type = dict.get(&type_key)
+        let node_type = dict
+            .get(&type_key)
             .and_then(|o| o.resolve(&self.arena).as_name())
             .and_then(|h| self.arena.get_name(h));
 
-        if let Some(name) = node_type && name.as_str() == "Page" {
+        if let Some(name) = node_type
+            && name.as_str() == "Page"
+        {
             out.push(node_h);
             return Ok(());
         }
 
         let kids_key = self.arena.name("Kids");
         if let Some(kids_obj) = dict.get(&kids_key) {
-            let ah = kids_obj.resolve(&self.arena).as_array().ok_or_else(|| PdfError::Other("Invalid Kids array".into()))?;
+            let ah = kids_obj
+                .resolve(&self.arena)
+                .as_array()
+                .ok_or_else(|| PdfError::Other("Invalid Kids array".into()))?;
             if let Some(kids) = self.arena.get_array(ah) {
                 for kid in kids {
                     if let Some(h) = kid.resolve(&self.arena).as_reference() {
@@ -375,9 +394,9 @@ impl Document {
             let mut found = false;
 
             for kid_obj in kids {
-                let kid_handle = kid_obj
-                    .as_reference()
-                    .ok_or_else(|| PdfError::Other("Invalid kid object (not a reference)".into()))?;
+                let kid_handle = kid_obj.as_reference().ok_or_else(|| {
+                    PdfError::Other("Invalid kid object (not a reference)".into())
+                })?;
 
                 let kid_dict_h = self.resolve_to_dict(kid_handle)?;
                 let kid_dict = self
@@ -514,9 +533,10 @@ impl Document {
                     for attr in attrs {
                         let attr_name = arena.name(attr);
                         if !dict.contains_key(&attr_name)
-                            && let Some(val) = page.resolve_attribute(attr) {
-                                dict.insert(attr_name, val);
-                            }
+                            && let Some(val) = page.resolve_attribute(attr)
+                        {
+                            dict.insert(attr_name, val);
+                        }
                     }
 
                     // Set Parent to the new root (we'll set the root handle later)
@@ -547,20 +567,22 @@ impl Document {
         // 3. Update Parent for all pages
         for page_ref in &page_handles {
             if let Object::Reference(ph) = page_ref
-                && let Some(Object::Dictionary(dh)) = arena.get_object(*ph) {
-                    let mut dict = arena.get_dict(dh).unwrap_or_default();
-                    dict.insert(arena.name("Parent"), Object::Reference(pages_root_h));
-                    arena.set_dict(dh, dict);
-                }
+                && let Some(Object::Dictionary(dh)) = arena.get_object(*ph)
+            {
+                let mut dict = arena.get_dict(dh).unwrap_or_default();
+                dict.insert(arena.name("Parent"), Object::Reference(pages_root_h));
+                arena.set_dict(dh, dict);
+            }
         }
 
         // 4. Update Catalog
         if let Some(cat_obj_h) = self.catalog_handle()
-            && let Ok(cat_dh) = self.resolve_to_dict(cat_obj_h) {
-                let mut cat_dict = arena.get_dict(cat_dh).unwrap_or_default();
-                cat_dict.insert(pages_root_key, Object::Reference(pages_root_h));
-                arena.set_dict(cat_dh, cat_dict);
-            }
+            && let Ok(cat_dh) = self.resolve_to_dict(cat_obj_h)
+        {
+            let mut cat_dict = arena.get_dict(cat_dh).unwrap_or_default();
+            cat_dict.insert(pages_root_key, Object::Reference(pages_root_h));
+            arena.set_dict(cat_dh, cat_dict);
+        }
     }
 
     fn resolve_missing_font_data(&mut self) {
@@ -572,10 +594,11 @@ impl Document {
             let res_mut = Arc::make_mut(res);
             if res_mut.data.is_none()
                 && let Some(ftype) = res_mut.fallback_type
-                    && let Some(sys_data) = system_fonts.get(&ftype) {
-                        res_mut.data = Some(Arc::clone(sys_data));
-                        let _ = res_mut.perform_reconstruction();
-                    }
+                && let Some(sys_data) = system_fonts.get(&ftype)
+            {
+                res_mut.data = Some(Arc::clone(sys_data));
+                let _ = res_mut.perform_reconstruction();
+            }
         }
     }
 

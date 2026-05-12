@@ -116,20 +116,21 @@ impl Ingestor {
 
         let temp_doc = Document::new(arena.clone(), root_handle, info_handle);
         let handle_font_cache = discover_fonts(&arena, &temp_doc);
-        
+
         // 1. Create a Document-wide Global Font Registry
         let mut global_font_registry = BTreeMap::new();
         for (h_idx, font_res) in &handle_font_cache {
             if let Some(_dict) = arena.get_dict(Handle::new(*h_idx)) {
                 // Collect by both physical object index and BaseFont name for maximum resolution
                 global_font_registry.insert(format!("obj_{}", h_idx), font_res.clone());
-                
+
                 // Only register by BaseFont name if it's NOT a subsetted font and NOT a raw CIDFont.
                 // Raw CIDFonts (CIDFontType0/2) are components of Type0 fonts and should not clobber them.
                 let base_name = font_res.base_font.as_str();
                 let is_subset = base_name.len() > 7 && base_name.as_bytes()[6] == b'+';
-                let is_component_cid = font_res.subtype.as_str() == "CIDFontType0" || font_res.subtype.as_str() == "CIDFontType2";
-                
+                let is_component_cid = font_res.subtype.as_str() == "CIDFontType0"
+                    || font_res.subtype.as_str() == "CIDFontType2";
+
                 if !is_subset && !is_component_cid {
                     global_font_registry.insert(base_name.to_string(), font_res.clone());
                 }
@@ -137,7 +138,7 @@ impl Ingestor {
         }
 
         let mut stream_contexts = map_stream_contexts(&arena, &handle_font_cache);
-        
+
         // 2. Supplement each stream context with the global registry for missing names
         // (This implements the "Normalization-at-Load" philosophy for broken resource chains)
         for context in stream_contexts.values_mut() {

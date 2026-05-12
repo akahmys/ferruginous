@@ -304,7 +304,7 @@ impl ParallelRefinery {
                 let commands = sublimator.sublimate(&content);
                 return RefinedObject::Sublimated(
                     refined_dict,
-                    crate::object::SublimatedData::Commands(commands),
+                    crate::object::SublimatedData::Commands { items: commands },
                 );
             }
 

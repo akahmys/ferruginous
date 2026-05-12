@@ -43,6 +43,7 @@ pub trait RenderBackend {
         format: PixelFormat,
         smask: Option<SMaskData>,
     );
+    #[allow(clippy::too_many_arguments)]
     fn define_font(
         &mut self,
         name: &str,
@@ -76,6 +77,7 @@ pub struct TextGlyph {
     pub width: f32,
     pub vx: f32,
     pub vy: f32,
+    pub is_fallback: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -179,7 +181,7 @@ impl VelloBackend {
             },
             state_stack: Vec::new(),
             font_cache: std::collections::BTreeMap::new(),
-            system_fonts: system_fonts,
+            system_fonts,
             skrifa_bridge: crate::text::SkrifaBridge::new(),
             next_font_id: 1,
         }
@@ -202,27 +204,44 @@ impl VelloBackend {
         ctx: &GlyphRenderContext,
     ) -> (f64, bool) {
         let is_cid = state.is_cid_keyed;
-        let is_japanese = state.font_name.as_ref().map(|n| {
-            let n = n.to_lowercase();
-            n.contains("mincho") || n.contains("gothic") || n.contains("hira") || n.contains("koz")
-        }).unwrap_or(false);
+        let is_japanese = state
+            .font_name
+            .as_ref()
+            .map(|n| {
+                let lower = n.to_lowercase();
+                lower.contains("mincho")
+                    || lower.contains("gothic")
+                    || lower.contains("hira")
+                    || lower.contains("koz")
+                    || n.contains("明朝")
+                    || n.contains("ゴシック")
+                    || is_cid
+            })
+            .unwrap_or(false);
 
         let mut font_data = ctx.data_ref;
-        let is_fallback = state.is_fallback;
+        let is_space = glyph.unicode == " " || glyph.unicode == "\u{3000}";
+        let mut is_fallback = state.is_fallback || glyph.is_fallback || (is_japanese && is_space);
+        let mut gid = glyph.gid;
 
-        // CRITICAL: If this is a subsetted simple font but we are using a GID resolved via system fallback,
-        // we MUST use the system font data for rendering, otherwise Skrifa will fail to find the glyph.
-        // However, we MUST NOT do this for CID-keyed fonts where GIDs > 256 are valid and expected.
-        if !is_fallback && !is_cid && glyph.gid >= 256 {
+        if glyph.is_fallback || (is_japanese && is_space) {
             if let Some(sys_data) = system_fonts.get(&state.fallback_type) {
                 font_data = sys_data;
+                gid = 0; 
             }
+        } else if !is_fallback
+            && !is_cid
+            && gid >= 256
+            && let Some(sys_data) = system_fonts.get(&state.fallback_type)
+        {
+            font_data = sys_data;
+            is_fallback = true;
         }
 
         let skrifa_ctx = crate::text::GlyphExtractionContext {
             font_id: state.font_id,
             data: font_data,
-            gid: glyph.gid,
+            gid,
             char_code: glyph.char_code,
             cid_to_gid_map: state.cid_to_gid_map.as_ref(),
             is_vertical: ctx.is_vertical,
@@ -230,14 +249,14 @@ impl VelloBackend {
             is_japanese,
             is_cid,
             collection_index: state.font_index.unwrap_or(0) as u32,
-            is_fallback: is_fallback || (font_data != ctx.data_ref),
+            is_fallback,
         };
 
         if let Some(path) = skrifa_bridge.extract_path(&skrifa_ctx) {
-            let upem = skrifa_bridge.get_units_per_em(ctx.data_ref).unwrap_or(1000);
+            let upem = skrifa_bridge.get_units_per_em(font_data).unwrap_or(1000);
             let scale = ctx.size / upem as f64;
-            
-            // In vertical writing mode, horizontal scaling (th) results in a scale factor 
+
+            // In vertical writing mode, horizontal scaling (th) results in a scale factor
             // of 1.0 for the x dimension and th for the y dimension.
             let h_scale = if ctx.is_vertical { 1.0 } else { ctx.th };
             let v_scale = if ctx.is_vertical { ctx.th } else { 1.0 };
@@ -331,7 +350,7 @@ struct GlyphRenderContext<'a> {
 
 impl RenderBackend for VelloBackend {
     fn transform(&mut self, transform: Affine) {
-        self.state.transform = self.state.transform * transform;
+        self.state.transform *= transform;
     }
     fn set_transform(&mut self, transform: Affine) {
         self.state.transform = transform;
@@ -454,24 +473,25 @@ impl RenderBackend for VelloBackend {
         };
 
         // Apply SMask if provided and dimensions match (common for PDF icons)
-        if let Some(mask) = smask {
-            if mask.width == width && mask.height == height {
-                for (i, chunk) in rgba_data.chunks_exact_mut(4).enumerate() {
-                    let mask_val = match mask.format {
-                        PixelFormat::Gray8 => mask.data[i],
-                        PixelFormat::Rgba8 => mask.data[i * 4 + 3], // Use alpha channel
-                        PixelFormat::Rgb8 => {
-                            let r = f64::from(mask.data[i * 3]);
-                            let g = f64::from(mask.data[i * 3 + 1]);
-                            let b = f64::from(mask.data[i * 3 + 2]);
-                            // Standard Luminance formula: 0.299R + 0.587G + 0.114B
-                            ((0.299 * r) + (0.587 * g) + (0.114 * b)) as u8
-                        }
-                        _ => 255,
-                    };
-                    // Apply mask to alpha channel
-                    chunk[3] = ((f64::from(chunk[3]) * f64::from(mask_val)) / 255.0) as u8;
-                }
+        if let Some(mask) = smask
+            && mask.width == width
+            && mask.height == height
+        {
+            for (i, chunk) in rgba_data.chunks_exact_mut(4).enumerate() {
+                let mask_val = match mask.format {
+                    PixelFormat::Gray8 => mask.data[i],
+                    PixelFormat::Rgba8 => mask.data[i * 4 + 3], // Use alpha channel
+                    PixelFormat::Rgb8 => {
+                        let r = f64::from(mask.data[i * 3]);
+                        let g = f64::from(mask.data[i * 3 + 1]);
+                        let b = f64::from(mask.data[i * 3 + 2]);
+                        // Standard Luminance formula: 0.299R + 0.587G + 0.114B
+                        ((0.299 * r) + (0.587 * g) + (0.114 * b)) as u8
+                    }
+                    _ => 255,
+                };
+                // Apply mask to alpha channel
+                chunk[3] = ((f64::from(chunk[3]) * f64::from(mask_val)) / 255.0) as u8;
             }
         }
 
@@ -490,6 +510,7 @@ impl RenderBackend for VelloBackend {
         self.scene.draw_image(&image, m);
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn define_font(
         &mut self,
         name: &str,
@@ -517,7 +538,7 @@ impl RenderBackend for VelloBackend {
                 cid_to_gid_map,
                 is_cid_keyed,
                 base_name: base_name.map(|s| s.to_string()),
-                fallback_type: fallback_type,
+                fallback_type,
             },
         );
         self.next_font_id += 1;

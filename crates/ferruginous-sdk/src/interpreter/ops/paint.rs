@@ -2,6 +2,7 @@ use crate::interpreter::Interpreter;
 use ferruginous_core::PdfResult;
 use ferruginous_core::graphics::WindingRule;
 use ferruginous_render::path::PathBuilder;
+use kurbo::Shape;
 
 impl Interpreter<'_> {
     pub(crate) fn handle_painting_operator(&mut self, op: &str) -> PdfResult<()> {
@@ -16,6 +17,8 @@ impl Interpreter<'_> {
             "f*" | "B*" | "b*" => WindingRule::EvenOdd,
             _ => WindingRule::NonZero,
         };
+
+        self.check_type3_redundant_bbox()?;
 
         let p_for_clip =
             if self.pending_clip.is_some() { Some(self.path.clone().finish()) } else { None };
@@ -54,6 +57,25 @@ impl Interpreter<'_> {
         }
 
         self.path = PathBuilder::new();
+        Ok(())
+    }
+
+    fn check_type3_redundant_bbox(&mut self) -> PdfResult<()> {
+        if self.in_type3_glyph
+            && let Some(adv) = &self.type3_advance
+        {
+            let p = self.path.clone().finish();
+            if p.elements().len() == 5 {
+                let bbox = p.bounding_box();
+                if (bbox.x0 - adv.llx).abs() < 0.1
+                    && (bbox.y0 - adv.lly).abs() < 0.1
+                    && (bbox.x1 - adv.urx).abs() < 0.1
+                    && (bbox.y1 - adv.ury).abs() < 0.1
+                {
+                    self.path = PathBuilder::new();
+                }
+            }
+        }
         Ok(())
     }
 }

@@ -9,7 +9,7 @@ use std::path::Path;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
     let filename = args.get(1).map(|s| s.as_str()).unwrap_or("samples/bokutokitan.pdf");
-    
+
     let output_dir = Path::new("artifacts/renders");
     std::fs::create_dir_all(output_dir)?;
 

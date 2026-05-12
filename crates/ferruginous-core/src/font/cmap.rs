@@ -181,9 +181,10 @@ impl CMap {
         // 3. Last resort: if we have a target_len and it's 2, but we didn't find anything,
         // we should probably still consume target_len bytes and return None to indicate unmapped.
         if let Some(tl) = min_len
-            && data.len() >= tl {
-                return Some((tl, None));
-            }
+            && data.len() >= tl
+        {
+            return Some((tl, None));
+        }
 
         None
     }
@@ -807,12 +808,7 @@ pub fn glyph_name_to_unicode(v: &[u8]) -> String {
     let name = if v.starts_with(b"/") { &v[1..] } else { v };
     let name_str = String::from_utf8_lossy(name);
 
-    if let Some(unicode) = crate::font::agl::lookup(&name_str) {
-        unicode
-    } else {
-        // Return empty string instead of raw glyph name to avoid rendering 'g' etc.
-        String::new()
-    }
+    crate::font::agl::lookup(&name_str).unwrap_or_default()
 }
 
 #[cfg(test)]

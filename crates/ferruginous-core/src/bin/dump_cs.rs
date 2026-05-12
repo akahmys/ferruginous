@@ -6,7 +6,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let page = doc.get_page(149)?;
     let res_h = page.resources_handle();
     let res_dict = doc.arena().get_dict(res_h).unwrap();
-    
+
     if let Some(xobj_obj) = res_dict.get(&doc.arena().name("XObject")) {
         if let Some(xobj_dh) = xobj_obj.resolve(doc.arena()).as_dict_handle() {
             let xobj_dict = doc.arena().get_dict(xobj_dh).unwrap();
@@ -24,7 +24,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 println!("    [{}] -> {:?}", i, v);
                                 if i == 0 {
                                     if let Some(nh) = v.resolve(doc.arena()).as_name() {
-                                        println!("    Name[0]: {}", doc.arena().get_name(nh).unwrap().as_str());
+                                        println!(
+                                            "    Name[0]: {}",
+                                            doc.arena().get_name(nh).unwrap().as_str()
+                                        );
                                     }
                                 }
                             }

@@ -1,5 +1,4 @@
 use ferruginous_core::document::Document;
-use ferruginous_core::object::Object;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
@@ -9,7 +8,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut i = 1;
     while i < args.len() {
         if args[i] == "--page" && i + 1 < args.len() {
-            page_num = args[i+1].parse::<usize>()?;
+            page_num = args[i + 1].parse::<usize>()?;
             i += 2;
         } else if file_path.is_empty() {
             file_path = args[i].clone();

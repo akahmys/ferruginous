@@ -31,8 +31,8 @@ To ensure the integrity of the project's External Long-Term Memory (ELM), all ru
 
 | Layer | Name | Role | Primary Files |
 | :--- | :--- | :--- | :--- |
-| **1** | **Constitution (憲法)** | Immutable principles and philosophy. | `rules.md` |
-| **2** | **Governance (統治)** | Development lifecycle, branching, and decisions. | `planning.md`, `merging.md`, `delegation.md` |
-| **3** | **Hardening (防壁)** | Absolute implementation safety constraints. | `hardening.md` (RR-15) |
-| **4** | **Domain Standards (規格)** | Technical specs and compliance targets. | `pipeline.md`, `rendering.md`, `compliance.md`, ISO 32000-2 |
-| **5** | **Operational (術式)** | Concrete execution methods and automated steps. | `skills/`, `workflows/` |
+| **1** | **Constitution (憲法)** | Immutable principles and core philosophy. | `rules.md` |
+| **2** | **Governance (統治)** | Lifecycle, decision-making, and branching protocols. | `planning.md`, `merging.md`, `delegation.md` |
+| **3** | **Hardening (防壁)** | Absolute implementing-safety constraints (RR-15). | `hardening.md` |
+| **4** | **Domain Standards (規格)** | Technical specs and ISO 32000-2 compliance. | `pipeline.md`, `rendering.md`, `compliance.md` |
+| **5** | **Operational (術式)** | Procedural execution and automated workflows. | `skills/`, `workflows/` |

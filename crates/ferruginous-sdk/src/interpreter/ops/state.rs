@@ -23,6 +23,7 @@ impl Interpreter<'_> {
 
                     self.state = old;
                     self.backend.pop_state();
+                    self.update_backend_transform();
                 }
             }
             "cm" => {
@@ -34,7 +35,7 @@ impl Interpreter<'_> {
                 let a = self.pop_f64()?;
                 let mat = Matrix::new(a, b, c, d, e, f);
                 self.state.ctm = self.state.ctm.concat(&mat);
-                self.backend.set_transform(self.state.ctm.as_affine());
+                self.update_backend_transform();
             }
             "gs" => {
                 let name = self.pop_name()?;
@@ -66,7 +67,10 @@ impl Interpreter<'_> {
                 self.backend.set_stroke_alpha(ca_up);
             }
             if let Some(bm_obj) = gs_dict.get(&bm_key) {
-                if let Ok(bm) = ferruginous_core::graphics::BlendMode::from_pdf_object(bm_obj.resolve(self.doc.arena()), self.doc.arena()) {
+                if let Ok(bm) = ferruginous_core::graphics::BlendMode::from_pdf_object(
+                    bm_obj.resolve(self.doc.arena()),
+                    self.doc.arena(),
+                ) {
                     self.state.blend_mode = bm;
                     // FIXME: Tell backend about blend mode
                 }
@@ -75,7 +79,7 @@ impl Interpreter<'_> {
                 let resolved = smask_obj.resolve(self.doc.arena());
                 match resolved {
                     Object::Name(n) => {
-                        if self.doc.arena().get_name(n).map(|nn| nn.as_str() == "None").unwrap_or(false) {
+                        if self.doc.arena().get_name(n).is_some_and(|nn| nn.as_str() == "None") {
                             self.state.smask = None;
                         }
                     }

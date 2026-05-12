@@ -58,3 +58,22 @@ While implementing multi-pass structural remediation (UA-2 tagging), we discover
 ## Impact on Future Work
 - **SDK-Wide Standard**: Late-binding is now the mandated pattern for all SDK-level structural manipulation.
 - **Refinery Safety**: The `ParallelRefinery` can now safely re-allocate and optimize dictionaries without risking dangling handles in the SDK layers.
+
+---
+63: 
+64: # Lessons Learned: Path Integrity & Serialization Fidelity
+65: 
+66: ## Context
+67: During the stabilization of the Intel SDM document, we encountered persistent "black mask" artifacts and a "Default-to-Black" regression in regenerated PDFs.
+68: 
+69: ## Key Discovery
+70: 1.  **Path Construction Leakage**: Discarding the `n` (EndPath) operator during sublimation is hazardous. In PDF, `n` resets the current path without painting. If missing, subsequent painting operators (e.g., `f`) will include the previous "construction-only" segments (like clipping rectangles), resulting in unintended solid fills.
+71: 2.  **Serialization Gap**: The "Desublimation" (serialization) phase MUST handle 100% of the IR command variants. Omissions in `SetFillColor` or `SetStrokeColor` mappings lead to the loss of all color state, causing documents to default to black during physical reconstruction.
+72: 
+73: ## Resolution
+74: - **Operator Completeness**: Added explicit support for the `n` operator in the `Sublimator` and ensured it resets the `Interpreter` path state.
+75: - **Fidelity Synchronization**: Implemented missing color command mappings in `serializer.rs`. Every IR command now has a verified bidirectional mapping between PDF operators and the internal model.
+76: 
+77: ## Impact on Future Work
+78: - **Rule 20**: The `Sublimator` (Parser) and `Desublimator` (Serializer) MUST be updated in sync. Any new IR command added for normalization MUST have a corresponding serialization mapping.
+79: - **Acrobat as Ground Truth**: Visual validation against Acrobat is the definitive proof of serialization fidelity, as it exposes structural and state-management errors that simpler renderers might ignore.

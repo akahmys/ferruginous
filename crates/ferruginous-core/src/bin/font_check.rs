@@ -1,4 +1,3 @@
-use ttf_parser;
 use std::fs;
 
 fn main() {
@@ -12,7 +11,10 @@ fn main() {
         println!("Glyph count: {}", face.number_of_glyphs());
         if let Some(cmap) = face.tables().cmap {
             for subtable in cmap.subtables {
-                println!("Cmap subtable: platform={:?}, encoding={:?}, format={:?}", subtable.platform_id, subtable.encoding_id, subtable.format);
+                println!(
+                    "Cmap subtable: platform={:?}, encoding={:?}, format={:?}",
+                    subtable.platform_id, subtable.encoding_id, subtable.format
+                );
             }
         }
     } else {

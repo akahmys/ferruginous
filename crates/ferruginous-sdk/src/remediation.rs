@@ -1,6 +1,6 @@
 use crate::interpreter::Interpreter;
 use ferruginous_core::graphics::{BlendMode, Color, PixelFormat, StrokeStyle, WindingRule};
-use ferruginous_core::{Document, Handle, Object, PdfArena, PdfResult};
+use ferruginous_core::{Document, Handle, Object, PdfResult};
 use ferruginous_render::{FallbackFontType, RenderBackend, TextGlyph, TextState};
 use kurbo::{Affine, BezPath};
 use std::collections::BTreeMap;
@@ -153,7 +153,7 @@ impl RenderBackend for CollectorBackend {
                 || name_lower.contains("black");
         }
         for glyph in glyphs {
-            let adv_scaled = (glyph.width as f64 * size) / 1000.0;
+            let adv_scaled = (f64::from(glyph.width) * size) / 1000.0;
             width += adv_scaled;
             text.push_str(&glyph.unicode);
         }
@@ -193,13 +193,12 @@ impl CollectorBackend {
 }
 
 /// Heuristic engine for inferring logical structure from flat PDF content.
-pub struct HeuristicEngine<'a> {
-    arena: &'a PdfArena,
-}
-impl<'a> HeuristicEngine<'a> {
-    /// Creates a new heuristic engine using the provided document arena.
-    pub fn new(arena: &'a PdfArena) -> Self {
-        Self { arena }
+pub struct HeuristicEngine;
+
+impl HeuristicEngine {
+    /// Creates a new heuristic engine.
+    pub fn new() -> Self {
+        Self
     }
     /// Analyzes the document to identify potential structural improvements.
     pub fn infer_structure(&self, doc: &Document) -> PdfResult<Vec<RemediationCandidate>> {
@@ -403,7 +402,8 @@ impl<'a> HeuristicEngine<'a> {
         let arena = doc.arena();
         let mut collector = CollectorBackend::new();
         let res_dh = page.resources_handle();
-        let mut interpreter = Interpreter::new(&mut collector, doc, res_dh, kurbo::Affine::IDENTITY);
+        let mut interpreter =
+            Interpreter::new(&mut collector, doc, res_dh, kurbo::Affine::IDENTITY);
         if let Some(contents) = page.resolve_attribute("Contents") {
             interpreter.execute_raw(&doc.decode_stream(&contents)?)?;
         }
@@ -532,7 +532,7 @@ pub enum RemediationActionType {
 
 /// Automatically infers and applies structural tags to a document.
 pub fn retag(doc: &mut Document) -> PdfResult<()> {
-    let engine = HeuristicEngine::new(doc.arena());
+    let engine = HeuristicEngine::new();
     let _candidates = engine.infer_structure(doc)?;
     Ok(())
 }

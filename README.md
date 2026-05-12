@@ -1,10 +1,10 @@
 # Ferruginous: A Personal Quest for PDF 2.0 Fidelity
 
-**Ferruginous** is an experimental but focused PDF processing platform built with Rust. It aims for **ISO 32000-2:2020** compliance through a deterministic, hardware-accelerated architecture, designed to handle complex PDF structures with high fidelity.
+**Ferruginous** is an experimental, high-fidelity PDF processing platform engineered with Rust. It achieves **ISO 32000-2:2020** compliance through a deterministic, hardware-accelerated architecture designed to master the complexity of modern and legacy PDF structures.
 
-The project follows the **RR-15 (Reliable Rust-15)** safety protocol—a personal set of rules to ensure memory safety and predictable behavior in a mission-critical spirit.
+The project strictly adheres to the **RR-15 (Reliable Rust-15)** hardening protocol—a mission-critical safety standard derived from aerospace principles to ensure memory safety, bit-perfect determinism, and absolute reliability.
 
-**🚀 Status: Core Hardening Complete** — As of May 2026, the core modules have been refactored for better maintainability and safety.
+**🚀 Status: Rendering Pipeline Stabilized** — As of May 2026, the core engine has achieved stable rendering parity for complex CJK layouts and advanced path construction (Intel SDM baseline).
 
 ---
 
@@ -12,119 +12,87 @@ The project follows the **RR-15 (Reliable Rust-15)** safety protocol—a persona
 
 *"Reliability over speed. Essence over prototyping."*
 
-Ferruginous is a personal lab for exploring the limits of PDF technology. The "North Star" goals for this project are:
+Ferruginous serves as a technical laboratory for exploring the boundaries of document technology. Our "North Star" objectives are:
 
-- **High Compliance**: Striving for the "Truth" of ISO 32000-2:2020 through thorough implementation.
-- **Reliable Architecture**: Using Rust 2024 and the RR-15 protocol to minimize regressions and logic errors.
-- **Better Typography**: A focus on CAD-grade visual quality via Vello/GPU, especially for complex CJK (Japanese) layouts.
-- **AI-Friendly Design**: Keeping the codebase readable and verifiable for both human developers and AI assistants.
+- **Rigorous Compliance**: Pursuing the absolute "Truth" of ISO 32000-2:2020 through exhaustive implementation.
+- **Hardened Architecture**: Leveraging Rust 2024 and the RR-15 protocol to eliminate regressions and runtime failures.
+- **Precision Typography**: Delivering CAD-grade visual quality via **Vello** (GPU Compute), with a specialized focus on complex CJK (Japanese) and Type 3 font rendering.
+- **AI-Native Design**: Maintaining a verifiable, high-context codebase optimized for both human architects and AI assistants.
 
 ---
 
 ## 🤖 Building with AI (Antigravity)
 
-This project is a collaborative effort between a human developer and an AI agent, **Antigravity**. 
+Ferruginous is developed through a sophisticated collaboration between human document architects and the **Antigravity** AI agent.
 
 ### AI-Native Engineering
-The architecture is designed to play well with autonomous AI tools:
-- **Safety as Code**: Safety protocols (RR-15) are enforced and evolved through AI interaction.
-- **Visual Verification**: Automated visual regression modules allow for "self-inspection" of rendering results.
-- **MCP Native**: First-class support for the **Model Context Protocol**, enabling direct AI-to-PDF interaction.
-- **Continuity Engine**: Design intents and stateful decisions are persisted to ensure seamless multi-session development.
+The platform is built to excel in autonomous agentic environments:
+- **Safety as Code**: Security and hardening protocols are programmatically enforced via AI-driven audits.
+- **Visual Sincerity**: Integrated visual regression modules enable the engine to "self-inspect" rendering fidelity.
+- **MCP Integration**: First-class implementation of the **Model Context Protocol**, allowing AI agents to perform direct structural diagnostics.
+- **Stateful Continuity**: Design intents and lifecycle decisions are persisted in the `ELM` (Extended Long-Term Memory) to ensure seamless multi-session development.
 
 ---
 
-## 🛡️ How it Works: The Ingestion Pipeline
+## 🛡️ The Ingestion Pipeline: Normalization-at-Load
 
-Ferruginous doesn't just parse bytes; it tries to **ingest** and normalize them into a high-purity internal model through a multi-pass process.
+Ferruginous utilizes a multi-pass "Sublimation" pipeline to transform volatile physical bytes into high-purity logical structures.
 
 ### 1. The Normalization Process
+- **Pass 0: Physical Normalization**
+    - Recursive, stack-based decryption and XRef repair.
+    - Mandatory removal of `/Encrypt` residuals to ensure absolute Acrobat compatibility.
+- **Pass 1: Arena Ingestion**
+    - Expansion of object streams and generation of stable **Arena Handles**.
+    - Deduplication of resources and structural indexing.
+- **Pass 2: Semantic Sublimation**
+    - Unicode-native string re-encoding to eliminate legacy mojibake.
+    - Path integrity restoration (EndPath `n` preservation) and color state harmonization.
+    - Structural remediation for **ISO 14289-2 (PDF/UA-2)** compliance.
 
-- **Pass 0: Physical Guard (Normalization)**
-    - **Recursive Decryption**: A stack-based walk of all objects to decrypt strings and streams.
-    - **Security Handler Removal**: Stripping the `/Encrypt` dictionary from the trailer to ensure compatibility (Acrobat Error 135 prevention).
-    - **Physical Repair**: Fixing broken XRef offsets and object numbers before they reach the `PdfArena`.
-- **Pass 1: Arena Ingestion (Indexing)**
-    - **Object Stream Expansion**: Unpacking compressed object streams.
-    - **Generational Mapping**: Generating unique IDs and handles for every object.
-    - **Deduplication**: Active identification of common resource objects.
-- **Pass 2: Semantic Truth (Refinement)**
-    - **Unicode-Native Pipeline**: Context-aware string re-encoding (`Byte` -> `UTF-8`) to eliminate mojibake.
-    - **Color Sublimation**: Strict ICC profile application via **moxcms**.
-    - **Structural Hardening**: Active remediation of logical structure tags for **ISO 14289-2 (PDF/UA-2)** compliance.
-
-### 2. Memory & Safety: `PdfArena`
-
-The core uses a generational arena to manage object lifetimes:
-- **Handles over Pointers**: All object references are `Handle<Object>` (a `u32` index and a generation count). This prevents "use-after-free" and makes the structure AI-inspectable.
-- **RR-15 Safety Invariants**: 
-    - **Rule 2 vs 12**: Strict separation of input-driven errors (`Result`) from logical invariants (`assert!`).
-    - **Rule 6 (Stack Safety)**: All object graph traversals must use an explicit stack and a hard-coded depth limit.
-    - **Rule 10 (Determinism)**: Iteration and metadata generation is deterministic for bit-perfect output.
-    - **Rule 11 (Transparency)**: Structured Enum errors only—no generic `String` or `anyhow` in core crates.
+### 2. Safety Invariants: `PdfArena`
+- **Handles over Pointers**: All references utilize `Handle<Object>` (ID + Generation), preventing use-after-free and ensuring AI-inspectability.
+- **Deterministic Iteration**: Collection traversal is bit-perfect, eliminating non-determinism in the generated output.
 
 ---
 
-## 🔐 Security & Compliance
-
-### Encryption Handling
-Custom security handlers for PDF 1.4-2.0, focusing on Adobe fidelity:
-- **AES-128 (Revision 4)**: High-fidelity MD5-based key derivation with correct `sAlT` handling.
-- **AES-256 (Revision 5/6)**: SHA-256 based key derivation for PDF 1.7/2.0.
-- **Advanced Recovery**: Robust UTF-16/PDFDocEncoding detection to eliminate mojibake in metadata.
-
----
-
-## 🏛️ Project Structure
+## 🏛️ Project Ecosystem
 
 - **`ferruginous`**: 
-    - 実験的なGUIアプリケーション。
-    - **egui** と **wgpu** を統合し、120fpsのキャンバス描画とドキュメントの非同期ロードを実現。
+    - The flagship desktop interface.
+    - Integrated **egui** and **wgpu** for 120fps canvas interaction and asynchronous document streaming.
 - **`fepdf`**: 
-    - 構造監査と修復のためのCLIツールキット。
-    - サブコマンドベースの設計により、ストリームベースの修復や構造化されたJSON診断を提供。
+    - The universal CLI toolkit for structural auditing, repair, and production-grade PDF 2.0 output.
 - **`ferruginous-sdk`**: 
-    - PDF操作のためのハイレベル・ライブラリ。
-    - `PdfArena` を安全に操作するためのビルダーパターンや、セキュアな構造変更APIを提供。
+    - The high-level library providing secure, handle-based APIs for document manipulation.
 - **`ferruginous-core`**: 
-    - エンジンの心臓部。
-    - 世代別 `PdfArena` による安全なオブジェクト管理、ISO 32000-2 準拠のパーサ、各種セキュリティハンドラ。
+    - The engine core, featuring the `PdfArena`, ISO-compliant parsers, and the Pass 0 normalization layer.
 - **`ferruginous-render`**: 
-    - GPU加速描画バックエンド。
-    - **Vello** によるコンピュート・シェーダ描画、CJKグリフのキャッシュ管理、表示リストのシリアライズ。
+    - The GPU-accelerated rendering backend utilizing **Vello** for compute-shader-based path rasterization.
 - **`ferruginous-mcp`**: 
-    - AIエージェントとの架け橋。
-    - **Model Context Protocol** サーバを実装し、AIが直接PDFを診断・検証するためのツールを提供。
+    - The bridge for AI agents, implementing MCP servers for autonomous document diagnostics.
 
 ---
 
 ## 🛠️ CLI Toolkit (`fepdf`)
 
-`fepdf` provides tools for batch processing and structural auditing.
-
-### Subcommand Hierarchy
 | Category | Command | Description |
 | :--- | :--- | :--- |
-| **Analyze** | `audit`, `info`, `text` | Document diagnostics and metadata inspection. |
-| **Manipulate**| `merge`, `split`, `repair` | Structural modification and recovery. |
-| **Produce** | `upgrade`, `sign`, `render` | PDF 2.0 conversion and GPU-accelerated output. |
-| **Debug** | `dump`, `structure` | Low-level object and hierarchy visualization. |
-
-### 🎯 Current Progress (CJK & Type 3)
-- **Type 3 Support**: Improved metrics and `CharProcs` parsing for legacy Japanese PDFs.
-- **Detection**: Dedicated Type 3 identification in audit reports.
-- **Layout**: Focus on vertical writing and accurate glyph positioning for CJK.
+| **Analyze** | `audit`, `info`, `text` | Structural diagnostics and metadata inspection. |
+| **Manipulate**| `merge`, `split`, `repair` | Logical document modification and recovery. |
+| **Produce** | `upgrade`, `sign`, `render` | PDF 2.0 re-production and GPU-accelerated output. |
+| **Debug** | `dump`, `structure` | Low-level object hierarchy and stream visualization. |
 
 ---
 
-## ⚙️ Development
+## ⚙️ Development Environment
 
-- **Toolchain**: Rust 1.94+ / Edition 2024.
-- **Verification**: Run `make verify` for the safety audit and regression suite.
+- **Toolchain**: Rust 1.94+ (Edition 2024).
+- **Verification**: Execute `make verify` to run the full RR-15 compliance suite and regression tests.
 
 ---
 
 ## 📜 License
 
 - **MIT License** / **Apache-2.0**
-- Aiming for a technically sound ISO 32000-2:2020 baseline.
+- Designed for technically sound compliance with the ISO 32000-2:2020 standard.

@@ -218,7 +218,7 @@ pub enum Object {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SublimatedData {
     /// Pre-parsed drawing commands (Content Streams).
-    Commands(Vec<sublimation::Command>),
+    Commands { items: Vec<sublimation::Command> },
     /// Pre-decoded image data (RGBA).
     Image { width: u32, height: u32, format: crate::graphics::PixelFormat, data: Vec<u8> },
     /// Zstd-compressed raw bytes (for Images/Fonts/Thumbnails).
@@ -282,6 +282,40 @@ impl Object {
         } else {
             self.clone()
         }
+    }
+
+    pub fn is_likely_content_stream(&self, arena: &PdfArena) -> bool {
+        if let Some(dh) = self.as_dict_handle()
+            && let Some(dict) = arena.get_dict(dh)
+        {
+            let subtype = dict
+                .get(&arena.name("Subtype"))
+                .and_then(|o| o.resolve(arena).as_name())
+                .and_then(|n| arena.get_name(n))
+                .map(|n| n.as_str().to_string());
+
+            // Standard content streams (Pages) have no Subtype.
+            // Form XObjects have /Subtype /Form.
+            if subtype.is_none() || subtype.as_deref() == Some("Form") {
+                // Robustness: Ensure it's not explicitly a different type like Image or Font
+                let type_name = dict
+                    .get(&arena.name("Type"))
+                    .and_then(|o| o.resolve(arena).as_name())
+                    .and_then(|n| arena.get_name(n))
+                    .map(|n| n.as_str().to_string());
+
+                if let Some(ref t) = type_name {
+                    if t == "XObject" || t == "Page" {
+                        return true;
+                    }
+                    if t == "Font" || t == "FontDescriptor" {
+                        return false;
+                    }
+                }
+                return true;
+            }
+        }
+        false
     }
 
     pub fn from_lopdf(

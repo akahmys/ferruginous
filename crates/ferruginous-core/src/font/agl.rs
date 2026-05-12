@@ -20,7 +20,7 @@ fn lookup_pattern(name: &str) -> Option<String> {
     } else if name.starts_with('u')
         && name.len() >= 5
         && let Ok(val) = u32::from_str_radix(&name[1..], 16)
-            && let Some(c) = std::char::from_u32(val)
+        && let Some(c) = std::char::from_u32(val)
     {
         return Some(c.to_string());
     }

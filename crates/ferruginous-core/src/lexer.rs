@@ -105,6 +105,10 @@ impl Lexer {
         Self { data, pos: 0 }
     }
 
+    pub fn get_data(&self) -> &Bytes {
+        &self.data
+    }
+
     pub fn next_token(&mut self) -> PdfResult<Token> {
         self.skip_whitespace_and_comments();
         if self.pos >= self.data.len() {

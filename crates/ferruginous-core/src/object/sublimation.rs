@@ -8,6 +8,7 @@ use kurbo::{Affine, Point};
 use serde::{Deserialize, Serialize};
 pub mod parser;
 pub mod resurrection;
+pub mod serializer;
 use crate::graphics::{Color, StrokeStyle, TextRenderingMode, WindingRule};
 use crate::object::PdfName;
 
@@ -133,6 +134,16 @@ pub enum IrObject {
     Array(Vec<IrObject>),
     Dictionary(std::collections::BTreeMap<String, IrObject>),
     Null,
+}
+
+impl IrObject {
+    pub fn as_i64(&self) -> Option<i64> {
+        match self {
+            Self::Integer(i) => Some(*i),
+            Self::Real(f) => Some(*f as i64),
+            _ => None,
+        }
+    }
 }
 
 /// An item in a text array (TJ).

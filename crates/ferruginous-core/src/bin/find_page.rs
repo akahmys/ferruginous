@@ -32,7 +32,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     SublimatedData::Image { width, height, format, .. } => {
                         println!("    Sublimated Image: {}x{}, format={:?}", width, height, format);
                     }
-                    SublimatedData::Commands(cmds) => {
+                    SublimatedData::Commands { items: cmds, .. } => {
                         println!("    Sublimated Commands: {} ops", cmds.len());
                     }
                     SublimatedData::Compressed { original_len, .. } => {
@@ -45,13 +45,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let raw_data = doc.arena().get_stream_bytes(sh).unwrap();
                 let data = doc.arena().process_filters(&raw_data, &d).unwrap_or(raw_data);
                 let data_slice: &[u8] = &data;
-                println!("    Stream Content (first 100 bytes): {:?}", &data_slice[..std::cmp::min(100, data_slice.len())]);
+                println!(
+                    "    Stream Content (first 100 bytes): {:?}",
+                    &data_slice[..std::cmp::min(100, data_slice.len())]
+                );
                 if let Ok(s) = std::str::from_utf8(data_slice) {
-                     if s.len() < 1000 {
-                         println!("    Stream Content (UTF8): \n{}", s);
-                     } else {
-                         println!("    Stream Content (UTF8): (long, {} bytes)", s.len());
-                     }
+                    let preview_len = std::cmp::min(s.len(), 10000);
+                    println!("    Stream Content (UTF8) [Preview 5000]: \n{}", &s[..preview_len]);
                 }
                 if std::env::var("EXPORT_STREAM").is_ok() {
                     let filename = format!("stream_{}.bin", dh.index());
@@ -118,7 +118,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let page_idx = page_idx_str.parse::<usize>()? - 1;
     let page = doc.get_page(page_idx)?;
     println!("Page {} loaded.", page_idx + 1);
-    
+
     for contents in page.contents_handles() {
         println!("Page Contents Handle: {:?}", contents);
         dump_resolved(&doc, Object::Reference(contents));
@@ -126,7 +126,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let res_h = page.resources_handle();
     let res_dict = doc.arena().get_dict(res_h).unwrap();
-    
+
     if let Some(egs_obj) = res_dict.get(&doc.arena().name("ExtGState")) {
         if let Some(egs_dh) = egs_obj.resolve(doc.arena()).as_dict_handle() {
             let egs_dict = doc.arena().get_dict(egs_dh).unwrap();
@@ -176,6 +176,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
-    
+
     Ok(())
 }

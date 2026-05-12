@@ -44,7 +44,8 @@ impl<'a> StructureVisitor<'a> {
                         Object::Array(h) => {
                             if let Some(array) = self.arena.get_array(h) {
                                 for kid in array.iter().rev() {
-                                    if let Some(kid_handle) = kid.resolve(self.arena).as_reference() {
+                                    if let Some(kid_handle) = kid.resolve(self.arena).as_reference()
+                                    {
                                         self.stack.push_back(kid_handle);
                                     }
                                 }
@@ -87,10 +88,7 @@ impl<'a> MatterhornAuditor<'a> {
     }
 
     /// Performs a full UA-2 structural audit.
-    pub fn audit(
-        &self,
-        root: Handle<Object>,
-    ) -> PdfResult<Vec<AuditFinding>> {
+    pub fn audit(&self, root: Handle<Object>) -> PdfResult<Vec<AuditFinding>> {
         let mut findings = Vec::new();
         let mut visitor = StructureVisitor::new(self.arena, root);
 

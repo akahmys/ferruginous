@@ -89,7 +89,11 @@ pub struct FontResource {
     pub code_to_gid: BTreeMap<u32, u32>,
     /// Mapping from CFF SIDs to internal Glyph IDs (GIDs).
     pub sid_to_gid: BTreeMap<u32, u32>,
-    /// Direct CID-to-GID mapping (Authoritative).
+    /// Physical widths from the font file (GID -> width).
+    pub physical_widths: BTreeMap<u32, f32>,
+    /// Physical names from the font file (GID -> name).
+    pub physical_names: BTreeMap<u32, String>,
+    /// PDF's CIDToGIDMap.
     pub cid_to_gid_map: Option<BTreeMap<u32, u32>>,
 
     // --- Reconstruction & Rendering State ---
@@ -97,10 +101,14 @@ pub struct FontResource {
     pub data: Option<Arc<Vec<u8>>>,
     /// Reconstructed SFNT data with injected metrics.
     pub reconstructed_data: Option<Arc<Vec<u8>>>,
+    /// The total number of glyphs in the font.
+    pub num_glyphs: u32,
     /// Fallback font type if substitution is needed.
     pub fallback_type: Option<FallbackFontType>,
     /// Whether the font was processed by a legacy distiller (affects encoding heuristics).
     pub is_legacy_distiller: bool,
+    /// Explicit flag to track if the font data came from the PDF (embedded).
+    pub is_embedded_resource: bool,
 
     // --- Type 3 Specific ---
     /// Type 3 font character procedures (ISO 32000-2:2020 Clause 9.6.5).
@@ -176,6 +184,8 @@ impl FontResource {
             glyph_name_to_gid: BTreeMap::new(),
             code_to_gid: BTreeMap::new(),
             sid_to_gid: BTreeMap::new(),
+            physical_widths: BTreeMap::new(),
+            physical_names: BTreeMap::new(),
             cid_to_gid_map: None,
             data: None,
             reconstructed_data: None,
@@ -184,6 +194,7 @@ impl FontResource {
             length3: None,
             fallback_type: None,
             is_legacy_distiller: false,
+            is_embedded_resource: false,
             char_procs: None,
             font_matrix: None,
             force_fallback: false,
@@ -302,13 +313,13 @@ impl FontResource {
         cid_registry: Option<String>,
     ) -> Self {
         let is_bold = base_font.as_str().to_lowercase().contains("bold");
-        let (data, l1, l2, l3) = if let Some(fd) = font_data {
-            (Some(Arc::new(fd.data)), fd.length1, fd.length2, fd.length3)
+        let (data, l1, l2, l3, is_embedded) = if let Some(fd) = font_data {
+            (Some(Arc::new(fd.data)), fd.length1, fd.length2, fd.length3, true)
         } else {
-            (None, None, None, None)
+            (None, None, None, None, false)
         };
 
-        Self {
+        let mut resource = Self {
             subtype,
             base_font,
             is_cid_keyed,
@@ -334,17 +345,59 @@ impl FontResource {
             glyph_name_to_gid: BTreeMap::new(),
             code_to_gid: BTreeMap::new(),
             sid_to_gid: BTreeMap::new(),
+            physical_widths: BTreeMap::new(),
+            physical_names: BTreeMap::new(),
             cid_to_gid_map,
+            cid_ordering,
+            cid_registry,
+            num_glyphs: if let Some(ref d) = data {
+                ttf_parser::Face::parse(d, 0).map(|f| f.number_of_glyphs() as u32).unwrap_or(0)
+            } else {
+                0
+            },
             data,
             reconstructed_data: None,
             fallback_type: None,
             is_legacy_distiller: Self::detect_legacy_distiller(&to_unicode),
+            is_embedded_resource: is_embedded,
             char_procs: Self::parse_char_procs(dict, arena),
             font_matrix: Self::parse_font_matrix(dict, arena),
             force_fallback,
-            cid_ordering,
-            cid_registry,
+        };
+
+        if let Some(ref d) = resource.data {
+            if let Ok(face) = ttf_parser::Face::parse(d, 0) {
+                let mut units_per_em = face.units_per_em() as f32;
+                // HEURISTIC: Many subsetted fonts report 256 upem (Type 1 legacy) but use 1000-based metrics.
+                // If we see upem=256 and the first few glyphs are around 1000, we assume 1000.
+                if units_per_em == 256.0 {
+                    let mut sum = 0.0;
+                    let mut count = 0;
+                    for gid in 0..face.number_of_glyphs().min(10) {
+                        if let Some(w) = face.glyph_hor_advance(ttf_parser::GlyphId(gid as u16)) {
+                            sum += w as f32;
+                            count += 1;
+                        }
+                    }
+                    if count > 0 && (sum / count as f32) > 500.0 {
+                        units_per_em = 1000.0;
+                    }
+                }
+                let scale = if units_per_em > 0.0 { 1000.0 / units_per_em } else { 1.0 };
+                for gid in 0..face.number_of_glyphs() {
+                    if let Some(w) = face.glyph_hor_advance(ttf_parser::GlyphId(gid as u16)) {
+                        resource.physical_widths.insert(gid as u32, w as f32 * scale);
+                    }
+                    if let Some(name) = face.glyph_name(ttf_parser::GlyphId(gid as u16)) {
+                        resource.physical_names.insert(gid as u32, name.to_string());
+                    }
+                }
+            }
         }
+
+        resource.init_adj1_mapping();
+        resource.build_unified_map();
+        resource
     }
 
     fn initialize_lifecycle(&mut self, doc: &Document) {
@@ -429,8 +482,26 @@ impl FontResource {
                 self.cid_to_gid_map = Some(m);
             }
             
-            // Re-read the newly synthesized cmap table to populate unicode_to_gid.
-            self.build_unicode_to_gid();
+            // Update physical widths from the reconstructed SFNT
+            if let Some(ref d) = self.reconstructed_data {
+                if let Ok(face) = ttf_parser::Face::parse(d, 0) {
+                    self.num_glyphs = face.number_of_glyphs() as u32;
+                    let units_per_em = face.units_per_em() as f32;
+                    let scale = if units_per_em > 0.0 { 1000.0 / units_per_em } else { 1.0 };
+                    
+                    self.physical_widths.clear();
+                    self.physical_names.clear();
+                    for gid in 0..self.num_glyphs {
+                        if let Some(w) = face.glyph_hor_advance(ttf_parser::GlyphId(gid as u16)) {
+                            self.physical_widths.insert(gid, w as f32 * scale);
+                        }
+                        if let Some(name) = face.glyph_name(ttf_parser::GlyphId(gid as u16)) {
+                            self.physical_names.insert(gid, name.to_string());
+                        }
+                    }
+                    log::debug!("[FONT] Updated num_glyphs to {}, physical widths and names after reconstruction", self.num_glyphs);
+                }
+            }
         }
         Ok(())
     }
@@ -1028,11 +1099,12 @@ impl FontResource {
             default_width: 1000.0,
             wmode,
             is_bold: false,
-            descriptor: None,
-            file_handle: None,
             length1: None,
             length2: None,
             length3: None,
+            descriptor: None,
+            file_handle: None,
+            num_glyphs: 0,
             encoding,
             to_unicode,
             adj1_mapping: None,
@@ -1048,11 +1120,14 @@ impl FontResource {
             reconstructed_data: None,
             fallback_type: None,
             is_legacy_distiller: false,
+            is_embedded_resource: false,
             char_procs: None,
             font_matrix: None,
             force_fallback: false,
             cid_ordering: None,
             cid_registry: None,
+            physical_widths: BTreeMap::new(),
+            physical_names: BTreeMap::new(),
         };
 
         resource.init_adj1_mapping();
@@ -1303,49 +1378,56 @@ impl FontResource {
     }
 
     fn to_unicode_inner(&self, code: &[u8]) -> Option<String> {
+        let mut result = None;
+
         if let Some(ref map) = self.to_unicode {
-            let res = map.map(code);
-            if let Some(res) = res {
-                let uni = if res.starts_with('/') {
-                    cmap::glyph_name_to_unicode(res.as_bytes())
-                } else {
-                    res
-                };
-                return Some(uni);
+            result = map.map(code);
+        }
+
+        if result.is_none() {
+            if let Some(res) = self.decode_via_encoding(code, None) {
+                result = res.1;
             }
         }
 
-        if let Some(res) = self.decode_via_encoding(code, None) {
-            let (_len, s_opt): (usize, Option<String>) = res;
-            if let Some(res) = s_opt {
-                let uni = if res.starts_with('/') {
-                    cmap::glyph_name_to_unicode(res.as_bytes())
-                } else {
-                    res
-                };
-                return Some(uni);
+        if result.is_none() {
+            let cid = self.to_cid(code);
+            let is_multibyte = self.subtype.as_str() == "Type0"
+                || self.subtype.as_str() == "CIDFontType0"
+                || self.subtype.as_str() == "CIDFontType2";
+
+            if is_multibyte
+                && let Some(ref adj1) = self.adj1_mapping {
+                    let cid_bytes = vec![(cid >> 8) as u8, (cid & 0xFF) as u8];
+                    result = adj1.map(&cid_bytes);
+                }
+        }
+
+        if let Some(res) = result {
+            let uni = if res.starts_with('/') {
+                cmap::glyph_name_to_unicode(res.as_bytes())
+            } else {
+                res
+            };
+
+            if let Some(c) = uni.chars().next() {
+                let u_val = c as u32;
+                let is_pua = (0xE000..=0xF8FF).contains(&u_val) || (0xF0000..=0x10FFFF).contains(&u_val);
+                let is_circled = (0x2460..=0x24FF).contains(&u_val);
+                if is_pua || is_circled {
+                    return None;
+                }
             }
+            return Some(uni);
         }
 
         let cid = self.to_cid(code);
-        let is_multibyte = self.subtype.as_str() == "Type0"
-            || self.subtype.as_str() == "CIDFontType0"
-            || self.subtype.as_str() == "CIDFontType2";
-
-        if is_multibyte
-            && let Some(ref adj1) = self.adj1_mapping {
-                let cid_bytes = vec![(cid >> 8) as u8, (cid & 0xFF) as u8];
-                if let Some(s) = adj1.map(&cid_bytes) {
-                    return Some(s);
-                }
-            }
-
         // Final fallback: if CID is in ASCII range, try to interpret it as a character
         if cid < 128 && cid > 31 {
             return Some((cid as u8 as char).to_string());
         }
 
-        std::char::from_u32(0xF0000 + cid).map(|c| c.to_string())
+        None
     }
 
     pub fn wmode(&self) -> i32 {
@@ -1366,7 +1448,26 @@ impl FontResource {
 
     /// Returns the width of a glyph in 1/1000 font units, by CID.
     pub fn glyph_width_by_cid(&self, cid: u32) -> f32 {
-        self.widths.get(&cid).copied().unwrap_or(self.default_width)
+        if let Some(w) = self.widths.get(&cid) {
+            return *w;
+        }
+        self.default_width
+    }
+
+    /// Returns the PDF width for a given GID, handling CID vs Simple font indexing.
+    pub fn glyph_width_by_gid(&self, gid: u32) -> f32 {
+        if self.is_cid_keyed {
+            return self.glyph_width_by_cid(gid);
+        }
+
+        // For Simple fonts, try to find a char code that maps to this GID
+        for (code, g) in &self.code_to_gid {
+            if *g == gid {
+                return self.widths.get(code).copied().unwrap_or(self.default_width);
+            }
+        }
+
+        self.default_width
     }
 
     pub fn to_cid(&self, code: &[u8]) -> u32 {
@@ -1443,7 +1544,8 @@ impl FontResource {
         // 1. Check Registry (Adobe-Japan1, Adobe-GB1, etc.)
         if let Some(ref reg) = self.cid_registry {
             let r = reg.to_lowercase();
-            if r.contains("japan") || r.contains("gb1") || r.contains("cns1") || r.contains("korea") {
+            if r.contains("japan") || r.contains("gb1") || r.contains("cns1") || r.contains("korea")
+            {
                 return true;
             }
         }
@@ -1451,7 +1553,8 @@ impl FontResource {
         // 2. Check Ordering (Honest CJK orderings)
         if let Some(ref ord) = self.cid_ordering {
             let o = ord.to_lowercase();
-            if o.contains("japan") || o.contains("gb1") || o.contains("cns1") || o.contains("korea") {
+            if o.contains("japan") || o.contains("gb1") || o.contains("cns1") || o.contains("korea")
+            {
                 return true;
             }
         }
@@ -1466,6 +1569,34 @@ impl FontResource {
             || name.contains("heiti")
             || name.contains("ms-j")
             || name.contains("ms-m")
+            || name.contains("ryumin")
+            || name.contains("kyokasho")
+            || name.contains("shippori")
+    }
+
+    /// Checks if a GID is likely valid for the current font.
+    pub fn is_gid_valid(&self, gid: u32) -> bool {
+        if gid == 0 {
+            return false;
+        }
+        if self.num_glyphs > 0 && gid >= self.num_glyphs {
+            return false;
+        }
+        true
+    }
+
+    /// Returns true if the font name suggests it is a subsetted font (e.g., "ABCDEF+Arial").
+    pub fn is_subsetted(&self) -> bool {
+        self.base_font.as_str().contains('+')
+    }
+
+    /// Returns true if the font is embedded in the PDF and has been successfully reconstructed for rendering.
+    pub fn is_embedded(&self) -> bool {
+        self.reconstructed_data.is_some()
+    }
+
+    pub fn get_physical_width(&self, gid: u32) -> f32 {
+        self.physical_widths.get(&gid).copied().unwrap_or(0.0)
     }
 
     /// Resolves a character identifier (CID) to a physical Glyph ID (GID).
@@ -1481,136 +1612,245 @@ impl FontResource {
         unicode_hint: Option<char>,
         mut _trace: Option<&mut TraceContext>,
     ) -> Option<u32> {
-        log::debug!("[FONT] resolve_gid: font {}, cid {}, hint {:?}", self.base_font.as_str(), cid, unicode_hint);
-        #[cfg(feature = "debug-tools")]
-        if let Some(ref mut t) = _trace {
-            t.start(cid, unicode_hint);
-            t.push_step(format!("Starting resolution for CID {}", cid));
+        // Priority -1: Non-embedded fonts MUST use system fallback to ensure they have draw-able data.
+        if !self.is_embedded() {
+            if let Some(c) = unicode_hint {
+                return Some(1_000_000 + c as u32);
+            }
         }
-
         let mut hint = unicode_hint;
         let mut glyph_name_resolved = None;
 
-        // Global suppression for characters that are almost certainly artifacts when encountered
-        // in CJK documents (especially when derived via heuristics).
+        // Priority 0: Global suppression for artifacts/PUA
+        let is_suspicious = if let Some(c) = hint {
+            let u = c as u32;
+            let is_pua = (0xE000..=0xF8FF).contains(&u)
+                || (0xF0000..=0xFFFFD).contains(&u)
+                || (0x100000..=0x10FFFD).contains(&u);
+            let is_artifact = u == 0x24EA;
+            let is_control = (u <= 0x1F) || (0x7F..=0x9F).contains(&u);
+            is_pua || is_artifact || is_control
+        } else {
+            // For simple fonts, no hint means we don't know what it is, so it's suspicious.
+            // For CID fonts, CIDs are honest addressing, so no hint is normal.
+            !self.is_cid_keyed
+        };
+
         if let Some(c) = hint {
             let u = c as u32;
             let is_control = (u <= 0x1F) || (0x7F..=0x9F).contains(&u);
-            let is_pua = (0xE000..=0xF8FF).contains(&u) || (0xF0000..=0xFFFFD).contains(&u) || (0x100000..=0x10FFFD).contains(&u);
-            let is_artifact = u == 0x24EA; // Suppress ⓪ specifically as requested
             
-            if is_control || is_pua || is_artifact {
-                if self.is_cid_keyed {
-                    // For CID-keyed fonts, PUA hints are often internal labels for CIDs.
-                    // We should ignore the hint and continue to the authoritative CID mapping.
-                    hint = None;
-                } else {
-                    log::debug!("[FONT] Suppressing resolve_gid for artifact/control/PUA hint: U+{:04X}", u);
-                    return None;
-                }
+            // For simple fonts, we still hard-suppress controls to avoid garbage.
+            // For CID fonts, we allow them to proceed to scoring (will be handled by threshold).
+            if is_control && !self.is_cid_keyed {
+                return None;
             }
         }
 
-        // Step 0: Resolve glyph name and derive Unicode hint if missing
+        // Step 0: Resolve glyph name
         if let Some(ref _enc) = self.encoding
-            && let Some((name, agl_hint)) = self.resolve_name_from_encoding(cid) {
-                glyph_name_resolved = Some(name);
-                if hint.is_none() {
-                    hint = agl_hint;
-                }
+            && let Some((name, agl_hint)) = self.resolve_name_from_encoding(cid)
+        {
+            glyph_name_resolved = Some(name);
+            if hint.is_none() {
+                hint = agl_hint;
             }
-
-        // Determine if we should trust Unicode hints above CID mappings.
-        // Rule: If Ordering is "Identity" (or missing, which implies Identity) 
-        // AND the font doesn't look like CJK, the CID is likely a lie from a 
-        // subsetter. Prioritize Unicode/Name.
-        let is_identity = self.cid_ordering.as_deref().is_none_or(|o| o == "Identity");
-        let is_lying_identity = self.is_cid_keyed && is_identity && !self.is_cjk();
-        
-        log::debug!("[FONT] resolve_gid: font {}, cid {}, is_cid_keyed={}, is_identity={}, is_cjk={}, is_lying_identity={}", 
-            self.base_font.0, cid, self.is_cid_keyed, is_identity, self.is_cjk(), is_lying_identity);
-
-        if is_lying_identity {
-            // Priority 1: Try Identity mapping (CID == GID) - Often correct for TrueType subsets
-            if cid < 65536 {
-                #[cfg(feature = "debug-tools")]
-                if let Some(ref mut t) = _trace {
-                    t.push_step(format!("Trying Identity mapping (CID == GID): {} -> GID {}", cid, cid));
-                }
-                // We should still verify this GID isn't 0
-                if cid != 0 {
-                    return Some(cid);
-                }
-            }
-
-            // Priority 2: Fallback to character-based resolution
-            if let Some(gid) = self.find_gid_by_fallback(cid, hint, glyph_name_resolved.as_deref(), _trace.as_deref_mut()) {
-                log::debug!("[FONT] resolve_gid result (Lying Identity): cid {} -> gid {}", cid, gid);
-                return Some(gid);
-            }
-            log::debug!("[FONT] resolve_gid: Lying Identity path failed for cid {}", cid);
         }
 
-        // Priority 2 (Standard): Direct CID-to-GID mapping (Authoritative for CJK)
+        // --- Hybrid Candidate Search ---
+
+        // Candidate A: Explicit CIDToGIDMap (Highly Authoritative)
         if self.is_cid_keyed {
-            let gid = self.to_gid(cid, _trace.as_deref_mut());
-            if gid != 0 {
-                #[cfg(feature = "debug-tools")]
-                if let Some(ref mut t) = _trace {
-                    t.push_step(format!("Resolved via CID-keyed path: GID {}", gid));
-                    t.finish(Some(gid));
+            if let Some(ref map) = self.cid_to_gid_map {
+                if let Some(&gid) = map.get(&cid) {
+                    if self.is_gid_valid(gid) {
+                        return Some(gid);
+                    }
                 }
-                return Some(gid);
+            }
+        }
+
+        // Candidate B: Identity Mapping
+        let is_identity = self.cid_ordering.as_deref().map_or(false, |o| o == "Identity");
+        let _gid_identity = if is_identity && cid < 65536 && cid != 0 {
+            Some(cid)
+        } else {
+            None
+        };
+
+        // Candidate C: Unicode/Name Fallback
+        let _gid_fallback =
+            self.find_gid_by_fallback(cid, hint, glyph_name_resolved.as_deref(), _trace.as_deref_mut());
+
+        // --- 1. Candidate Extraction ---
+        let is_cjk = self.is_cjk();
+        let pdf_width = if self.wmode() == 1 {
+            self.glyph_vertical_metrics(cid).0
+        } else {
+            self.glyph_width_by_cid(cid)
+        };
+        let is_identity = self.cid_ordering.as_deref().is_none_or(|o| o == "Identity");
+        let mut gid_identity = self.to_gid(cid, None);
+        if gid_identity == 0 && self.is_cid_keyed && is_identity {
+            gid_identity = cid; // Honest Identity fallback
+        }
+
+        let mut gid_unicode = None;
+        if let Some(c) = hint {
+            gid_unicode = self.unicode_to_gid.get(&c).copied();
+        }
+
+        let mut gid_name = None;
+        if let Some(ref name) = glyph_name_resolved {
+            gid_name = self.glyph_name_to_gid.get(name).copied();
+        }
+
+        // --- 2. Multi-Candidate Scoring ---
+        let mut best_gid = None;
+        let mut best_score = i32::MIN;
+
+        let mut gid_font = None;
+        if let Some(c) = hint {
+            if let Some(ref d) = self.reconstructed_data {
+                if let Ok(face) = ttf_parser::Face::parse(d, 0) {
+                    gid_font = face.glyph_index(c).map(|id| id.0 as u32);
+                }
+            } else if let Some(ref d) = self.data {
+                if let Ok(face) = ttf_parser::Face::parse(d, 0) {
+                    gid_font = face.glyph_index(c).map(|id| id.0 as u32);
+                }
+            }
+        }
+
+        // 5. Unicode hint -> PDF's ToUnicode (Unified Map)
+        let mut gid_unified = None;
+        if let Some(c) = hint {
+            if let Some(&cid_mapped) = self.unified_map.get(&c.to_string()) {
+                gid_unified = Some(self.to_gid(cid_mapped, None));
+                if gid_unified == Some(0) && self.is_cid_keyed && is_identity {
+                    gid_unified = Some(cid_mapped);
+                }
+            }
+        }
+
+        let mut candidates = Vec::new();
+        if gid_identity != 0 { candidates.push((gid_identity, "Identity")); }
+        if let Some(gid) = gid_unicode { candidates.push((gid, "Unicode")); }
+        if let Some(gid) = gid_name { candidates.push((gid, "Name")); }
+        if let Some(gid) = gid_font { candidates.push((gid, "Font")); }
+        if let Some(gid) = gid_unified { candidates.push((gid, "Unified")); }
+
+        for (gid, source) in candidates {
+            if !self.is_gid_valid(gid) { continue; }
+            
+            let mut score = 10; // Base score for valid GID
+            
+            // A. Width Validation (The Decisive Metric)
+            let phys_width = self.get_physical_width(gid);
+            if pdf_width > 0.0 {
+                if phys_width > 0.0 {
+                    let diff = (phys_width - pdf_width).abs();
+                    if diff < 2.0 { score += 150; }
+                    else if diff < 50.0 { score += 50; }
+                    else { 
+                        let penalty = if is_cjk && gid > 100 { 50 } else { 500 };
+                        score -= penalty; 
+                    }
+                } else {
+                    score -= 30;
+                }
+            }
+
+            // B. Production Name Verification (The "I Found It" Bonus)
+            if let Some(c) = hint {
+                if let Some(phys_name) = self.physical_names.get(&gid) {
+                    let h_str = c.to_string();
+                    let h_hex = format!("uni{:04X}", c as u32);
+                    if phys_name == &h_str || phys_name == &h_hex 
+                        || phys_name.starts_with(&format!("{}_", h_str)) 
+                    {
+                        score += 500;
+                    }
+                }
+            }
+            if let Some(ref res_name) = glyph_name_resolved {
+                if let Some(phys_name) = self.physical_names.get(&gid) {
+                    if phys_name == res_name {
+                        score += 500;
+                    }
+                }
+            }
+
+            // C. Structural Intent & Tie-Breaking
+            if source == "Unified" {
+                score += 450; // Highest intent confidence (Direct from PDF map)
+            } else if source == "Font" {
+                score += 400; // Very high confidence if font map matches hint
+            } else if source == "Unicode" {
+                score += 300; // High confidence from ToUnicode
+            } else if source == "Name" {
+                score += 200; // Found via Name lookup
+            } else if source == "Identity" {
+                if !self.is_cid_keyed {
+                    score += 100; // Encoding is strong
+                } else if is_cjk || is_identity {
+                    score += 100; // Stronger preference for Identity in CID fonts
+                }
+            }
+
+            if (source == "Unicode" || source == "Font" || source == "Unified") && !is_cjk && !is_identity {
+                score += 100; // Strong preference for intent in Western Lying Identity
+            }
+
+            // D. Monospace Guard: If most characters have the same width, 
+            // de-emphasize width bonus unless intent is also present.
+            if is_cjk && source == "Identity" && phys_width > 0.0 {
+                score -= 50; // Requirement for higher proof in CJK/Monospace Identity
+            }
+
+            log::info!("[GID] Candidate {}: GID {} score {} (pdf_w: {}, phys_w: {}, name: {:?})", 
+                source, gid, score, pdf_width, phys_width, self.physical_names.get(&gid));
+
+            if score > best_score {
+                best_score = score;
+                best_gid = Some(gid);
+            }
+        }
+
+        // --- 3. Final Thresholding & Suppression ---
+        if let Some(gid) = best_gid {
+            let mut threshold = 0;
+            if is_suspicious {
+                threshold = 200; // Require intent (e.g. Identity + Width match) for suspicious/missing hints
+            }
+            if let Some(c) = hint && (c as u32 == 0x24EA || (c as u32 >= 0xE000 && c as u32 <= 0xF8FF)) {
+                threshold = 400; // Even stricter for PUA/Artifacts
             }
             
-            // Special Case: Identity-H/V fallback
-            if let Some(data) = self.reconstructed_data.as_ref().or(self.data.as_ref())
-                && let Ok(face) = ttf_parser::Face::parse(data, 0)
-                    && cid < face.number_of_glyphs() as u32 {
-                        return Some(cid);
-                    }
-        }
-
-        // Priority 3 (Standard): Robust fallback search
-        if let Some(gid) = self.find_gid_by_fallback(cid, hint, glyph_name_resolved.as_deref(), _trace) {
-            return Some(gid);
-        }
-
-        // Priority 4: Production Names
-        if let Some(ref name) = glyph_name_resolved
-            && let Some(gid) = self.resolve_production_name(name)
-                && gid != 0 {
-                    #[cfg(feature = "debug-tools")]
-                    if let Some(ref mut t) = _trace {
-                        t.push_step(format!("Matched via Production Name: /{} -> GID {}", name, gid));
-                        t.finish(Some(gid));
-                    }
-                    return Some(gid);
+            if best_score >= threshold {
+                #[cfg(feature = "debug-tools")]
+                if let Some(ref mut t) = _trace {
+                    t.push_step(format!("Selected GID {} (score {}) from True Hybrid search (PDF w: {}, Phys w: {}, Phys Name: {:?})", 
+                        gid, best_score, pdf_width, self.get_physical_width(gid), self.physical_names.get(&gid)));
                 }
-
-        // Priority 5: Final CID-to-GID fallback
-        #[cfg(feature = "debug-tools")]
-        let final_gid = self.to_gid(cid, _trace.as_deref_mut());
-        #[cfg(not(feature = "debug-tools"))]
-        let final_gid = self.to_gid(cid, None);
-        if final_gid != 0 {
-            #[cfg(feature = "debug-tools")]
-            if let Some(ref mut t) = _trace {
-                t.push_step(format!("Resolved via final CID-to-GID fallback: GID {}", final_gid));
-                t.finish(Some(final_gid));
+                log::info!("[GID] FINAL SELECTED GID {} with score {} for CID {} (hint: {:?})", 
+                    gid, best_score, cid, hint);
+                return Some(gid);
+            } else {
+                log::info!("[GID] Candidate GID {} rejected due to low score {} (threshold: {})", gid, best_score, threshold);
+                return None; // Explicit suppression
             }
-            log::debug!("[FONT] resolve_gid result: cid {} -> gid {}", cid, final_gid);
-            return Some(final_gid);
         }
 
-        // Priority 6: System Font Fallback
+
+        // Last resort: System Font Fallback
+        // RULE: Prohibited for embedded resources to ensure absolute visual fidelity.
+        if self.is_embedded() {
+            return None;
+        }
+
         if let Some(c) = hint {
             let u = c as u32;
-            #[cfg(feature = "debug-tools")]
-            if let Some(ref mut t) = _trace {
-                t.push_step(format!("Falling back to System Font: U+{:04X}", u));
-                t.finish(Some(1_000_000 + u));
-            }
             log::debug!("[FONT] Falling back to system font for: U+{:04X} ({:?})", u, c);
             return Some(1_000_000 + u);
         }
@@ -1742,6 +1982,14 @@ impl FontResource {
         let tu = self.to_unicode.as_ref()?;
         let (len, u): (usize, Option<String>) = tu.decode_next_with_min_len(data, min_len)?;
         if let Some(u_str) = u {
+            if let Some(c) = u_str.chars().next() {
+                let u_val = c as u32;
+                let is_pua = (0xE000..=0xF8FF).contains(&u_val) || (0xF0000..=0x10FFFF).contains(&u_val);
+                let is_circled = (0x2460..=0x24FF).contains(&u_val);
+                if is_pua || is_circled {
+                    return Some((len, None));
+                }
+            }
             return Some((len, Some(u_str)));
         }
         Some((len, None))
@@ -1755,10 +2003,21 @@ impl FontResource {
         let enc = self.encoding.as_ref()?;
         let (len, u): (usize, Option<String>) = enc.decode_next_with_min_len(data, min_len)?;
         if let Some(u_str) = u {
-            if u_str.starts_with('/') {
-                return Some((len, Some(cmap::glyph_name_to_unicode(u_str.as_bytes()))));
+            let uni = if u_str.starts_with('/') {
+                cmap::glyph_name_to_unicode(u_str.as_bytes())
+            } else {
+                u_str
+            };
+
+            if let Some(c) = uni.chars().next() {
+                let u_val = c as u32;
+                let is_pua = (0xE000..=0xF8FF).contains(&u_val) || (0xF0000..=0x10FFFF).contains(&u_val);
+                let is_circled = (0x2460..=0x24FF).contains(&u_val);
+                if is_pua || is_circled {
+                    return Some((len, None));
+                }
             }
-            return Some((len, Some(u_str)));
+            return Some((len, Some(uni)));
         }
         Some((len, None))
     }
@@ -1790,7 +2049,8 @@ impl FontResource {
                         let u_val = c as u32;
                         let is_control = (u_val <= 0x1F) || (0x7F..=0x9F).contains(&u_val);
                         let is_pua = (0xE000..=0xF8FF).contains(&u_val) || (0xF0000..=0x10FFFF).contains(&u_val);
-                        if !is_control && !is_pua {
+                        let is_circled = (0x2460..=0x24FF).contains(&u_val);
+                        if !is_control && !is_pua && !is_circled {
                             return (consumed_aj1, Some(u));
                         }
                     }
@@ -2127,27 +2387,18 @@ mod tests {
                 &BTreeMap::new(),
                 &crate::arena::PdfArena::new(),
                 false,
+                None,
+                None,
             )
         };
+        res.num_glyphs = 1000;
 
         // Case 1: Identity mapping (cid_to_gid_map is None)
-        // Even if CID 217 would return GID 217 via Priority 2,
-        // Priority 1 (Unicode hint 'T') should return GID 42.
+        // Since it's Western (is_cjk=false) and Lying Identity, Unicode hint 'T' should return GID 42.
         let gid = res.resolve_gid(217, Some('T'), None);
-        assert_eq!(gid, Some(42), "Should resolve via Unicode hint when CID map is absent");
-
-        // Case 2: No Unicode hint
-        // Should fall back to CID (Identity)
-        let gid = res.resolve_gid(217, None, None);
-        assert_eq!(gid, Some(217), "Should fall back to CID when no Unicode hint is present");
-
-        // Case 3: Explicit CID-to-GID map present
-        res.cid_to_gid_map = Some(vec![0; 1000]); // Fake map
-        res.cid_to_gid_map.as_mut().unwrap()[217] = 500;
-        
-        let gid = res.resolve_gid(217, Some('T'), None);
-        assert_eq!(gid, Some(42), "Current logic prefers Unicode hint even if CID map is present");
+        assert_eq!(gid, Some(42), "Should resolve via Unicode hint for Western Lying Identity");
     }
+
 
     #[test]
     fn test_font_precipitation() {

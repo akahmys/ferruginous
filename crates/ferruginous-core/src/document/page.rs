@@ -91,7 +91,10 @@ impl<'a> Page<'a> {
             Some(Object::Reference(h)) => vec![h],
             Some(Object::Stream(_, _)) => {
                 // If it's a direct stream, we need to find its handle in the arena.
-                self.arena.find_object(&self.get_attribute("Contents").unwrap()).into_iter().collect()
+                self.arena
+                    .find_object(&self.get_attribute("Contents").unwrap())
+                    .into_iter()
+                    .collect()
             }
             _ => Vec::new(),
         }

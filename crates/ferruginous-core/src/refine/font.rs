@@ -20,16 +20,17 @@ pub fn normalize_font(
     }
 
     let subtype = dict.get(&subtype_key).and_then(|o| o.as_str()).map(|s| s.to_string());
-    let is_embedded = resource.map(|r| r.data.is_some()).unwrap_or(false);
+    if let Some(resource) = resource
+        && resource.subtype.as_str() == "Type0"
+    {
+        normalize_type0_font(&mut dict, Some(resource));
+    }
 
     if let Some(st_str) = subtype {
-        if st_str == "Type0" && is_embedded {
-            normalize_type0_font(&mut dict, resource);
-        }
-
         // CIDFonts (descendants) need CIDToGIDMap Identity if missing
         if st_str == "CIDFontType0" || st_str == "CIDFontType2" {
-            dict.entry(PdfName::new("CIDToGIDMap")).or_insert_with(|| RefinedObject::Name(PdfName::new("Identity")));
+            dict.entry(PdfName::new("CIDToGIDMap"))
+                .or_insert_with(|| RefinedObject::Name(PdfName::new("Identity")));
         }
     }
 
@@ -37,28 +38,21 @@ pub fn normalize_font(
 }
 
 fn normalize_type0_font(
-    _dict: &mut BTreeMap<PdfName, RefinedObject>,
-    _resource: Option<&FontResource>,
+    dict: &mut BTreeMap<PdfName, RefinedObject>,
+    resource: Option<&FontResource>,
 ) {
-    // HARDENING: Do NOT override the original Encoding unless we are 100% sure we can restructure the stream.
-    /*
-    let encoding_name = if resource.map(|r| r.wmode == 1).unwrap_or(false) {
-        "Identity-V"
-    } else {
-        "Identity-H"
-    };
+    let resource = resource.unwrap();
+    let encoding_name = if resource.wmode == 1 { "Identity-V" } else { "Identity-H" };
     dict.insert(PdfName::new("Encoding"), RefinedObject::Name(PdfName::new(encoding_name)));
-    */
 
-    // HARDENING: Do NOT inject inline streams into the dictionary.
-    // PDF 1.7+ requires ToUnicode to be an indirect object.
-    /*
-    if let Some(unicode_bytes) = resource.and_then(|res| res.generate_standard_tounicode()) {
-        let mut uni_dict = BTreeMap::new();
-        uni_dict.insert(PdfName::new("Length"), RefinedObject::Integer(unicode_bytes.len() as i64));
-        dict.insert(PdfName::new("ToUnicode"), RefinedObject::Stream(uni_dict, Bytes::from(unicode_bytes)));
+    // HARDENING: Only inject a generated ToUnicode map if it's missing.
+    // This prevents clobbering authoritative subset mappings in documents like unicode_16.pdf.
+    if let std::collections::btree_map::Entry::Vacant(e) = dict.entry(PdfName::new("ToUnicode"))
+        && let Some(uni_map) = resource.generate_standard_tounicode()
+        && !uni_map.is_empty()
+    {
+        e.insert(RefinedObject::Stream(BTreeMap::new(), bytes::Bytes::from(uni_map)));
     }
-    */
 }
 
 /// Normalizes a CMap stream to a canonical PDF 2.0 form.

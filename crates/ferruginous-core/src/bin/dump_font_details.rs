@@ -1,6 +1,6 @@
 use ferruginous_core::document::Document;
-use ferruginous_core::object::Object;
 use ferruginous_core::handle::Handle;
+use ferruginous_core::object::Object;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
@@ -25,7 +25,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("\nEncoding details:");
             let resolved = enc_obj.resolve(arena);
             match resolved {
-                Object::Name(nh) => println!("  Predefined: {}", arena.get_name(nh).unwrap().as_str()),
+                Object::Name(nh) => {
+                    println!("  Predefined: {}", arena.get_name(nh).unwrap().as_str())
+                }
                 Object::Dictionary(edh) => {
                     let edict = arena.get_dict(edh).unwrap();
                     if let Some(base_enc) = edict.get(&arena.name("BaseEncoding")) {
@@ -33,18 +35,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     if let Some(diffs) = edict.get(&arena.name("Differences")) {
                         println!("  Differences: {:?}", diffs.resolve(arena));
-                        if let Object::Array(ah) = diffs.resolve(arena) {
-                            if let Some(arr) = arena.get_array(ah) {
-                                let mut current_code = 0;
-                                for item in arr {
-                                    match item {
-                                        Object::Integer(i) => current_code = i,
-                                        Object::Name(nh) => {
-                                            println!("    {} -> /{}", current_code, arena.get_name(nh).unwrap().as_str());
-                                            current_code += 1;
-                                        }
-                                        _ => {}
+                        if let Object::Array(ah) = diffs.resolve(arena)
+                            && let Some(arr) = arena.get_array(ah)
+                        {
+                            let mut current_code = 0;
+                            for item in arr {
+                                match item {
+                                    Object::Integer(i) => current_code = i,
+                                    Object::Name(nh) => {
+                                        println!(
+                                            "    {} -> /{}",
+                                            current_code,
+                                            arena.get_name(nh).unwrap().as_str()
+                                        );
+                                        current_code += 1;
                                     }
+                                    _ => {}
                                 }
                             }
                         }

@@ -53,12 +53,12 @@ impl FontFormat {
         }
 
         // 1. SFNT Signatures (OTTO, 0x00 0x01 0x00 0x00, ttcf, true)
-        if data.len() >= 4 && (
-            data.starts_with(b"OTTO")
+        if data.len() >= 4
+            && (data.starts_with(b"OTTO")
                 || data.starts_with(&[0, 1, 0, 0])
                 || data.starts_with(b"ttcf")
-                || data.starts_with(b"true")
-        ) {
+                || data.starts_with(b"true"))
+        {
             return FontFormat::Sfnt;
         }
 
@@ -88,17 +88,18 @@ impl FontFormat {
 
 impl FontReconstructor {
     /// Reconstructs a font by injecting PDF metrics into the provided SFNT data.
-    /// 
+    ///
     /// This method performs surgical patching of font tables (hmtx, cmap) to align
     /// the physical font file with the metrics declared in the PDF document.
-    pub fn reconstruct(
-        resource: &FontResource,
-        raw_data: &[u8],
-    ) -> PdfResult<ReconstructedFont> {
+    pub fn reconstruct(resource: &FontResource, raw_data: &[u8]) -> PdfResult<ReconstructedFont> {
         let format = FontFormat::detect(raw_data);
-        log::debug!("[RECONSTRUCT] Starting reconstruction for {} (format: {:?}, size: {} bytes)", 
-            resource.base_font.as_str(), format, raw_data.len());
-        
+        log::debug!(
+            "[RECONSTRUCT] Starting reconstruction for {} (format: {:?}, size: {} bytes)",
+            resource.base_font.as_str(),
+            format,
+            raw_data.len()
+        );
+
         // Phase 1: Normalization (Convert any format to a Virtual SFNT)
         let normalized = Self::normalize_to_sfnt(format, raw_data, resource)?;
         let mut sfnt = normalized.data;
@@ -109,12 +110,25 @@ impl FontReconstructor {
 
         // Phase 2: Surgical Patching (Apply PDF metrics and mappings to the SFNT)
         if let Ok(mut sfnt_dis) = Self::disassemble_sfnt(&sfnt) {
-            // Patch hmtx (Glyph Widths)
-            Self::patch_hmtx_direct(&mut sfnt_dis.tables, resource);
+            // Read native unitsPerEm from head table to ensure proper scaling
+            let native_units_per_em = sfnt_dis.tables.iter()
+                .find(|(t, _)| t == b"head")
+                .and_then(|(_, data)| if data.len() >= 20 { 
+                    Some(u16::from_be_bytes([data[18], data[19]])) 
+                } else { None })
+                .unwrap_or(1000);
+
+            // Patch hmtx (Glyph Widths) - Scale PDF widths (1000-unit) to native units
+            Self::patch_hmtx_direct(&mut sfnt_dis.tables, resource, native_units_per_em);
 
             // Patch/Inject cmap (Character Mapping)
-            let (cmap_data_opt, synthesized_cid_map) =
-                Self::synthesize_bridged_cmap(resource, &sfnt, discovered_map_bt.as_ref(), discovered_name_map.as_ref(), is_cid_font);
+            let (cmap_data_opt, synthesized_cid_map) = Self::synthesize_bridged_cmap(
+                resource,
+                raw_data, // MUST pass naked outline for CFF/Type1 inspection
+                discovered_map_bt.as_ref(),
+                discovered_name_map.as_ref(),
+                is_cid_font,
+            );
 
             if let Some(cmap_data) = cmap_data_opt {
                 if let Some(idx) = sfnt_dis.tables.iter().position(|(t, _)| t == b"cmap") {
@@ -133,7 +147,7 @@ impl FontReconstructor {
                     sfnt = new_data;
                 }
             }
-            
+
             let mut final_cid_map = normalized.cid_to_gid_map;
             if !synthesized_cid_map.is_empty() {
                 final_cid_map = Some(synthesized_cid_map);
@@ -157,19 +171,22 @@ impl FontReconstructor {
         })
     }
 
-    /// Attempts to rescue the CID-to-GID mapping by scanning internal SFNT cmap tables 
+    /// Attempts to rescue the CID-to-GID mapping by scanning internal SFNT cmap tables
     /// and bridging them via the PDF's ToUnicode map if available.
     /// Also attempts to rescue Glyph Name to GID mappings from the 'post' table.
-    fn rescue_sid_map_from_sfnt(data: &[u8], resource: &FontResource, name_to_gid: &mut BTreeMap<String, u32>) -> Option<BTreeMap<u32, u32>> {
+    fn rescue_sid_map_from_sfnt(
+        data: &[u8],
+        resource: &FontResource,
+        name_to_gid: &mut BTreeMap<String, u32>,
+    ) -> Option<BTreeMap<u32, u32>> {
         let mut map = BTreeMap::new();
         if let Ok(face) = ttf_parser::Face::parse(data, 0) {
             // 1. Build an internal Unicode -> GID map from the font's own cmap tables
             let mut internal_u2g = BTreeMap::new();
-            
+
             // 1.1 Extract Glyph Names if available (Essential for subsetted fonts)
             for gid in 0..face.number_of_glyphs() {
                 if let Some(name) = face.glyph_name(ttf_parser::GlyphId(gid)) {
-                    log::debug!("[RECONSTRUCT] Found glyph name: /{} -> GID {}", name, gid);
                     name_to_gid.insert(name.to_string(), gid as u32);
                 }
             }
@@ -184,22 +201,22 @@ impl FontReconstructor {
                 } else {
                     table.codepoints(|cp| {
                         if let Some(gid) = table.glyph_index(cp) {
-                            log::debug!("[RECONSTRUCT] Found non-Unicode mapping: {} -> GID {}", cp, gid.0);
                             map.insert(cp, gid.0 as u32);
                         }
                     });
                 }
             }
-            
+
             // 2. Bridge via unified_map (ToUnicode): maps logical Unicode back to character codes.
-            // This allows us to find the correct GID for a character code even if the font's 
+            // This allows us to find the correct GID for a character code even if the font's
             // internal cmap is strictly Unicode or has lying Identity entries.
             // Priority: PDF metrics (ToUnicode) ALWAYS override font internal cmaps.
             for (uni_str, &code) in &resource.unified_map {
                 if let Some(c) = uni_str.chars().next()
-                    && let Some(&gid) = internal_u2g.get(&(c as u32)) {
-                        map.insert(code, gid);
-                    }
+                    && let Some(&gid) = internal_u2g.get(&(c as u32))
+                {
+                    map.insert(code, gid);
+                }
             }
         }
         if map.is_empty() { None } else { Some(map) }
@@ -213,33 +230,47 @@ impl FontReconstructor {
         match format {
             FontFormat::Sfnt => {
                 let mut info = Self::inspect_cff(data).unwrap_or(CffInfo::empty());
-                
+
                 // If sid_to_gid is still missing (e.g. TrueType font or CFF parse failed),
                 // attempt to rescue mappings from the internal SFNT cmap table.
                 if info.sid_to_gid.is_none() {
-                    info.sid_to_gid = Self::rescue_sid_map_from_sfnt(data, resource, info.name_to_gid.get_or_insert_with(BTreeMap::new));
+                    info.sid_to_gid = Self::rescue_sid_map_from_sfnt(
+                        data,
+                        resource,
+                        info.name_to_gid.get_or_insert_with(BTreeMap::new),
+                    );
                 }
 
                 // Synthesize authoritative mappings by bridging PDF metrics with physical charset
-                let (synthesized_cmap, synthesized_cid_map) = 
-                    Self::synthesize_bridged_cmap(resource, data, info.sid_to_gid.as_ref(), info.name_to_gid.as_ref(), info.is_cid);
+                let (synthesized_cmap, synthesized_cid_map) = Self::synthesize_bridged_cmap(
+                    resource,
+                    data,
+                    info.sid_to_gid.as_ref(),
+                    info.name_to_gid.as_ref(),
+                    info.is_cid,
+                );
 
                 let mut final_data = data.to_vec();
-                
+
                 // Patch the existing SFNT with the authoritative synthesized cmap
                 if let Some(new_cmap_data) = synthesized_cmap
-                    && let Ok(mut sfnt_dis) = Self::disassemble_sfnt(data) {
-                        log::debug!("[RECONSTRUCT] Patching SFNT cmap table for {}", resource.base_font.as_str());
-                        if let Some(idx) = sfnt_dis.tables.iter().position(|(t, _)| t == b"cmap") {
-                            sfnt_dis.tables[idx].1 = new_cmap_data;
-                        } else {
-                            sfnt_dis.tables.push((*b"cmap", new_cmap_data));
-                        }
-                        
-                        if let Ok(patched_data) = Self::assemble_sfnt(&sfnt_dis.magic, &sfnt_dis.tables) {
-                            final_data = patched_data;
-                        }
+                    && let Ok(mut sfnt_dis) = Self::disassemble_sfnt(data)
+                {
+                    log::debug!(
+                        "[RECONSTRUCT] Patching SFNT cmap table for {}",
+                        resource.base_font.as_str()
+                    );
+                    if let Some(idx) = sfnt_dis.tables.iter().position(|(t, _)| t == b"cmap") {
+                        sfnt_dis.tables[idx].1 = new_cmap_data;
+                    } else {
+                        sfnt_dis.tables.push((*b"cmap", new_cmap_data));
                     }
+
+                    if let Ok(patched_data) = Self::assemble_sfnt(&sfnt_dis.magic, &sfnt_dis.tables)
+                    {
+                        final_data = patched_data;
+                    }
+                }
 
                 let mut cid_to_gid_map = Self::build_cid_to_gid_map(&info);
                 if !synthesized_cid_map.is_empty() {
@@ -262,7 +293,9 @@ impl FontReconstructor {
                 Self::transcode_type1_to_cff(data, resource)
             }
             FontFormat::Unknown => {
-                log::debug!("[RECONSTRUCT] Unrecognized font format, using raw data as placeholder SFNT");
+                log::debug!(
+                    "[RECONSTRUCT] Unrecognized font format, using raw data as placeholder SFNT"
+                );
                 Ok(ReconstructedFont {
                     data: data.to_vec(),
                     is_cid: false,
@@ -274,15 +307,27 @@ impl FontReconstructor {
         }
     }
 
-    fn transcode_type1_to_cff(data: &[u8], resource: &FontResource) -> PdfResult<ReconstructedFont> {
-        if let (Some(l1), Some(l2), Some(l3)) = (resource.length1, resource.length2, resource.length3) {
-            log::info!("[RECONSTRUCT] Type 1 segments detected: L1={}, L2={}, L3={}. Length match: {}", 
-                l1, l2, l3, (l1 + l2 + l3) as usize == data.len());
+    fn transcode_type1_to_cff(
+        data: &[u8],
+        resource: &FontResource,
+    ) -> PdfResult<ReconstructedFont> {
+        if let (Some(l1), Some(l2), Some(l3)) =
+            (resource.length1, resource.length2, resource.length3)
+        {
+            log::info!(
+                "[RECONSTRUCT] Type 1 segments detected: L1={}, L2={}, L3={}. Length match: {}",
+                l1,
+                l2,
+                l3,
+                (l1 + l2 + l3) as usize == data.len()
+            );
             // Future: Implement PFB reconstruction and CFF transcoding here.
         }
-        
+
         // For now, we still return an error as Type 1 cannot be directly wrapped in SFNT for modern renderers.
-        Err(PdfError::Other("Type 1 font transcoding to Virtual OpenType not yet implemented".into()))
+        Err(PdfError::Other(
+            "Type 1 font transcoding to Virtual OpenType not yet implemented".into(),
+        ))
     }
 
     fn wrap_naked_outline(
@@ -292,17 +337,17 @@ impl FontReconstructor {
     ) -> PdfResult<ReconstructedFont> {
         let mut tables = Vec::new();
         tables.push((tag, outline_data.to_vec()));
-        
+
         let info = if tag == *b"CFF " || tag == *b"CFF2" {
             Self::inspect_cff(outline_data).unwrap_or(CffInfo::empty())
         } else {
             CffInfo::empty()
         };
-        
+
         let num_glyphs = info.num_glyphs;
 
         let mut head = vec![0u8; 54];
-        head[0..4].copy_from_slice(b"OTTO"); // version for CFF-based OpenType
+        head[0..4].copy_from_slice(&[0, 1, 0, 0]); // Version 1.0
         head[12..16].copy_from_slice(&0x5F0F3CF5u32.to_be_bytes()); // magic
         head[18..20].copy_from_slice(&1000u16.to_be_bytes()); // unitsPerEm
         tables.push((*b"head", head));
@@ -338,7 +383,7 @@ impl FontReconstructor {
         let mut name_table = vec![0u8; 6 + 12 * name_count + font_name.len()];
         name_table[2..4].copy_from_slice(&(name_count as u16).to_be_bytes()); // count
         name_table[4..6].copy_from_slice(&(6 + 12 * name_count as u16).to_be_bytes()); // storage offset
-        
+
         // Record 1: Full Name (ID 4)
         name_table[6..8].copy_from_slice(&3u16.to_be_bytes()); // platform Windows
         name_table[8..10].copy_from_slice(&1u16.to_be_bytes()); // encoding Unicode
@@ -346,7 +391,8 @@ impl FontReconstructor {
         name_table[12..14].copy_from_slice(&4u16.to_be_bytes()); // nameID 4
         name_table[14..16].copy_from_slice(&(font_name.len() as u16).to_be_bytes()); // length
         name_table[16..18].copy_from_slice(&0u16.to_be_bytes()); // offset
-        name_table[18 + 12 * (name_count - 1)..18 + 12 * (name_count - 1) + font_name.len()].copy_from_slice(font_name);
+        name_table[18 + 12 * (name_count - 1)..18 + 12 * (name_count - 1) + font_name.len()]
+            .copy_from_slice(font_name);
         tables.push((*b"name", name_table));
 
         // Synthesize a minimal post table (Version 3.0)
@@ -355,9 +401,14 @@ impl FontReconstructor {
         tables.push((*b"post", post));
 
         // Synthesize a bridged cmap table
-        let (cmap_data_opt, synthesized_cid_map) = 
-            Self::synthesize_bridged_cmap(resource, outline_data, info.sid_to_gid.as_ref(), info.name_to_gid.as_ref(), info.is_cid);
-            
+        let (cmap_data_opt, synthesized_cid_map) = Self::synthesize_bridged_cmap(
+            resource,
+            outline_data,
+            info.sid_to_gid.as_ref(),
+            info.name_to_gid.as_ref(),
+            info.is_cid,
+        );
+
         if let Some(cmap_data) = cmap_data_opt {
             tables.push((*b"cmap", cmap_data));
         }
@@ -420,25 +471,41 @@ impl FontReconstructor {
             };
 
             let mut actual_gid = None;
-            
-            // Priority -1: Identity Mapping (Authoritative for Western subsetted "Lying Identity" fonts)
-            // If the font is CID-keyed, ordering is Identity, and it's not CJK, the CID is the truth.
-            let is_identity = resource.cid_ordering.as_deref().is_none_or(|o| o == "Identity");
-            let is_lying_identity = resource.is_cid_keyed && is_identity && !resource.is_cjk();
-            
-            if is_lying_identity && cid != 0 {
-                actual_gid = Some(cid);
-            }
+            let mut resolved_via = "None";
 
             // Priority 0: Name-to-GID bridge (Highest trust for CFF fonts with custom names)
             if let Some(nmap) = name_to_gid
-                && let Some(glyph_name) = resource.encoding.as_ref().and_then(|e| e.map(&[cid as u8])) {
-                    let name = if glyph_name.starts_with('/') { &glyph_name[1..] } else { &glyph_name };
-                    actual_gid = nmap.get(name).copied();
+                && let Some(glyph_name) =
+                    resource.encoding.as_ref().and_then(|e| e.map(&[cid as u8]))
+            {
+                let name = glyph_name.strip_prefix('/').unwrap_or(&glyph_name);
+                actual_gid = nmap.get(name).copied();
+                if actual_gid.is_some() {
+                    resolved_via = "Name-to-GID";
                 }
+            }
+
+            // Priority 0.5: Direct Unicode Name match (For Western CFF fonts)
+            if !resource.is_cjk()
+                && actual_gid.is_none()
+                && let Some(nmap) = name_to_gid
+            {
+                if let Some(gid) = nmap.get(&c.to_string()) {
+                    actual_gid = Some(*gid);
+                    resolved_via = "Direct-Unicode-Name";
+                } else {
+                    let hex_name = format!("uni{:04X}", c as u32);
+                    if let Some(gid) = nmap.get(&hex_name) {
+                        actual_gid = Some(*gid);
+                        resolved_via = "Direct-Unicode-Hex-Name";
+                    }
+                }
+            }
 
             // Priority 1: SID/CID-to-GID map from font parsing
-            if actual_gid.is_none() && let Some(map) = discovered_map {
+            if actual_gid.is_none()
+                && let Some(map) = discovered_map
+            {
                 if resource.is_cid_keyed {
                     // For CID fonts, cid in unified_map is the actual CID
                     actual_gid = map.get(&{ cid }).copied();
@@ -446,34 +513,50 @@ impl FontReconstructor {
                     // For simple fonts, cid is the character code.
                     actual_gid = map.get(&{ cid }).copied();
                 }
+                if actual_gid.is_some() {
+                    resolved_via = "SID/CID-to-GID";
+                }
             }
 
             // Priority 2: Original font cmap tables (via ttf-parser)
             if actual_gid.is_none() {
                 // First try Unicode lookup (standard)
                 actual_gid = internal_unicode_map.get(&(c as u32)).copied();
-                
+                if actual_gid.is_some() {
+                    resolved_via = "Internal-Unicode";
+                }
+
                 // Then try Code/CID lookup (essential for subset TrueType with custom cmaps)
                 if actual_gid.is_none() {
                     actual_gid = internal_code_map.get(&{ cid }).copied();
-                }
-            }
-
-            // Priority 3: Glyph name fallback (Effective for subsets that have names but broken cmaps)
-            if actual_gid.is_none() && let Some(nmap) = name_to_gid {
-                // Try literal names like "e", "uni0065", etc.
-                if let Some(gid) = nmap.get(&c.to_string()) {
-                    actual_gid = Some(*gid);
-                } else {
-                    let hex_name = format!("uni{:04X}", c as u32);
-                    if let Some(gid) = nmap.get(&hex_name) {
-                        actual_gid = Some(*gid);
+                    if actual_gid.is_some() {
+                        resolved_via = "Internal-Code";
                     }
                 }
             }
 
+            if let Some(gid) = actual_gid {
+                log::debug!(
+                    "[RECONSTRUCT] Resolved '{}' (CID {}) -> GID {} via {}",
+                    c,
+                    cid,
+                    gid,
+                    resolved_via
+                );
+            }
+
+            // Priority 3: Identity Mapping (Lying Identity fallback)
+            // Authoritative for Western subsetted "Lying Identity" fonts when no internal map is available.
+            if actual_gid.is_none() {
+                let is_identity = resource.cid_ordering.as_deref().is_none_or(|o| o == "Identity");
+                let is_lying_identity = resource.is_cid_keyed && is_identity && !resource.is_cjk();
+                if is_lying_identity && cid != 0 {
+                    actual_gid = Some(cid);
+                }
+            }
+
             // Final fallback: Resource's own mapping (Identity fallback)
-            // Note: We only use the Identity fallback if we are SURE it's a CID-keyed font 
+            // Note: We only use the Identity fallback if we are SURE it's a CID-keyed font
             // where CID == GID is the intended path. For subsetted Western fonts,
             // it's better to return 0 (missing) here and let resolve_gid's Unicode path take over.
             let final_gid = if let Some(gid) = actual_gid {
@@ -485,11 +568,11 @@ impl FontReconstructor {
                 // If it's a standard (non-subset) CID font, Identity is usually safe.
                 resource.to_gid(cid, None)
             } else {
-                // For subsetted fonts (+ in name), Identity is often lying. 
+                // For subsetted fonts (+ in name), Identity is often lying.
                 // Return 0 and let Unicode path (Priority 2) handle it.
                 0
             };
-            
+
             mappings.push((c as u32, final_gid));
             cid_to_gid_map.insert(cid, final_gid);
         }
@@ -566,7 +649,8 @@ impl FontReconstructor {
             magic.copy_from_slice(&sfnt[base_offset..base_offset + 4]);
         }
 
-        let num_tables = u16::from_be_bytes([sfnt[base_offset + 4], sfnt[base_offset + 5]]) as usize;
+        let num_tables =
+            u16::from_be_bytes([sfnt[base_offset + 4], sfnt[base_offset + 5]]) as usize;
         let mut tables = Vec::new();
         for i in 0..num_tables {
             let entry = base_offset + 12 + i * 16;
@@ -597,12 +681,18 @@ impl FontReconstructor {
     fn assemble_sfnt(magic: &[u8; 4], tables: &[([u8; 4], Vec<u8>)]) -> PdfResult<Vec<u8>> {
         let mut output = Vec::new();
         output.extend_from_slice(magic);
-        
+
         let mut tables = tables.to_vec();
         tables.sort_by_key(|t| t.0);
         output.extend_from_slice(&(tables.len() as u16).to_be_bytes());
-        log::debug!("[RECONSTRUCT] Assembling SFNT: tables={}, sig={:02x}{:02x}{:02x}{:02x}", 
-            tables.len(), output[0], output[1], output[2], output[3]);
+        log::debug!(
+            "[RECONSTRUCT] Assembling SFNT: tables={}, sig={:02x}{:02x}{:02x}{:02x}",
+            tables.len(),
+            output[0],
+            output[1],
+            output[2],
+            output[3]
+        );
         let search_range = (tables.len() as f64).log2().floor().exp2() as u16 * 16;
         output.extend_from_slice(&search_range.to_be_bytes());
         output.extend_from_slice(&((tables.len() as f64).log2().floor() as u16).to_be_bytes());
@@ -628,11 +718,27 @@ impl FontReconstructor {
                 output[adj..adj + 4].copy_from_slice(&sum.to_be_bytes());
             }
         }
-        
-        log::debug!("[RECONSTRUCT] Final SFNT Header (16 bytes): {:02x}{:02x}{:02x}{:02x} {:02x}{:02x}{:02x}{:02x} {:02x}{:02x}{:02x}{:02x} {:02x}{:02x}{:02x}{:02x}",
-            output[0], output[1], output[2], output[3], output[4], output[5], output[6], output[7],
-            output[8], output[9], output[10], output[11], output[12], output[13], output[14], output[15]);
-            
+
+        log::debug!(
+            "[RECONSTRUCT] Final SFNT Header (16 bytes): {:02x}{:02x}{:02x}{:02x} {:02x}{:02x}{:02x}{:02x} {:02x}{:02x}{:02x}{:02x} {:02x}{:02x}{:02x}{:02x}",
+            output[0],
+            output[1],
+            output[2],
+            output[3],
+            output[4],
+            output[5],
+            output[6],
+            output[7],
+            output[8],
+            output[9],
+            output[10],
+            output[11],
+            output[12],
+            output[13],
+            output[14],
+            output[15]
+        );
+
         Ok(output)
     }
 
@@ -651,15 +757,18 @@ impl FontReconstructor {
         sum
     }
 
-    fn patch_hmtx_direct(tables: &mut [([u8; 4], Vec<u8>)], resource: &FontResource) {
+    fn patch_hmtx_direct(tables: &mut [([u8; 4], Vec<u8>)], resource: &FontResource, native_upem: u16) {
         if let Some(idx) = tables.iter().position(|(t, _)| t == b"hmtx") {
             let hmtx = &mut tables[idx].1;
             let n = hmtx.len() / 4;
+            let scale = native_upem as f32 / 1000.0;
+
             for gid in 0..n {
-                let w = resource.glyph_width_by_cid(gid as u32);
+                let w_pdf = resource.glyph_width_by_gid(gid as u32);
+                let w_native = (w_pdf * scale) as i16;
                 let off = gid * 4;
                 if off + 2 <= hmtx.len() {
-                    let b = (w as i16).to_be_bytes();
+                    let b = w_native.to_be_bytes();
                     hmtx[off] = b[0];
                     hmtx[off + 1] = b[1];
                 }
@@ -708,7 +817,7 @@ impl FontReconstructor {
         let string_idx_pos = pos;
         // 2. Parse String INDEX (Custom Glyph Names)
         let string_index = Self::parse_string_index(cff_data, string_idx_pos);
-        
+
         // 2.5 Identify Global Subrs INDEX
         let gsubr_pos = skip_index(cff_data, string_idx_pos);
         let gsubr_count = if gsubr_pos + 2 <= cff_data.len() {
@@ -725,21 +834,22 @@ impl FontReconstructor {
         let ng = Self::determine_glyph_count(cff_data, cso);
         if let Some(o) = cso {
             log::debug!("[RECONSTRUCT] CharStrings INDEX at {}, count: {}", o, ng);
-            for gid in 0..ng {
-                let (off, len) = Self::get_charstring_range(cff_data, o, gid);
-                if len > 0 {
-                    let end = std::cmp::min(off + len, off + 32);
-                    let hex = cff_data[off..end].iter().map(|b| format!("{:02X}", b)).collect::<String>();
-                    log::debug!("[RECONSTRUCT] GID {} CharString: offset {}, size {} bytes, hex: {}", gid, off, len, hex);
-                }
-            }
         }
-        log::debug!("[RECONSTRUCT] CFF glyph count (ng): {}, Top DICT count: {}, is_cid: {}", ng, tc, is_cid);
+        log::debug!(
+            "[RECONSTRUCT] CFF glyph count (ng): {}, Top DICT count: {}, is_cid: {}",
+            ng,
+            tc,
+            is_cid
+        );
 
         // 5. Parse Charset (SID to GID mapping)
         let mut sid_map = BTreeMap::new();
         if let Some(o) = cso2 {
-            log::debug!("[RECONSTRUCT] Found Charset offset: {}, format: {}", o, cff_data.get(o).unwrap_or(&255));
+            log::debug!(
+                "[RECONSTRUCT] Found Charset offset: {}, format: {}",
+                o,
+                cff_data.get(o).unwrap_or(&255)
+            );
             if o < cff_data.len() && o > 2 {
                 if let Some(m) = Self::parse_cff_charset(cff_data, o, ng) {
                     sid_map = m;
@@ -774,11 +884,7 @@ impl FontReconstructor {
     }
 
     fn build_cid_to_gid_map(info: &CffInfo) -> Option<BTreeMap<u32, u32>> {
-        if info.is_cid {
-            info.sid_to_gid.clone()
-        } else {
-            None
-        }
+        if info.is_cid { info.sid_to_gid.clone() } else { None }
     }
 
     fn extract_cff_stream(data: &[u8]) -> Result<&[u8], Box<dyn std::error::Error>> {
@@ -817,52 +923,9 @@ impl FontReconstructor {
 
     fn determine_glyph_count(data: &[u8], char_strings_offset: Option<usize>) -> u16 {
         if let Some(o) = char_strings_offset {
-            if o + 2 <= data.len() {
-                u16::from_be_bytes([data[o], data[o + 1]])
-            } else {
-                1024
-            }
+            if o + 2 <= data.len() { u16::from_be_bytes([data[o], data[o + 1]]) } else { 1024 }
         } else {
             1024
-        }
-    }
-
-    fn get_charstring_range(data: &[u8], index_offset: usize, gid: u16) -> (usize, usize) {
-        if index_offset + 2 > data.len() {
-            return (0, 0);
-        }
-        let count = u16::from_be_bytes([data[index_offset], data[index_offset + 1]]) as usize;
-        if gid as usize >= count {
-            return (0, 0);
-        }
-
-        let off_size = data[index_offset + 2] as usize;
-        let offsets_pos = index_offset + 3;
-        
-        let get_offset = |idx: usize| -> usize {
-            let p = offsets_pos + idx * off_size;
-            let mut val = 0usize;
-            for j in 0..off_size {
-                if p + j < data.len() {
-                    val = (val << 8) | data[p + j] as usize;
-                }
-            }
-            val
-        };
-
-        let start = get_offset(gid as usize);
-        let end = get_offset(gid as usize + 1);
-        
-        // Data starts after the offsets and the 2-byte count + 1-byte offSize
-        // Actually, CFF INDEX data starts after count (2), offSize (1), and (count+1)*offSize offsets.
-        let data_start_base = index_offset + 3 + (count + 1) * off_size - 1; 
-        // Wait! CFF offsets in INDEX are relative to the byte BEFORE the first data byte.
-        // So offset 1 is the first byte of data.
-        
-        if start == 0 || end < start {
-            (0, 0)
-        } else {
-            (data_start_base + start, end - start)
         }
     }
 
@@ -925,21 +988,25 @@ impl FontReconstructor {
                         op = (op << 8) | dd[dpos] as u16;
                         dpos += 1;
                     }
-                    log::debug!("[RECONSTRUCT] Top DICT Op: 0x{:04X}, values: {:?}", op, ops);
                     match op {
                         17 => cso = ops.last().copied().map(|v| v as usize),
                         18 => {
                             if ops.len() >= 2 {
-                                let size = ops[ops.len()-2] as usize;
-                                let offset = ops[ops.len()-1] as usize;
-                                log::debug!("[RECONSTRUCT] Private DICT: offset {}, size {}", offset, size);
+                                let size = ops[ops.len() - 2] as usize;
+                                let offset = ops[ops.len() - 1] as usize;
+                                log::debug!(
+                                    "[RECONSTRUCT] Private DICT: offset {}, size {}",
+                                    offset,
+                                    size
+                                );
                             }
                         }
                         0x0C24 => {
                             let offset = ops.last().copied().unwrap_or(0) as usize;
                             log::debug!("[RECONSTRUCT] FDArray: offset {}", offset);
                             if offset > 0 && offset < data.len() {
-                                let (_, count, _) = Self::parse_index_header(data, offset).unwrap_or((0, 0, 0));
+                                let (_, count, _) =
+                                    Self::parse_index_header(data, offset).unwrap_or((0, 0, 0));
                                 for i in 0..count {
                                     if let Some(fd) = get_index_item(data, offset, i.into()) {
                                         let mut fdp = 0;
@@ -954,12 +1021,11 @@ impl FontReconstructor {
                                                     fdp += 1;
                                                 }
                                                 if op == 18 && fdops.len() >= 2 {
-                                                    let size = fdops[fdops.len()-2] as usize;
-                                                    let off = fdops[fdops.len()-1] as usize;
-                                                    log::debug!("[RECONSTRUCT] Font DICT {}: Private DICT at {}, size {}", i, off, size);
+                                                    let size = fdops[fdops.len() - 2] as usize;
+                                                    let off = fdops[fdops.len() - 1] as usize;
                                                     // Check Private DICT for Local Subrs (Op 19)
                                                     if off + size <= data.len() {
-                                                        let priv_data = &data[off..off+size];
+                                                        let priv_data = &data[off..off + size];
                                                         let mut pp = 0;
                                                         let mut pops = Vec::new();
                                                         while pp < priv_data.len() {
@@ -967,14 +1033,15 @@ impl FontReconstructor {
                                                             if pb0 <= 21 {
                                                                 let pop = pb0 as u16;
                                                                 pp += 1;
-                                                                log::debug!("[RECONSTRUCT]   Private DICT Op: {}, values: {:?}", pop, pops);
+                                                                // Removed noisy Op log
                                                                 if pop == 19 {
-                                                                    let sub_off = pops.last().copied().unwrap_or(0) as i64;
-                                                                    log::debug!("[RECONSTRUCT]   Local Subrs at {} (relative {} from Private DICT at {})", (off as i64 + sub_off), sub_off, off);
+                                                                    // Op 19 is Local Subrs
                                                                 }
                                                                 pops.clear();
                                                             } else {
-                                                                let (v, l) = parse_dict_number(&priv_data[pp..]);
+                                                                let (v, l) = parse_dict_number(
+                                                                    &priv_data[pp..],
+                                                                );
                                                                 pops.push(v);
                                                                 pp += l;
                                                             }
@@ -1017,12 +1084,6 @@ impl FontReconstructor {
                     break;
                 }
                 let cid = u16::from_be_bytes([data[cpos], data[cpos + 1]]);
-                if (880..=890).contains(&gid) || gid <= 10 {
-                    log::debug!("[RECONSTRUCT] GID {} -> CID {}", gid, cid);
-                }
-                if cid == 887 {
-                    log::debug!("[RECONSTRUCT] Found CID 887 (Format 0) -> GID {}", gid);
-                }
                 map.insert(cid as u32, gid as u32);
                 cpos += 2;
             }
@@ -1043,9 +1104,6 @@ impl FontReconstructor {
                 for i in 0..=nl {
                     if (fc as u32 + i as u32) < 65536 {
                         let cid = fc as u32 + i as u32;
-                        if cid == 887 {
-                            log::debug!("[RECONSTRUCT] Found CID 887 -> GID {}", gid);
-                        }
                         map.insert(cid, gid as u32);
                     }
                     gid += 1;
@@ -1115,7 +1173,6 @@ fn get_index_item(data: &[u8], ip: usize, i: usize) -> Option<Vec<u8>> {
     let de = ip + 3 + (count + 1) * os + e - 1;
     if de <= data.len() { Some(data[ds..de].to_vec()) } else { None }
 }
-
 
 fn parse_dict_number(d: &[u8]) -> (i32, usize) {
     let b0 = d[0];
@@ -1193,10 +1250,10 @@ mod tests {
     fn test_cff2_wrapping() {
         let dummy_cff2 = vec![2, 0, 5, 1, 2, 3, 4, 5];
         let resource = FontResource::new_test();
-        
+
         let res = FontReconstructor::wrap_naked_outline(*b"CFF2", &dummy_cff2, &resource).unwrap();
         assert_eq!(FontFormat::detect(&res.data), FontFormat::Sfnt);
-        
+
         let dis = FontReconstructor::disassemble_sfnt(&res.data).unwrap();
         assert!(dis.tables.iter().any(|(t, _)| t == b"CFF2"));
     }
@@ -1207,16 +1264,16 @@ mod tests {
         ttcf[0..4].copy_from_slice(b"ttcf");
         ttcf[8..12].copy_from_slice(&1u32.to_be_bytes()); // numFonts
         ttcf[12..16].copy_from_slice(&32u32.to_be_bytes()); // offset to first font at 32
-        
+
         // First font header at offset 32
         ttcf[32..36].copy_from_slice(b"OTTO");
         ttcf[36..38].copy_from_slice(&1u16.to_be_bytes()); // numTables = 1
-        
+
         // Table entry at offset 32 + 12 = 44
         ttcf[44..48].copy_from_slice(b"TEST");
         ttcf[52..56].copy_from_slice(&60u32.to_be_bytes()); // offset to data at 60
         ttcf[56..60].copy_from_slice(&4u32.to_be_bytes()); // length
-        
+
         // Table data at offset 60
         ttcf[60..64].copy_from_slice(b"DATA");
 
@@ -1237,7 +1294,7 @@ mod tests {
                 Ok(face) => {
                     println!("Success! Glyphs: {}", face.number_of_glyphs());
                     assert!(face.tables().cff.is_some() || face.tables().cff2.is_some());
-                    
+
                     // Try to draw GID 1
                     let mut builder = NoopBuilder;
                     if let Some(_rect) = face.outline_glyph(ttf_parser::GlyphId(1), &mut builder) {

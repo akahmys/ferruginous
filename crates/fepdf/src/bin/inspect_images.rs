@@ -1,6 +1,5 @@
 use ferruginous_core::document::Document;
-use ferruginous_core::object::{Object, PdfName};
-use std::collections::BTreeMap;
+use ferruginous_core::object::Object;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();

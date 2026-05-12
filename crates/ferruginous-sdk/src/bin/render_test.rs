@@ -1,7 +1,12 @@
-use ferruginous_sdk::PdfDocument;
+//! A simple command-line utility for testing PDF rendering to PNG.
+//!
+//! This utility takes a PDF path, a 1-indexed page number, and an output path,
+//! and renders the specified page using the Vello backend.
+
 use ferruginous_render::VelloBackend;
-use std::fs;
+use ferruginous_sdk::PdfDocument;
 use kurbo::Affine;
+use std::fs;
 
 #[tokio::main]
 async fn main() {
@@ -11,7 +16,7 @@ async fn main() {
         println!("Usage: render_test <pdf_path> <page_number> <output_path>");
         return;
     }
-    
+
     let pdf_path = &args[1];
     let page_num: usize = args[2].parse().expect("Invalid page number");
     let output_path = &args[3];
@@ -20,18 +25,20 @@ async fn main() {
     let doc = PdfDocument::open(bytes::Bytes::from(data)).unwrap();
     let (width, height) = doc.get_page_size(page_num - 1).unwrap();
     println!("Page size: {}x{}", width, height);
-    
+
     let mut backend = VelloBackend::new(VelloBackend::load_system_fonts());
     let transform = Affine::scale_non_uniform(1.0, -1.0) * Affine::translate((0.0, -height));
     doc.render_page(page_num - 1, &mut backend, transform).unwrap();
-    
+
     ferruginous_render::headless::render_to_image(
         backend.scene(),
         width as u32,
         height as u32,
         std::path::Path::new(output_path),
         image::ImageFormat::Png,
-    ).await.expect("Failed to render to image");
-    
+    )
+    .await
+    .expect("Failed to render to image");
+
     println!("Rendered to {}", output_path);
 }

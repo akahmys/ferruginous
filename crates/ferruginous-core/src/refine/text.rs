@@ -225,7 +225,7 @@ pub fn recover_string(bytes: &[u8]) -> String {
         }
 
         // Fallback to PDFDocEncoding (which is mostly ISO-8859-1 / ASCII)
-        
+
         String::from_utf8_lossy(bytes).to_string()
     }
 }

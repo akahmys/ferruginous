@@ -1,10 +1,9 @@
-use crate::interpreter::Interpreter;
+use crate::interpreter::{Interpreter, Type3Advance};
 use ferruginous_core::font::FontResource;
 use ferruginous_core::graphics::{Matrix, TextMatrices};
 use ferruginous_core::{Handle, Object, PdfError, PdfResult};
 
 use ferruginous_core::object::sublimation::Command;
-
 
 impl Interpreter<'_> {
     /// Dispatches a normalized text command to the appropriate operator handler.
@@ -171,8 +170,8 @@ impl Interpreter<'_> {
 
     /// Handles operators that show text (Tj, TJ, ', ").
     pub(crate) fn set_type3_metrics(&mut self, wx: f64, wy: f64) -> PdfResult<()> {
-        log::debug!("[SDK] d0 wx={}, wy={}", wx, wy);
-        self.type3_advance = Some((wx, wy));
+        log::debug!("[SDK] d0 wx={wx}, wy={wy}");
+        self.type3_advance = Some(Type3Advance { wx, wy, llx: 0.0, lly: 0.0, urx: 0.0, ury: 0.0 });
         Ok(())
     }
 
@@ -185,8 +184,8 @@ impl Interpreter<'_> {
         urx: f64,
         ury: f64,
     ) -> PdfResult<()> {
-        log::debug!("[SDK] d1 wx={}, wy={}, bbox=({:?}, {:?}, {:?}, {:?})", wx, wy, llx, lly, urx, ury);
-        self.type3_advance = Some((wx, wy));
+        log::debug!("[SDK] d1 wx={wx}, wy={wy}, bbox=({llx:?}, {lly:?}, {urx:?}, {ury:?})");
+        self.type3_advance = Some(Type3Advance { wx, wy, llx, lly, urx, ury });
         Ok(())
     }
 
@@ -258,7 +257,13 @@ impl Interpreter<'_> {
     }
 
     pub(crate) fn show_text(&mut self, text: &[u8]) -> PdfResult<()> {
-        let font_name = self.state.text_state.font.as_ref().ok_or_else(|| PdfError::Other("No font".into()))?.clone();
+        let font_name = self
+            .state
+            .text_state
+            .font
+            .as_ref()
+            .ok_or_else(|| PdfError::Other("No font".into()))?
+            .clone();
         let res = self.resolve_font_resource(&font_name).map_err(|e| {
             log::debug!("[SDK] show_text failed to resolve font {}: {:?}", font_name.as_str(), e);
             e
@@ -285,16 +290,14 @@ impl Interpreter<'_> {
 
         if res.subtype.as_str() == "Type3" {
             // Type 3 is handled by render_type3_glyphs which we call below for advance too
-        } else {
-            if let Some(_m) = self.text_matrices {
-                self.backend.show_text(
-                    &glyphs,
-                    font_size,
-                    render.as_affine(),
-                    text_state,
-                    self.op_index,
-                );
-            }
+        } else if let Some(_m) = self.text_matrices {
+            self.backend.show_text(
+                &glyphs,
+                font_size,
+                render.as_affine(),
+                text_state,
+                self.op_index,
+            );
         }
 
         let is_vertical = res.wmode() == 1;
@@ -307,7 +310,7 @@ impl Interpreter<'_> {
             total_adv_y = adv_y;
         } else {
             for glyph in &glyphs {
-                let char_width = glyph.width as f64;
+                let char_width = f64::from(glyph.width);
                 let char_width_pt = char_width / 1000.0 * font_size;
                 if is_vertical {
                     let mut adv = char_width_pt * th - self.state.text_state.char_spacing;
@@ -336,107 +339,127 @@ impl Interpreter<'_> {
         &mut self,
         glyphs: &[ferruginous_render::TextGlyph],
     ) -> PdfResult<(f64, f64)> {
-        let font_name = self.state.text_state.font.as_ref().ok_or_else(|| PdfError::Other("No font".into()))?.clone();
+        let font_name = self
+            .state
+            .text_state
+            .font
+            .as_ref()
+            .ok_or_else(|| PdfError::Other("No font".into()))?
+            .clone();
         let res = self.resolve_font_resource(&font_name)?;
-        
-        let _char_procs = res.char_procs.as_ref().ok_or_else(|| {
-            log::warn!("[SDK] Type 3 font {} missing CharProcs", font_name.as_str());
-            PdfError::Other("Missing CharProcs".into())
-        })?;
-        let font_matrix = res.font_matrix.unwrap_or([0.001, 0.0, 0.0, 0.001, 0.0, 0.0]);
 
-        let _fm = kurbo::Affine::new(font_matrix.map(|v| v as f64));
+        let _font_matrix = res.font_matrix.unwrap_or([0.001, 0.0, 0.0, 0.001, 0.0, 0.0]);
         let mut total_adv_x = 0.0;
         let mut total_adv_y = 0.0;
 
         let font_size = self.state.text_state.font_size;
         let th = self.state.text_state.horizontal_scaling / 100.0;
-        log::debug!("[SDK] Rendering Type 3 glyphs: {} glyphs, font_size={}, th={}, FontMatrix={:?}", glyphs.len(), font_size, th, font_matrix);
 
         for glyph in glyphs {
-            let mut glyph_name = glyph.name.clone()
-                .unwrap_or_else(|| format!("g{:X}", glyph.char_code));
-            
-            if glyph_name.starts_with('/') {
-                glyph_name = glyph_name[1..].to_string();
-            }
-            println!("[DIAG] Type 3 Glyph: char_code=0x{:X}, name={:?}", glyph.char_code, glyph_name);
-
-            let stream_h = match res.char_procs.as_ref().and_then(|cp| cp.get(&glyph_name)) {
-                Some(h) => h,
-                None => {
-                    log::debug!("[SDK] Type 3 glyph {} not found in CharProcs", glyph_name);
-                    continue;
-                }
-            };
-
-            let old_state = self.state.clone();
-            self.backend.push_state();
-
-            if let Some(m) = self.text_matrices {
-                let fm_f32 = res.font_matrix.unwrap_or([0.001, 0.0, 0.0, 0.001, 0.0, 0.0]);
-                let fm_f64 = [
-                    fm_f32[0] as f64, fm_f32[1] as f64, fm_f32[2] as f64,
-                    fm_f32[3] as f64, fm_f32[4] as f64, fm_f32[5] as f64,
-                ];
-                let h_scale = if res.wmode() == 1 { 1.0 } else { th };
-                let v_scale = if res.wmode() == 1 { th } else { 1.0 };
-                let text_to_pt = kurbo::Affine::scale_non_uniform(font_size * h_scale, -font_size * v_scale);
-                let local_to_text = kurbo::Affine::new(fm_f64);
-                let translate = kurbo::Affine::translate((total_adv_x, total_adv_y));
-
-                let target_mat = self.state.ctm.as_affine() * m.tm.as_affine() * translate * text_to_pt * local_to_text;
-                log::debug!("[TYPE3] target_mat={:?}, ctm={:?}, tm={:?}, translate={:?}, text_to_pt={:?}, local_to_text={:?}", target_mat, self.state.ctm.as_affine(), m.tm.as_affine(), translate, text_to_pt, local_to_text);
-                self.state.ctm = Matrix(target_mat.as_coeffs());
-                self.backend.set_transform(target_mat);
-            }
-
-            self.type3_advance = None;
-            self.in_type3_glyph = true;
-            if let Err(e) = self.execute(*stream_h) {
-                log::error!("[SDK] Failed to execute Type 3 glyph {}: {:?}", glyph_name, e);
-            }
-            self.backend.pop_state();
-            self.state = old_state;
-            self.backend.set_transform(self.state.ctm.as_affine());
-            self.in_type3_glyph = false;
-
-            let (wx, mut wy) = if let Some(adv) = self.type3_advance {
-                adv
-            } else {
-                (f64::from(glyph.width), 0.0)
-            };
-
-            // Fallback for poorly formed Type 3 fonts that don't provide wy in vertical mode
-            if res.wmode() == 1 && wy == 0.0 {
-                wy = 1000.0;
-                log::debug!("[SDK] Fallback wy=1000 for vertical Type 3 glyph");
-            }
-
-            let fm_f32 = res.font_matrix.unwrap_or([0.001, 0.0, 0.0, 0.001, 0.0, 0.0]);
-            let dx_text = fm_f32[0] as f64 * wx + fm_f32[2] as f64 * wy;
-            let dy_text = fm_f32[1] as f64 * wx + fm_f32[3] as f64 * wy;
-            let mut dx = dx_text * font_size * th;
-            let mut dy = dy_text * font_size;
-
-            if res.wmode() == 1 {
-                dy -= self.state.text_state.char_spacing;
-                if glyph.char_code == 0x20 {
-                    dy -= self.state.text_state.word_spacing;
-                }
-            } else {
-                dx += self.state.text_state.char_spacing * th;
-                if glyph.char_code == 0x20 {
-                    dx += self.state.text_state.word_spacing * th;
-                }
-            }
-
-            total_adv_x += dx;
-            total_adv_y += dy;
+            let (adv_x, adv_y) = self.render_single_type3_glyph(&res, glyph, total_adv_x, total_adv_y, font_size, th)?;
+            total_adv_x += adv_x;
+            total_adv_y += adv_y;
         }
+
         Ok((total_adv_x, total_adv_y))
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn render_single_type3_glyph(
+        &mut self,
+        res: &FontResource,
+        glyph: &ferruginous_render::TextGlyph,
+        total_adv_x: f64,
+        total_adv_y: f64,
+        font_size: f64,
+        th: f64,
+    ) -> PdfResult<(f64, f64)> {
+        let mut glyph_name =
+            glyph.name.clone().unwrap_or_else(|| format!("g{:X}", glyph.char_code));
+
+        if glyph_name.starts_with('/') {
+            glyph_name = glyph_name[1..].to_string();
+        }
+
+        let stream_h = match res.char_procs.as_ref().and_then(|cp| cp.get(&glyph_name)) {
+            Some(h) => h,
+            None => {
+                log::debug!("[SDK] Type 3 glyph {glyph_name} not found in CharProcs");
+                return Ok((0.0, 0.0));
+            }
+        };
+
+        let old_state = self.state.clone();
+        self.backend.push_state();
+
+        if let Some(m) = self.text_matrices {
+            let fm_f32 = res.font_matrix.unwrap_or([0.001, 0.0, 0.0, 0.001, 0.0, 0.0]);
+            let fm_f64 = [
+                f64::from(fm_f32[0]),
+                f64::from(fm_f32[1]),
+                f64::from(fm_f32[2]),
+                f64::from(fm_f32[3]),
+                f64::from(fm_f32[4]),
+                f64::from(fm_f32[5]),
+            ];
+            let h_scale = if res.wmode() == 1 { 1.0 } else { th };
+            let v_scale = if res.wmode() == 1 { th } else { 1.0 };
+            let text_to_pt =
+                kurbo::Affine::scale_non_uniform(font_size * h_scale, font_size * v_scale);
+            let local_to_text = kurbo::Affine::new(fm_f64);
+            let translate = kurbo::Affine::translate((total_adv_x, total_adv_y));
+
+            let target_mat = self.state.ctm.as_affine()
+                * m.tm.as_affine()
+                * translate
+                * text_to_pt
+                * local_to_text;
+            self.state.ctm = Matrix(target_mat.as_coeffs());
+            self.update_backend_transform();
+        }
+
+        self.type3_advance = None;
+        self.in_type3_glyph = true;
+        let old_stack = std::mem::take(&mut self.state_stack);
+        if let Err(e) = self.execute(*stream_h) {
+            log::error!("[SDK] Failed to execute Type 3 glyph {glyph_name}: {e:?}");
+        }
+        self.state_stack = old_stack;
+        self.backend.pop_state();
+        self.state = old_state;
+        self.update_backend_transform();
+        self.in_type3_glyph = false;
+
+        let (wx, mut wy) = if let Some(adv) = self.type3_advance {
+            (adv.wx, adv.wy)
+        } else {
+            (f64::from(glyph.width), 0.0)
+        };
+
+        if res.wmode() == 1 && wy == 0.0 {
+            wy = 1000.0;
+        }
+
+        let fm_f32 = res.font_matrix.unwrap_or([0.001, 0.0, 0.0, 0.001, 0.0, 0.0]);
+        let dx_text = f64::from(fm_f32[0]) * wx + f64::from(fm_f32[2]) * wy;
+        let dy_text = f64::from(fm_f32[1]) * wx + f64::from(fm_f32[3]) * wy;
+        let mut dx = dx_text * font_size * th;
+        let mut dy = dy_text * font_size;
+
+        if res.wmode() == 1 {
+            dy -= self.state.text_state.char_spacing;
+            if glyph.char_code == 0x20 {
+                dy -= self.state.text_state.word_spacing;
+            }
+        } else {
+            dx += self.state.text_state.char_spacing * th;
+            if glyph.char_code == 0x20 {
+                dx += self.state.text_state.word_spacing * th;
+            }
+        }
+
+        Ok((dx, dy))
+    }
 
     pub(crate) fn show_text_array(&mut self, arr: Handle<Vec<Object>>) -> PdfResult<()> {
         if let Some(array) = self.doc.arena().get_array(arr) {
@@ -503,14 +526,20 @@ impl Interpreter<'_> {
 
             let w = if font.wmode() == 1 { w1_y } else { font.glyph_width_by_cid(cid) };
 
+            let base_font_str = font.base_font.as_str();
+            let is_japanese = base_font_str.to_lowercase().contains("mincho") || 
+                             base_font_str.to_lowercase().contains("gothic") || 
+                             base_font_str.contains("明朝") || 
+                             base_font_str.contains("ゴシック") ||
+                             font.is_cid_keyed;
             let unicode_opt = u.or_else(|| {
-                if char_code > 31 {
-                    std::char::from_u32(0xF0000 + cid).map(|c| c.to_string())
+                if is_japanese && (cid == 1 || cid == 2 || cid == 3) {
+                    Some(" ".to_string())
                 } else {
                     None
                 }
             });
-            let unicode = unicode_opt.clone().unwrap_or_else(|| "\u{FFFD}".to_string());
+            let unicode = unicode_opt.clone().unwrap_or_else(|| " ".to_string());
 
             let name = if let Some(ref enc) = font.encoding {
                 enc.mappings.get(code).cloned()
@@ -519,17 +548,17 @@ impl Interpreter<'_> {
             };
 
             let u_char_hint = unicode_opt.and_then(|s| s.chars().next());
-            if let Some(resolved_gid) = font.resolve_gid(cid, u_char_hint, None) {
-                glyphs.push(ferruginous_render::TextGlyph {
-                    gid: resolved_gid,
-                    name,
-                    char_code,
-                    unicode,
-                    width: w as f32,
-                    vx,
-                    vy,
-                });
-            }
+            let resolved_gid = font.resolve_gid(cid, u_char_hint, None);
+            glyphs.push(ferruginous_render::TextGlyph {
+                gid: resolved_gid.unwrap_or(0),
+                name,
+                char_code,
+                unicode,
+                width: w,
+                vx,
+                vy,
+                is_fallback: resolved_gid.is_none(),
+            });
             i += consumed;
         }
         Ok(glyphs)

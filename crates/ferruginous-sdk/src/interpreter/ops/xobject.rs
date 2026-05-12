@@ -31,12 +31,14 @@ impl Interpreter<'_> {
                 match sub_str {
                     "Image" => self.render_image_xobject(&dict, sd)?,
                     "Form" => match sd.as_ref() {
-                        ferruginous_core::object::SublimatedData::Commands(cmds) => {
-                            self.execute_form_commands(&dict, cmds)?
+                        ferruginous_core::object::SublimatedData::Commands {
+                            items: cmds, ..
+                        } => {
+                            self.execute_form_commands(&dict, cmds)?;
                         }
                         _ => {
                             let bytes = self.doc.arena().get_stream_bytes(sd)?;
-                            self.render_form_xobject(&dict, &bytes)?
+                            self.render_form_xobject(&dict, &bytes)?;
                         }
                     },
                     _ => {}
@@ -124,7 +126,7 @@ impl Interpreter<'_> {
         dict: &BTreeMap<Handle<PdfName>, Object>,
         data: &[u8],
     ) -> PdfResult<()> {
-        let decoded = self.doc.arena().process_filters(&data, dict)?;
+        let decoded = self.doc.arena().process_filters(data, dict)?;
         // 1. Save state
         self.state_stack.push(self.state.clone());
         self.backend.push_state();
@@ -200,63 +202,76 @@ impl Interpreter<'_> {
         let width_key = self.doc.arena().intern_name(PdfName::new("Width"));
         let height_key = self.doc.arena().intern_name(PdfName::new("Height"));
 
-        let (width, height, format, decoded) = if let ferruginous_core::object::SublimatedData::Image { width, height, format, data } = sd {
-             (*width, *height, *format, bytes::Bytes::copy_from_slice(data))
-        } else {
-            let data = self.doc.arena().get_stream_bytes(sd)?;
-            let w = u32::try_from(
-                dict.get(&width_key)
-                    .and_then(|o| o.resolve(self.doc.arena()).as_integer())
-                    .unwrap_or(0),
-            )
-            .unwrap_or(0);
-            let h = u32::try_from(
-                dict.get(&height_key)
-                    .and_then(|o| o.resolve(self.doc.arena()).as_integer())
-                    .unwrap_or(0),
-            )
-            .unwrap_or(0);
-
-            let im_key = self.doc.arena().intern_name(PdfName::new("ImageMask"));
-            let is_mask =
-                dict.get(&im_key).and_then(|o| o.resolve(self.doc.arena()).as_bool()).unwrap_or(false);
-
-            let format = if is_mask {
-                ferruginous_core::graphics::PixelFormat::Gray8 // Map stencil to Gray8 for now
+        let (width, height, format, decoded) =
+            if let ferruginous_core::object::SublimatedData::Image { width, height, format, data } =
+                sd
+            {
+                (*width, *height, *format, bytes::Bytes::copy_from_slice(data))
             } else {
-                self.detect_pixel_format(dict)
-            };
+                let data = self.doc.arena().get_stream_bytes(sd)?;
+                let w = u32::try_from(
+                    dict.get(&width_key)
+                        .and_then(|o| o.resolve(self.doc.arena()).as_integer())
+                        .unwrap_or(0),
+                )
+                .unwrap_or(0);
+                let h = u32::try_from(
+                    dict.get(&height_key)
+                        .and_then(|o| o.resolve(self.doc.arena()).as_integer())
+                        .unwrap_or(0),
+                )
+                .unwrap_or(0);
 
-            let decoded = self.doc.arena().process_filters(&data, dict)?;
-            (w, h, format, decoded)
-        };
+                let im_key = self.doc.arena().intern_name(PdfName::new("ImageMask"));
+                let is_mask = dict
+                    .get(&im_key)
+                    .and_then(|o| o.resolve(self.doc.arena()).as_bool())
+                    .unwrap_or(false);
+
+                let format = if is_mask {
+                    ferruginous_core::graphics::PixelFormat::Gray8 // Map stencil to Gray8 for now
+                } else {
+                    self.detect_pixel_format(dict)
+                };
+
+                let decoded = self.doc.arena().process_filters(&data, dict)?;
+                (w, h, format, decoded)
+            };
 
         let smask_key = self.doc.arena().intern_name(PdfName::new("SMask"));
         let smask_data = if let Some(smask_obj) = dict.get(&smask_key) {
             let smask_stream = smask_obj.resolve(self.doc.arena());
             if let Object::Stream(dh, ref sd) = smask_stream {
-                let smask_dict = self.doc.arena().get_dict(dh).unwrap();
-                let (sw, sh, sf, smask_decoded) = if let ferruginous_core::object::SublimatedData::Image { width, height, format, data } = sd.as_ref() {
-                    (*width, *height, *format, bytes::Bytes::copy_from_slice(data))
-                } else {
-                    let sw = u32::try_from(
-                        smask_dict
-                            .get(&width_key)
-                            .and_then(|o| o.resolve(self.doc.arena()).as_integer())
-                            .unwrap_or(0),
-                    )
-                    .unwrap_or(0);
-                    let sh = u32::try_from(
-                        smask_dict
-                            .get(&height_key)
-                            .and_then(|o| o.resolve(self.doc.arena()).as_integer())
-                            .unwrap_or(0),
-                    )
-                    .unwrap_or(0);
-                    let smask_bytes = self.doc.arena().get_stream_bytes(sd)?;
-                    let smask_decoded = self.doc.arena().process_filters(&smask_bytes, &smask_dict)?;
-                    (sw, sh, self.detect_pixel_format(&smask_dict), smask_decoded)
-                };
+                let smask_dict = self.doc.arena().get_dict(dh).ok_or_else(|| PdfError::Other("SMask dictionary not found".into()))?;
+                let (sw, sh, sf, smask_decoded) =
+                    if let ferruginous_core::object::SublimatedData::Image {
+                        width,
+                        height,
+                        format,
+                        data,
+                    } = sd.as_ref()
+                    {
+                        (*width, *height, *format, bytes::Bytes::copy_from_slice(data))
+                    } else {
+                        let sw = u32::try_from(
+                            smask_dict
+                                .get(&width_key)
+                                .and_then(|o| o.resolve(self.doc.arena()).as_integer())
+                                .unwrap_or(0),
+                        )
+                        .unwrap_or(0);
+                        let sh = u32::try_from(
+                            smask_dict
+                                .get(&height_key)
+                                .and_then(|o| o.resolve(self.doc.arena()).as_integer())
+                                .unwrap_or(0),
+                        )
+                        .unwrap_or(0);
+                        let smask_bytes = self.doc.arena().get_stream_bytes(sd)?;
+                        let smask_decoded =
+                            self.doc.arena().process_filters(&smask_bytes, &smask_dict)?;
+                        (sw, sh, self.detect_pixel_format(&smask_dict), smask_decoded)
+                    };
 
                 Some(ferruginous_render::SMaskData {
                     data: smask_decoded.to_vec(),
@@ -275,14 +290,15 @@ impl Interpreter<'_> {
         Ok(())
     }
 
-    fn detect_pixel_format(&self, dict: &BTreeMap<Handle<PdfName>, Object>) -> ferruginous_core::graphics::PixelFormat {
+    fn detect_pixel_format(
+        &self,
+        dict: &BTreeMap<Handle<PdfName>, Object>,
+    ) -> ferruginous_core::graphics::PixelFormat {
         let cs_key = self.doc.arena().intern_name(PdfName::new("ColorSpace"));
         let cs_obj = dict.get(&cs_key).map(|o: &Object| o.resolve(self.doc.arena()));
 
         let cs_name = match cs_obj {
-            Some(Object::Name(h)) => {
-                self.doc.arena().get_name(h).map(|n| n.as_str().to_string())
-            }
+            Some(Object::Name(h)) => self.doc.arena().get_name(h).map(|n| n.as_str().to_string()),
             Some(Object::Array(h)) => {
                 // For Array color spaces like [/Indexed /DeviceRGB ...], use the first element
                 self.doc

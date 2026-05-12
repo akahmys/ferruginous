@@ -30,8 +30,8 @@ impl Color {
                 Color::Rgb(r, g, b)
             }
             Color::Lab(l, a, b) => {
-                // STUB: Simple conversion (D65 white point)
-                // In a real implementation, this would use a proper ICC profile or Lab-to-RGB matrix.
+                // TODO(RR-15-EXT): Implement full ICC profile-based Lab-to-sRGB conversion.
+                // Current implementation uses a simple D65 white point approximation for placeholder rendering.
                 let y = (l + 16.0) / 116.0;
                 let x = a / 500.0 + y;
                 let z = y - b / 200.0;

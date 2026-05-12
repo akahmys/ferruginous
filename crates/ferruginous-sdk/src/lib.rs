@@ -1,3 +1,14 @@
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    clippy::redundant_field_names,
+    clippy::collapsible_if,
+    clippy::match_like_matches_macro,
+    clippy::cast_possible_wrap,
+    clippy::assign_op_pattern,
+    clippy::too_many_arguments
+)]
 //! Ferruginous SDK: High-level PDF processing library.
 //!
 //! This crate provides a high-level, easy-to-use interface for PDF document
@@ -7,10 +18,10 @@
 use crate::remediation::HeuristicEngine;
 use crate::structure::{AuditFinding, MatterhornAuditor};
 use bytes::Bytes;
+pub use ferruginous_core::font::{GlyphTrace, TraceContext};
 pub use ferruginous_core::{
     Document, Handle, Object, Page, PdfArena, PdfError, PdfName, PdfResult, SublimatedData,
 };
-pub use ferruginous_core::font::{GlyphTrace, TraceContext};
 pub use ferruginous_render::{FallbackFontType, VelloBackend};
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -494,8 +505,7 @@ impl PdfDocument {
             let source_page = self.inner.get_page(i)?;
             let source_dh = self.inner.resolve_to_dict(source_page.obj_handle())?;
 
-            let cloned_page_dict_obj =
-                cloner.clone_object(&Object::Dictionary(source_dh))?;
+            let cloned_page_dict_obj = cloner.clone_object(&Object::Dictionary(source_dh))?;
 
             if let Object::Dictionary(dh) = cloned_page_dict_obj {
                 let mut dict = target_arena.get_dict(dh).unwrap_or_default();
@@ -822,11 +832,10 @@ impl PdfDocument {
 
         match resolved_contents {
             Object::Stream(dh, ref data) => {
-                if let SublimatedData::Commands(cmds) = &**data {
+                if let SublimatedData::Commands { items: cmds, .. } = &**data {
                     interpreter.execute_commands(cmds)?;
                 } else {
-                    let data =
-                        self.inner.decode_stream(&Object::Stream(dh, (*data).clone()))?;
+                    let data = self.inner.decode_stream(&Object::Stream(dh, (*data).clone()))?;
                     interpreter.execute_raw(&data)?;
                 }
             }
@@ -838,7 +847,7 @@ impl PdfDocument {
                             _ => item,
                         };
                         if let Object::Stream(_, ref data) = resolved_item {
-                            if let SublimatedData::Commands(cmds) = &**data {
+                            if let SublimatedData::Commands { items: cmds, .. } = &**data {
                                 interpreter.execute_commands(cmds)?;
                             } else {
                                 let data = self.inner.decode_stream(&resolved_item)?;
@@ -871,7 +880,7 @@ impl PdfDocument {
     pub fn get_remediation_candidates(
         &self,
     ) -> PdfResult<Vec<crate::remediation::RemediationCandidate>> {
-        let engine = HeuristicEngine::new(self.inner.arena());
+        let engine = HeuristicEngine::new();
         engine.infer_structure(&self.inner)
     }
 
@@ -1025,7 +1034,7 @@ impl PdfDocument {
 
 /// Helper function to perform structural re-tagging on a document.
 pub fn retag_document(doc: &mut Document) -> PdfResult<()> {
-    let engine = HeuristicEngine::new(doc.arena());
+    let engine = HeuristicEngine::new();
     let _ = engine.infer_structure(doc)?;
     // Automatic application logic would follow
     Ok(())

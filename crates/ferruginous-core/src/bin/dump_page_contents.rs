@@ -1,5 +1,4 @@
 use ferruginous_core::document::Document;
-use ferruginous_core::object::Object;
 use ferruginous_core::object::sublimation::Command;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -17,8 +16,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Retrieving page {}...", page_num);
     let page = doc.get_page(page_num - 1)?;
     println!("Page retrieved.");
-    let page_dh = doc.resolve_to_dict(page.obj_handle())?;
-    let page_dict = doc.arena().get_dict(page_dh).unwrap();
+    let _page_dh = doc.resolve_to_dict(page.obj_handle())?;
     println!("Page {}:", page_num);
     println!("Resolving Resources...");
     let _contents_key = doc.arena().name("Contents");
@@ -37,7 +35,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         if let Some(f_dict) = doc.arena().get_dict(f_dh) {
                             println!("  Fonts in Resources:");
                             for (name_h, font_obj) in &f_dict {
-                                let alias = doc.arena().get_name(*name_h).unwrap().as_str().to_string();
+                                let alias =
+                                    doc.arena().get_name(*name_h).unwrap().as_str().to_string();
                                 if let Some(h) = font_obj.as_reference() {
                                     println!("    {} -> Object {}", alias, h.index());
                                 } else {
@@ -50,14 +49,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
-    
+
     let contents_handles = page.contents_handles();
 
     println!("Page {}: (Found {} content streams)", page_num, contents_handles.len());
     for h in contents_handles {
         if let Some(sublimated) = doc.get_sublimated_data(h) {
             match &*sublimated {
-                ferruginous_core::object::SublimatedData::Commands(cmds) => {
+                ferruginous_core::object::SublimatedData::Commands { items: cmds, .. } => {
                     println!("  Found {} commands", cmds.len());
                     for cmd in cmds {
                         match cmd {
@@ -78,7 +77,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 println!();
                             }
                             Command::BeginMarkedContent { tag, properties } => {
-                                println!("    BeginMarkedContent: tag={}, props={:?}", tag.0, properties);
+                                println!(
+                                    "    BeginMarkedContent: tag={}, props={:?}",
+                                    tag.0, properties
+                                );
                             }
                             Command::EndMarkedContent => {
                                 println!("    EndMarkedContent");
@@ -95,7 +97,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             Command::PopState => {
                                 println!("    PopState (Q)");
                             }
-                            _ => {}
+                            _ => {
+                                println!("    Command: {:?}", cmd);
+                            }
                         }
                     }
                 }

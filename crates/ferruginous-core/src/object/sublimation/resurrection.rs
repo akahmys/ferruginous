@@ -2,13 +2,13 @@ use super::{Command, IrObject};
 use crate::graphics::{LineCap, LineJoin, StrokeStyle};
 use kurbo::{Affine, Point};
 use nom::{
+    IResult,
     branch::alt,
     bytes::complete::{tag, take_until},
     character::complete::{char, digit1, multispace0},
     combinator::{map, map_res, opt, recognize},
-    multi::{separated_list0},
+    multi::separated_list0,
     sequence::{delimited, preceded, tuple},
-    IResult,
 };
 
 /// Attempt to resurrect a sequence of commands from corrupted debug strings.
@@ -30,29 +30,18 @@ pub fn resurrect_commands(data: &[u8]) -> Option<Vec<Command>> {
         }
     }
 
-    if commands.is_empty() {
-        None
-    } else {
-        Some(commands)
-    }
+    if commands.is_empty() { None } else { Some(commands) }
 }
 
 fn parse_f64(input: &str) -> IResult<&str, f64> {
     map_res(
-        recognize(tuple((
-            opt(char('-')),
-            digit1,
-            opt(tuple((char('.'), digit1))),
-        ))),
+        recognize(tuple((opt(char('-')), digit1, opt(tuple((char('.'), digit1)))))),
         |s: &str| s.parse::<f64>(),
     )(input)
 }
 
 fn parse_i64(input: &str) -> IResult<&str, i64> {
-    map_res(
-        recognize(tuple((opt(char('-')), digit1))),
-        |s: &str| s.parse::<i64>(),
-    )(input)
+    map_res(recognize(tuple((opt(char('-')), digit1))), |s: &str| s.parse::<i64>())(input)
 }
 
 fn parse_point(input: &str) -> IResult<&str, Point> {
@@ -96,7 +85,7 @@ fn parse_line_join(input: &str) -> IResult<&str, LineJoin> {
 fn parse_stroke_style(input: &str) -> IResult<&str, StrokeStyle> {
     let (input, _) = tag("StrokeStyle {")(input)?;
     let (input, _) = multispace0(input)?;
-    
+
     // Simple key-value parser for StrokeStyle fields
     let (input, _) = tag("width:")(input)?;
     let (input, _) = multispace0(input)?;
@@ -136,7 +125,10 @@ fn parse_string_literal(input: &str) -> IResult<&str, String> {
 fn parse_ir_object(input: &str) -> IResult<&str, IrObject> {
     alt((
         map(tag("Null"), |_| IrObject::Null),
-        map(preceded(tag("Boolean("), terminated_char(alt((tag("true"), tag("false"))), ')')), |s| IrObject::Boolean(s == "true")),
+        map(
+            preceded(tag("Boolean("), terminated_char(alt((tag("true"), tag("false"))), ')')),
+            |s| IrObject::Boolean(s == "true"),
+        ),
         map(preceded(tag("Integer("), terminated_char(parse_i64, ')')), IrObject::Integer),
         map(preceded(tag("Real("), terminated_char(parse_f64, ')')), IrObject::Real),
         map(preceded(tag("Name("), terminated_char(parse_string_literal, ')')), IrObject::Name),
@@ -144,8 +136,10 @@ fn parse_ir_object(input: &str) -> IResult<&str, IrObject> {
     ))(input)
 }
 
-fn terminated_char<'a, T, F>(mut parser: F, c: char) -> impl FnMut(&'a str) -> IResult<&'a str, T> 
-where F: FnMut(&'a str) -> IResult<&'a str, T> {
+fn terminated_char<'a, T, F>(mut parser: F, c: char) -> impl FnMut(&'a str) -> IResult<&'a str, T>
+where
+    F: FnMut(&'a str) -> IResult<&'a str, T>,
+{
     move |input| {
         let (input, res) = parser(input)?;
         let (input, _) = char(c)(input)?;
@@ -161,7 +155,10 @@ fn parse_command(input: &str) -> IResult<&str, Command> {
         map(preceded(tag("MoveTo("), terminated_char(parse_point, ')')), Command::MoveTo),
         map(preceded(tag("LineTo("), terminated_char(parse_point, ')')), Command::LineTo),
         map(preceded(tag("Stroke("), terminated_char(parse_stroke_style, ')')), Command::Stroke),
-        map(preceded(tag("DrawXObject("), terminated_char(parse_string_literal, ')')), Command::DrawXObject),
+        map(
+            preceded(tag("DrawXObject("), terminated_char(parse_string_literal, ')')),
+            Command::DrawXObject,
+        ),
         parse_raw_operator,
     ))(input)
 }
@@ -175,7 +172,8 @@ fn parse_raw_operator(input: &str) -> IResult<&str, Command> {
     let (input, _) = char(',')(input)?;
     let (input, _) = multispace0(input)?;
     let (input, _) = tag("operands: [")(input)?;
-    let (input, operands) = separated_list0(tuple((char(','), multispace0)), parse_ir_object)(input)?;
+    let (input, operands) =
+        separated_list0(tuple((char(','), multispace0)), parse_ir_object)(input)?;
     let (input, _) = tag("] }")(input)?;
     Ok((input, Command::RawOperator { name, operands }))
 }
