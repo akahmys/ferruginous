@@ -6,17 +6,41 @@
 use crate::PdfResult;
 use crate::graphics::Color;
 use moxcms::ColorProfile;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-/// Represents a PDF Color Space.
-#[derive(Clone)]
+/// Lightweight representation of a PDF Color Space type for IR and GraphicsState.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ColorSpaceKind {
+    DeviceGray,
+    DeviceRGB,
+    DeviceCMYK,
+    CalGray,
+    CalRGB,
+    Lab,
+    ICCBased,
+    Pattern,
+    Indexed,
+    Separation,
+    DeviceN,
+    Unknown,
+}
+
+/// Represents a resolved PDF Color Space with associated resources.
+#[derive(Debug, Clone)]
 pub enum ColorSpace {
     DeviceGray,
     DeviceRGB,
     DeviceCMYK,
-    ICCBased(Arc<ColorProfile>),
+    CalGray,
+    CalRGB,
     Lab,
+    ICCBased(Arc<ColorProfile>),
+    Pattern,
     Indexed,
+    Separation,
+    DeviceN,
+    Unknown,
 }
 
 impl ColorSpace {

@@ -826,9 +826,17 @@ impl PdfDocument {
             .ok_or_else(|| PdfError::Other("Page has no contents".into()))?;
 
         let resolved_contents = match contents_obj {
-            Object::Reference(h) => self.inner.resolve(&h)?,
+            Object::Reference(h) => {
+                log::debug!("[SDK] Resolving Contents reference {:?}", h);
+                self.inner.resolve(&h)?
+            }
             _ => contents_obj,
         };
+        log::debug!("[SDK] Resolved contents type: {:?}", match &resolved_contents {
+            Object::Stream(_, _) => "Stream",
+            Object::Array(_) => "Array",
+            _ => "Other",
+        });
 
         match resolved_contents {
             Object::Stream(dh, ref data) => {

@@ -28,7 +28,7 @@
 ## 5. Exhaustive Pattern Matching
 - **Rule**: Prohibit wildcard patterns (`_`) in `match` statements.
 - **Purpose**: Leverage the compiler to enforce handling of future enum variants.
-- **Compliance**: All `match` expressions MUST explicitly account for all known variants.
+- **Compliance**: All `match` expressions MUST explicitly account for all known variants. In high-level interpreters, the dispatch of the `Command` IR enum MUST be exhaustive and SHOULD be implemented in a flat, consolidated match loop to ensure visual auditability and prevent hidden state loss in sub-handlers.
 
 ## 6. Stack Overflow Prevention
 - **Rule**: Prohibit unbounded recursion. Use explicit heap-allocated stacks.

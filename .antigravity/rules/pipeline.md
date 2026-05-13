@@ -3,7 +3,7 @@
 This document defines the canonical five-phase pipeline for transforming a physical PDF file into a compliant, rendered, and semantically consistent document.
 
 ## 1. Overview: Normalization-at-Load
-Ferruginous operates on the principle of **"Normalization-at-Load."** The objective is to resolve all ambiguities, inheritance chains, and non-standard data structures at the earliest possible stage. This ensures that downstream processes—Interpretation and Rendering—remain purely deterministic, stateless, and free of side effects.
+Ferruginous operates on the principles of **"Normalization-at-Load"** and **"Delayed Normalization."** The objective is to resolve all ambiguities, inheritance chains, and non-standard data structures at the earliest possible stage, while **preserving raw high-fidelity data** (e.g., original color spaces) within the Intermediate Representation (IR) until the final rendering or serialization stage. This ensures that downstream processes remain purely deterministic, lossless, and free of side effects.
 
 ---
 
@@ -30,6 +30,7 @@ Ferruginous operates on the principle of **"Normalization-at-Load."** The object
         *   **Operator Atomicity**: Decompose complex operators with implicit side effects (e.g., `TD`, `"`, `'`) into sequences of atomic IR commands (e.g., `SetTextLeading`, `MoveToNextLine`, `ShowText`).
         *   **Path Integrity & Termination**: Explicitly preserve the `EndPath` (`n`) operator. Discarding `n` triggers "path construction leakage," where clipping paths or construction segments are erroneously inherited by subsequent painting operations, manifesting as "black mask" artifacts.
         *   **Writing Mode Injection**: Inject explicit `SetWritingMode` commands into the IR stream during font selection (`Tf`). This flattens the Writing Mode state and ensures deterministic layout for documents with mixed horizontal/vertical streams.
+        *   **High-Fidelity Color Preservation**: Maintain original color space semantics (Gray, RGB, CMYK, Lab) throughout the IR pipeline. Downgrading to RGB at the sublimation stage is prohibited as it loses device-specific color profile context and prevents accurate color management in modern rendering backends.
         *   **Corruption Resurrection**: Detect and sanitize content streams containing non-standard "leaked" data (e.g., development debug logs).
     *   **Heuristic Sanitization (Visual Cleanup)**:
         *   **Structural Bar Suppression**: Identify large horizontal rectangles (`Rect`) at the extreme vertical bounds (`y > 700` or `y < 50`) that lack structural or semantic purpose. Suppress these by converting the painting operator to a no-op path termination (`n`).
@@ -63,6 +64,7 @@ Ferruginous operates on the principle of **"Normalization-at-Load."** The object
 *   **Actions**:
     *   **On-demand Sublimation**: Re-decompress and re-reconstruct data on-the-fly based on Phase 2 recipes.
     *   **Stateless Execution**: Execute the atomic IR commands produced in Phase 2. No heuristic guesswork or implicit state mutations are permitted during this phase.
+    *   **Exhaustive Operator Dispatching (Rule 5 Hardening)**: The interpreter MUST utilize exhaustive pattern matching for the `Command` IR enum. The use of wildcards (`_`) in the primary dispatch loop is prohibited. Every variant—including XObjects, marked content, and Type 3 metrics—must be explicitly routed to its corresponding handler to prevent "silent state loss" where operators are parsed but never executed.
 *   **Coordinate System Decoupling**:
     *   **Baseline Transform (`initial_transform`)**: The immutable transform from PDF User Space (Points) to Device Space (Pixels). Handles MediaBox translation, Y-flipping, and DPI scaling.
     *   **Execution CTM**: Maintains a pure, PDF-compliant Y-up `ctm` within each graphics state.

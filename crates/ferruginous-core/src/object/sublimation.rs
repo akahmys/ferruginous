@@ -91,6 +91,10 @@ pub enum Command {
     SetFillColor(Color),
     /// Set the stroke color (SC, SCN, G, RG, K).
     SetStrokeColor(Color),
+    /// Set the fill color space (cs).
+    SetFillColorSpace(String),
+    /// Set the stroke color space (CS).
+    SetStrokeColorSpace(String),
 
     // --- XObjects & Images ---
     /// Draw an external object (Do).

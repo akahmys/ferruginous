@@ -15,6 +15,7 @@ The "Rebirth" project aims to establish the world's most robust and ISO-complian
 **Goal**: Achieve absolute rendering parity and finalize the production-grade CLI toolkit.
 
 - [x] **Rendering Stabilization**: Resolved complex graphics state leakage (EndPath `n` handling) and achieved parity for advanced technical manuals (Intel SDM baseline).
+- [x] **High-Fidelity Color & Operator Hardening**: Implemented exhaustive operator dispatching (Rule 5) and high-fidelity color state preservation (Gray/RGB/CMYK/Lab).
 - [x] **Type 3 Font Pipeline**: Normalized loading and metrics parsing for legacy CJK Type 3 fonts with `CharProcs` support.
 - [x] **Active Refinement**: Implemented Unicode-native normalization and lossless color state serialization in the upgrade pipeline.
 - [x] **Governance & Hardening**: Achieved 100% RR-15 compliance across the SDK and Render crates.

@@ -31,3 +31,9 @@ Design and implementation conventions for the Ferruginous rendering engine (Core
 - **Boundary Precision**: Multi-byte character decoding (CMap) MUST accurately detect byte-length boundaries (1-byte vs 2-byte) based on the specific CMap's range definitions.
 - **Fail-Safe Mapping**: If a character mapping is missing, the engine MUST fallback to a diagnostic placeholder (e.g., `.notdef`) and log the incident, rather than silently guessing or shifting indices.
 - **WMode Fidelity**: Vertical writing (WMode=1) metrics MUST be applied strictly according to the CIDFont's W/W2 dictionaries.
+- **Glyph Replacement Integrity**: During Japanese CID-keyed font rendering, certain whitespace CIDs (e.g., CID 1, 2, 3) MUST be correctly resolved to space glyphs to prevent "White Page" regressions in documents where Unicode mapping is missing.
+
+## 7. Color Space Fidelity
+- **Model Preservation**: Maintain the original color model (DeviceGray, DeviceRGB, DeviceCMYK, Lab, ICCBased) throughout the sublimation and interpretation layers. 
+- **Downgrade Prohibition**: Converting non-RGB colors to RGB during the IR phase is prohibited. Accurate color management depends on preserving the source color space until the final rendering backend call.
+- **Default State**: Initial fill and stroke color states MUST be explicitly defined (defaulting to Gray 0.0) to prevent non-deterministic "Default-to-Black" inheritance issues.

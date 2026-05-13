@@ -100,7 +100,8 @@ pub struct GlyphExtractionContext<'a> {
 
 impl SkrifaBridge {
     pub fn extract_path(&mut self, ctx: &GlyphExtractionContext) -> Option<BezPath> {
-        if let Some(path) = self.glyph_cache.get(&(ctx.font_id, ctx.gid, ctx.char_code)) {
+        let cache_key = (ctx.font_id, ctx.gid, ctx.char_code);
+        if let Some(path) = self.glyph_cache.get(&cache_key) {
             return Some(path.clone());
         }
 
@@ -120,7 +121,6 @@ impl SkrifaBridge {
         );
 
         if path.is_none() && !self.is_blank_char(ctx.unicode_fallback) {
-            // Optional: log as debug in a real app
         }
 
         if let Some(ref p) = path
@@ -147,7 +147,7 @@ impl SkrifaBridge {
         &mut self,
         data: &[u8],
         _font_id: u64,
-        final_gid: u32,
+        final_gid_in: u32,
         _char_code: u32,
         is_cid: bool,
         collection_index: u32,
@@ -158,33 +158,29 @@ impl SkrifaBridge {
         if self.is_blank_char(unicode) {
             return Some(BezPath::new());
         }
-
         if data.is_empty() {
             return None;
         }
 
-        let font = match FontRef::from_index(data, collection_index) {
-            Ok(f) => f,
-            Err(e) => {
-                log::error!(
-                    "[SKRIFA] Failed to parse font from data (size {}): {:?}",
-                    data.len(),
-                    e
-                );
-                return None;
-            }
-        };
+        let font_res = FontRef::from_index(data, collection_index);
+        if let Err(_) = &font_res {
+            return None;
+        }
+        let font = font_res.unwrap();
 
-        let mut final_gid = GlyphId::new(final_gid);
+        let mut final_gid = GlyphId::new(final_gid_in);
 
         // Map character code to GID only if:
-        // 1. This is a system fallback font (where CID/GID mapping is irrelevant)
-        // 2. We hit GID 0 (.notdef) and want to try a rescue
-        if (is_fallback || final_gid.to_u32() == 0)
-            && let Some(u) = unicode
-            && let Some(gid) = font.charmap().map(u)
+        // 1. This is a system fallback font (where we MUST use Unicode)
+        // 2. We hit GID 0 (.notdef) AND this is NOT a CID-keyed font (where GID 0 is a hard failure)
+        if is_fallback 
+            || (final_gid.to_u32() == 0 && !is_cid && unicode.is_some() && unicode.and_then(|u| font.charmap().map(u)).is_some())
         {
-            final_gid = gid;
+            if is_fallback && let Some(u) = unicode && let Some(gid) = font.charmap().map(u) {
+                final_gid = gid;
+            } else if final_gid.to_u32() == 0 && !is_cid && let Some(u) = unicode && let Some(gid) = font.charmap().map(u) {
+                final_gid = gid;
+            }
         }
 
         // 3. Last resort: If still GID 0 but we have a CIDToGIDMap, try manual mapping
@@ -196,6 +192,7 @@ impl SkrifaBridge {
             final_gid = GlyphId::new(gid);
         }
 
+
         if final_gid.to_u32() == 0 {
             if self.is_blank_char(unicode) {
                 return Some(kurbo::BezPath::new());
@@ -205,10 +202,11 @@ impl SkrifaBridge {
 
         let upem = font.head().map(|h| h.units_per_em()).unwrap_or(1000);
         let mut pen = KurboPen::new();
-        let Some(glyph) = font.outline_glyphs().get(final_gid) else {
-            log::warn!("[SKRIFA] GID {} not found in font outlines", final_gid);
+        let glyph_opt = font.outline_glyphs().get(final_gid);
+        if glyph_opt.is_none() {
             return None;
-        };
+        }
+        let glyph = glyph_opt.unwrap();
         if let Err(e) = glyph.draw(
             DrawSettings::unhinted(SkrifaSize::new(upem as f32), LocationRef::default()),
             &mut pen,
@@ -219,7 +217,6 @@ impl SkrifaBridge {
         let path = pen.finish();
         let seg_count = path.segments().count();
         if seg_count == 0 && !self.is_blank_char(unicode) {
-            log::warn!("[SKRIFA] GID {} resulted in 0 segments", final_gid);
             return None;
         }
         Some(path)

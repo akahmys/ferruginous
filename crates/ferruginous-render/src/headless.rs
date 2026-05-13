@@ -13,14 +13,16 @@ pub async fn render_to_bytes(
     width: u32,
     height: u32,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    log::debug!("[RENDER] Setting up wgpu...");
     let (mut context, device_id) = setup_wgpu().await?;
     let device_handle = &mut context.devices[device_id];
     let (device, queue) = (&device_handle.device, &device_handle.queue);
 
+    log::debug!("[RENDER] Creating vello renderer...");
     let mut renderer = Renderer::new(
         device,
         RendererOptions {
-            use_cpu: false,
+            use_cpu: true,
             num_init_threads: NonZeroUsize::new(1),
             antialiasing_support: AaSupport::area_only(),
             ..Default::default()
@@ -32,6 +34,7 @@ pub async fn render_to_bytes(
     let target = create_target_texture(device, size);
     let view = target.create_view(&vello::wgpu::TextureViewDescriptor::default());
 
+    log::debug!("[RENDER] Rendering to texture...");
     renderer
         .render_to_texture(
             device,
@@ -47,12 +50,15 @@ pub async fn render_to_bytes(
         )
         .map_err(|e| format!("Rendering failed: {}", e))?;
 
+    log::debug!("[RENDER] Copying texture to vec...");
     copy_texture_to_vec(device, queue, &target, size).await
 }
 
 async fn setup_wgpu() -> Result<(RenderContext, usize), Box<dyn std::error::Error>> {
     let mut context = RenderContext::new();
+    log::debug!("[RENDER] Requesting device...");
     let id = context.device(None).await.ok_or("No compatible device found")?;
+    log::debug!("[RENDER] Device found with id {}", id);
     Ok((context, id))
 }
 

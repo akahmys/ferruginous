@@ -63,7 +63,28 @@ impl Interpreter<'_> {
                 }
                 Ok(())
             }
-            _ => Ok(()),
+            // Handled by other handlers, but must be listed for Rule 5
+            Command::PushState
+            | Command::PopState
+            | Command::Transform(_)
+            | Command::MoveTo(_)
+            | Command::LineTo(_)
+            | Command::CurveTo(..)
+            | Command::ClosePath
+            | Command::Rect(_)
+            | Command::Fill(_)
+            | Command::Stroke(_)
+            | Command::FillStroke(..)
+            | Command::Clip(_)
+            | Command::SetFillColor(_)
+            | Command::SetStrokeColor(_)
+            | Command::SetFillColorSpace(_)
+            | Command::SetStrokeColorSpace(_)
+            | Command::DrawXObject(_)
+            | Command::BeginMarkedContent { .. }
+            | Command::EndMarkedContent
+            | Command::DrawInlineImage { .. }
+            | Command::RawOperator { .. } => Ok(()),
         }
     }
 
@@ -539,7 +560,7 @@ impl Interpreter<'_> {
                     None
                 }
             });
-            let unicode = unicode_opt.clone().unwrap_or_else(|| " ".to_string());
+            let unicode = unicode_opt.clone().unwrap_or_default();
 
             let name = if let Some(ref enc) = font.encoding {
                 enc.mappings.get(code).cloned()
@@ -547,7 +568,7 @@ impl Interpreter<'_> {
                 None
             };
 
-            let u_char_hint = unicode_opt.and_then(|s| s.chars().next());
+            let u_char_hint = unicode_opt.as_ref().and_then(|s| s.chars().next());
             let resolved_gid = font.resolve_gid(cid, u_char_hint, None);
             glyphs.push(ferruginous_render::TextGlyph {
                 gid: resolved_gid.unwrap_or(0),

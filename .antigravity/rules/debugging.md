@@ -25,3 +25,7 @@ Standard procedures for rapid troubleshooting and mathematical verification of r
 
 ## 6. Raw Data Verification
 - **Ground Truth**: Always verify rendering bugs against the **Raw PDF Byte Stream** before trusting the Intermediate Representation (IR). Buggy sublimation logic can mask the underlying issue.
+
+## 7. Tool-Chain Discipline
+- **Command Verification**: When utilizing project-specific CLI tools (e.g., `fepdf`), always verify the command signature using `--help` before execution. Do not rely on positional inference or memory for complex argument structures.
+- **Atomic Modification**: Prefer atomic, single-file edits when updating sensitive configuration or rule documents to prevent broad failure modes in AI-driven processing.

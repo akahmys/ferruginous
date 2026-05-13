@@ -221,21 +221,26 @@ impl VelloBackend {
 
         let mut font_data = ctx.data_ref;
         let is_space = glyph.unicode == " " || glyph.unicode == "\u{3000}";
-        let mut is_fallback = state.is_fallback || glyph.is_fallback || (is_japanese && is_space);
+        
+        // Only fallback if the font explicitly lacks data, or if we're sure it's a fallback situation.
+        // We should NOT fallback just because it's a space if the embedded font has a glyph for it.
+        let mut is_fallback = state.is_fallback || glyph.is_fallback;
         let mut gid = glyph.gid;
 
-        if glyph.is_fallback || (is_japanese && is_space) {
+        if (glyph.is_fallback || (is_fallback && is_space)) && !ctx.data_ref.is_empty() {
+            // If we have data but it's a space, check if GID is non-zero before falling back
+            if gid == 0 {
+                if let Some(sys_data) = system_fonts.get(&state.fallback_type) {
+                    font_data = sys_data;
+                    is_fallback = true;
+                }
+            }
+        } else if glyph.is_fallback {
             if let Some(sys_data) = system_fonts.get(&state.fallback_type) {
                 font_data = sys_data;
                 gid = 0; 
+                is_fallback = true;
             }
-        } else if !is_fallback
-            && !is_cid
-            && gid >= 256
-            && let Some(sys_data) = system_fonts.get(&state.fallback_type)
-        {
-            font_data = sys_data;
-            is_fallback = true;
         }
 
         let skrifa_ctx = crate::text::GlyphExtractionContext {
@@ -252,7 +257,8 @@ impl VelloBackend {
             is_fallback,
         };
 
-        if let Some(path) = skrifa_bridge.extract_path(&skrifa_ctx) {
+        let path_opt = skrifa_bridge.extract_path(&skrifa_ctx);
+        if let Some(path) = path_opt {
             let upem = skrifa_bridge.get_units_per_em(font_data).unwrap_or(1000);
             let scale = ctx.size / upem as f64;
 

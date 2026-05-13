@@ -481,6 +481,10 @@ impl FontResource {
             if let Some(m) = res.cid_to_gid_map {
                 self.cid_to_gid_map = Some(m);
             }
+
+            if let Some(n) = res.num_glyphs {
+                self.num_glyphs = n;
+            }
             
             // Update physical widths from the reconstructed SFNT
             if let Some(ref d) = self.reconstructed_data {
@@ -621,30 +625,22 @@ impl FontResource {
 
     fn populate_u2g_from_tounicode(&mut self, u2g: &mut BTreeMap<char, u32>) {
         let Some(ref tu) = self.to_unicode else { return };
-        let is_embedded = self.data.is_some() || self.reconstructed_data.is_some();
-        let is_cid = self.is_cid_keyed || self.subtype.as_str().contains("CIDFont");
 
         for (code, uni) in tu.mappings.iter() {
             if let Some(c) = uni.chars().next() {
-                // Priority Check: If we already have a valid GID from the physical font (embedded or fallback),
-                // we should NOT allow the PDF's internal character codes to override it for simple fonts.
-                // For CIDFonts, the character code (CID) IS the intended lookup key, so we allow it.
-                // If this is an embedded font, we TRUST ToUnicode to define the character-to-GID bridge
-                // even if the font's own cmap has a conflicting mapping for that Unicode character.
-                if let Some(&existing) = u2g.get(&c)
-                    && existing != 0 && !is_cid && !is_embedded {
-                        continue;
-                    }
+                // ROBUSTNESS: Avoid mapping to control characters or suspicious whitespace 
+                // if other mappings exist, but TRUST ToUnicode if it's the only source.
+                if uni.is_empty() || (c.is_control() && c != '\t' && c != '\n' && c != '\r') {
+                    log::debug!("[FONT] Skipping suspicious ToUnicode mapping: {:?} -> {:?}", code, uni);
+                    continue;
+                }
 
                 let cid = self.code_to_cid(code);
-                
                 let gid = self.to_gid(cid, None);
                 
-                // For CIDFonts, we always trust the CID-to-GID mapping IF it yields a valid GID.
-                // For simple embedded fonts, we only use the character code as a GID if we have no other choice.
-                if is_cid && gid != 0 {
-                    u2g.insert(c, gid);
-                } else if !u2g.contains_key(&c) && is_embedded && gid != 0 {
+                if gid != 0 {
+                    // TRUST ToUnicode: It should override existing mappings from font file cmaps 
+                    // in most cases, as PDF generators use it to fix encoding issues.
                     u2g.insert(c, gid);
                 }
             }
@@ -1457,6 +1453,16 @@ impl FontResource {
     /// Returns the PDF width for a given GID, handling CID vs Simple font indexing.
     pub fn glyph_width_by_gid(&self, gid: u32) -> f32 {
         if self.is_cid_keyed {
+            // For CID-keyed fonts, we must map the GID back to its original CID
+            // to retrieve the correct width from the PDF's widths map.
+            if let Some(ref map) = self.cid_to_gid_map {
+                for (&cid, &g) in map.iter() {
+                    if g == gid {
+                        return self.glyph_width_by_cid(cid);
+                    }
+                }
+            }
+            // Fallback to direct indexing if no map is present (standard Identity-H)
             return self.glyph_width_by_cid(gid);
         }
 
@@ -1559,19 +1565,18 @@ impl FontResource {
             }
         }
 
-        // 3. Heuristic check of base font name
+        // 3. Check Name patterns for common Japanese fonts
         let name = self.base_font.as_str().to_lowercase();
-        name.contains("cjk")
-            || name.contains("mincho")
-            || name.contains("gothic")
-            || name.contains("hira")
-            || name.contains("koz")
-            || name.contains("heiti")
-            || name.contains("ms-j")
-            || name.contains("ms-m")
-            || name.contains("ryumin")
-            || name.contains("kyokasho")
+        if name.contains("mincho") || name.contains("gothic") || name.contains("koz") 
+            || name.contains("hira") || name.contains("kana") || name.contains("ms-")
+            || name.contains("shas") || name.contains("dfp") || name.contains("heiti")
+            || name.contains("cjk") || name.contains("ryumin") || name.contains("kyokasho")
             || name.contains("shippori")
+        {
+            return true;
+        }
+
+        false
     }
 
     /// Checks if a GID is likely valid for the current font.
@@ -1580,6 +1585,12 @@ impl FontResource {
             return false;
         }
         if self.num_glyphs > 0 && gid >= self.num_glyphs {
+            log::debug!(
+                "[FONT] GID {} is INVALID (num_glyphs: {}) for {}",
+                gid,
+                self.num_glyphs,
+                self.base_font.as_str()
+            );
             return false;
         }
         true
@@ -1660,12 +1671,10 @@ impl FontResource {
         // --- Hybrid Candidate Search ---
 
         // Candidate A: Explicit CIDToGIDMap (Highly Authoritative)
-        if self.is_cid_keyed {
-            if let Some(ref map) = self.cid_to_gid_map {
-                if let Some(&gid) = map.get(&cid) {
-                    if self.is_gid_valid(gid) {
-                        return Some(gid);
-                    }
+        if let Some(ref map) = self.cid_to_gid_map {
+            if let Some(&gid) = map.get(&cid) {
+                if self.is_gid_valid(gid) {
+                    return Some(gid);
                 }
             }
         }
@@ -1940,13 +1949,6 @@ impl FontResource {
         None
     }
 
-    fn resolve_production_name(&self, name: &str) -> Option<u32> {
-        if name.starts_with('c') && name.len() >= 2 && name[1..].chars().all(|c| c.is_ascii_digit())
-            && let Ok(sid) = name[1..].parse::<u32>() {
-                return self.sid_to_gid.get(&sid).copied();
-            }
-        None
-    }
 
     pub fn decode_next(&self, data: &[u8]) -> (usize, Option<String>) {
         if data.is_empty() {

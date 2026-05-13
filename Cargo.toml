@@ -8,7 +8,7 @@ members = [
     "crates/ferruginous-wasm",
     "crates/ferruginous",
     "crates/fepdf",
-    "crates/ferruginous-macros",
+    "crates/ferruginous-macros", ".gemini/antigravity/brain/b434f12c-ffb8-4667-b60c-e7a9f21a4913/scratch/font_extractor",
 ]
 
 [workspace.dependencies]

@@ -14,11 +14,19 @@ pub struct Sublimator<'a> {
     fonts: &'a BTreeMap<String, Arc<FontResource>>,
     stack: Vec<IrObject>,
     current_font: Option<Arc<FontResource>>,
+    fill_color_space: crate::graphics::ColorSpaceKind,
+    stroke_color_space: crate::graphics::ColorSpaceKind,
 }
 
 impl<'a> Sublimator<'a> {
     pub fn new(fonts: &'a BTreeMap<String, Arc<FontResource>>) -> Self {
-        Self { fonts, stack: Vec::new(), current_font: None }
+        Self {
+            fonts,
+            stack: Vec::new(),
+            current_font: None,
+            fill_color_space: crate::graphics::ColorSpaceKind::DeviceGray,
+            stroke_color_space: crate::graphics::ColorSpaceKind::DeviceGray,
+        }
     }
 
     pub fn sublimate(&mut self, data: &[u8]) -> Vec<Command> {
@@ -279,29 +287,28 @@ impl<'a> Sublimator<'a> {
 
     fn handle_color_op(&mut self, op: &str) -> Vec<Command> {
         match op {
-            "rg" => self.pop_rgb().map(|c| Command::SetFillColor(c.to_rgb())).into_iter().collect(),
-            "RG" => self.pop_rgb().map(|c| Command::SetStrokeColor(c.to_rgb())).into_iter().collect(),
-            "k" => self.pop_cmyk().map(|c| Command::SetFillColor(c.to_rgb())).into_iter().collect(),
-            "K" => self.pop_cmyk().map(|c| Command::SetStrokeColor(c.to_rgb())).into_iter().collect(),
-            "g" => self.pop_f64().map(|g| Command::SetFillColor(Color::Gray(g).to_rgb())).into_iter().collect(),
-            "G" => self.pop_f64().map(|g| Command::SetStrokeColor(Color::Gray(g).to_rgb())).into_iter().collect(),
-            "cs" | "CS" => {
-                let mut operands = Vec::new();
-                if let Some(op1) = self.stack.pop() {
-                    operands.push(op1);
-                }
-                vec![Command::RawOperator { name: op.to_string(), operands }]
-            }
-            "scn" | "SCN" | "sc" | "SC" => {
+            "rg" => self.pop_rgb().map(Command::SetFillColor).into_iter().collect(),
+            "RG" => self.pop_rgb().map(Command::SetStrokeColor).into_iter().collect(),
+            "k" => self.pop_cmyk().map(Command::SetFillColor).into_iter().collect(),
+            "K" => self.pop_cmyk().map(Command::SetStrokeColor).into_iter().collect(),
+            "g" => self.pop_f64().map(|g| Command::SetFillColor(Color::Gray(g))).into_iter().collect(),
+            "G" => self.pop_f64().map(|g| Command::SetStrokeColor(Color::Gray(g))).into_iter().collect(),
+            "cs" | "CS" => self.sublimate_cs(op),
+            "scn" | "SCN" | "sc" | "SC" => self.sublimate_sc(op),
+            _ => {
                 let mut operands = Vec::new();
                 // Pop name if present (for Pattern or Separation)
                 if let Some(IrObject::Name(_)) = self.stack.last() {
-                    operands.push(self.stack.pop().unwrap());
+                    if let Some(obj) = self.stack.pop() {
+                        operands.push(obj);
+                    }
                 }
                 // Pop all preceding numbers
                 while let Some(obj) = self.stack.last() {
                     if matches!(obj, IrObject::Integer(_) | IrObject::Real(_)) {
-                        operands.push(self.stack.pop().unwrap());
+                        if let Some(obj) = self.stack.pop() {
+                            operands.push(obj);
+                        }
                     } else {
                         break;
                     }
@@ -309,7 +316,6 @@ impl<'a> Sublimator<'a> {
                 operands.reverse();
                 vec![Command::RawOperator { name: op.to_string(), operands }]
             }
-            _ => Vec::new(),
         }
     }
 
@@ -362,6 +368,81 @@ impl<'a> Sublimator<'a> {
     }
 
     // --- Helpers for popping operands ---
+
+    fn sublimate_cs(&mut self, op: &str) -> Vec<Command> {
+        use crate::graphics::ColorSpaceKind;
+        let is_fill = op == "cs";
+        let name = self
+            .pop_name()
+            .map(|n| n.as_str().to_string())
+            .unwrap_or_else(|| "DeviceGray".to_string());
+        let cs = match name.as_str() {
+            "DeviceGray" | "G" => ColorSpaceKind::DeviceGray,
+            "DeviceRGB" | "RGB" => ColorSpaceKind::DeviceRGB,
+            "DeviceCMYK" | "CMYK" => ColorSpaceKind::DeviceCMYK,
+            "CalGray" => ColorSpaceKind::CalGray,
+            "CalRGB" => ColorSpaceKind::CalRGB,
+            "Lab" => ColorSpaceKind::Lab,
+            "ICCBased" => ColorSpaceKind::ICCBased,
+            "Pattern" => ColorSpaceKind::Pattern,
+            "Indexed" => ColorSpaceKind::Indexed,
+            "Separation" => ColorSpaceKind::Separation,
+            "DeviceN" => ColorSpaceKind::DeviceN,
+            _ => ColorSpaceKind::Unknown,
+        };
+        if is_fill {
+            self.fill_color_space = cs;
+            vec![Command::SetFillColorSpace(name)]
+        } else {
+            self.stroke_color_space = cs;
+            vec![Command::SetStrokeColorSpace(name)]
+        }
+    }
+
+    fn sublimate_sc(&mut self, op: &str) -> Vec<Command> {
+        use crate::graphics::ColorSpaceKind;
+        let is_fill = op == "sc" || op == "scn";
+        let current_cs = if is_fill { self.fill_color_space } else { self.stroke_color_space };
+
+        let count = self
+            .stack
+            .iter()
+            .rev()
+            .take_while(|o| matches!(o, IrObject::Integer(_) | IrObject::Real(_)))
+            .count();
+
+        // Rule 5: Exhaustive matching
+        let color = match current_cs {
+            ColorSpaceKind::DeviceGray => {
+                if count >= 1 { self.pop_f64().map(Color::Gray) } else { None }
+            }
+            ColorSpaceKind::DeviceRGB => {
+                if count >= 3 { self.pop_rgb() } else { None }
+            }
+            ColorSpaceKind::DeviceCMYK => {
+                if count >= 4 { self.pop_cmyk() } else { None }
+            }
+            ColorSpaceKind::CalGray
+            | ColorSpaceKind::CalRGB
+            | ColorSpaceKind::Lab
+            | ColorSpaceKind::ICCBased
+            | ColorSpaceKind::Pattern
+            | ColorSpaceKind::Indexed
+            | ColorSpaceKind::Separation
+            | ColorSpaceKind::DeviceN
+            | ColorSpaceKind::Unknown => None,
+        };
+
+        if let Some(c) = color {
+            if is_fill { vec![Command::SetFillColor(c)] } else { vec![Command::SetStrokeColor(c)] }
+        } else {
+            let mut operands = Vec::new();
+            while let Some(o) = self.stack.pop() {
+                operands.insert(0, o);
+            }
+            vec![Command::RawOperator { name: op.to_string(), operands }]
+        }
+    }
 
     fn pop_f64(&mut self) -> Option<f64> {
         match self.stack.pop() {

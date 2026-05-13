@@ -17,6 +17,8 @@ pub enum Color {
     Lab(f64, f64, f64),
 }
 
+pub use crate::color::ColorSpaceKind;
+
 impl Color {
     /// Normalizes the color to sRGB.
     pub fn to_rgb(&self) -> Self {
@@ -186,6 +188,8 @@ pub struct GraphicsState {
     pub stroke_alpha: f64,
     pub blend_mode: BlendMode,
     pub text_state: TextState,
+    pub fill_color_space: ColorSpaceKind,
+    pub stroke_color_space: ColorSpaceKind,
     pub clip_count: usize,
     pub smask: Option<crate::object::Object>,
 }
@@ -207,6 +211,8 @@ impl Default for GraphicsState {
             stroke_alpha: 1.0,
             blend_mode: BlendMode::Normal,
             text_state: TextState::default(),
+            fill_color_space: ColorSpaceKind::DeviceGray,
+            stroke_color_space: ColorSpaceKind::DeviceGray,
             clip_count: 0,
             smask: None,
         }

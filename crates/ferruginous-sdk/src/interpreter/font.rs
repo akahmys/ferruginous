@@ -86,10 +86,12 @@ impl Interpreter<'_> {
             // Check if the font data is in a format supported by the renderer (SFNT).
             // Raw Type 1 (PFB/PFA) is not supported and must be replaced by fallback font data.
             let is_sfnt = data.as_ref().is_some_and(|d| {
-                d.len() >= 4
+                let sig_match = d.len() >= 4
                     && (d.starts_with(b"OTTO")
                         || d.starts_with(&[0, 1, 0, 0])
-                        || d.starts_with(b"true"))
+                        || d.starts_with(b"true"));
+                log::debug!("[SDK] Font {backend_name} data size: {}, is_sfnt: {}", d.len(), sig_match);
+                sig_match
             });
 
             if !is_sfnt {

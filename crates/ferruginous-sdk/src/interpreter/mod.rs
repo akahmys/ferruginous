@@ -167,6 +167,7 @@ impl<'a> Interpreter<'a> {
 
     /// Executes a sequence of pre-sublimated commands.
     pub fn execute_commands(&mut self, cmds: &[Command]) -> PdfResult<()> {
+        log::debug!("[SDK] Executing {} sublimated commands", cmds.len());
         for cmd in cmds {
             self.execute_single_command(cmd)?;
         }
@@ -199,57 +200,15 @@ impl<'a> Interpreter<'a> {
 
     fn execute_single_command(&mut self, cmd: &Command) -> PdfResult<()> {
         match cmd {
-            Command::PushState | Command::PopState | Command::Transform(_) => {
-                self.handle_state_command(cmd)
-            }
-            Command::MoveTo(_)
-            | Command::LineTo(_)
-            | Command::CurveTo(..)
-            | Command::ClosePath
-            | Command::Rect(_)
-            | Command::Clip(_) => self.handle_path_command(cmd),
-            Command::Fill(_) | Command::Stroke(_) | Command::FillStroke(..) => {
-                self.handle_painting_command(cmd)
-            }
-            Command::BeginText
-            | Command::EndText
-            | Command::ShowText(_)
-            | Command::ShowTextArray(_)
-            | Command::SetFont { .. }
-            | Command::MoveText(_)
-            | Command::SetTextMatrix(_)
-            | Command::SetTextRise(_)
-            | Command::SetCharSpacing(_)
-            | Command::SetWordSpacing(_)
-            | Command::SetHorizontalScaling(_)
-            | Command::SetTextRenderMode(_)
-            | Command::SetWritingMode(_)
-            | Command::SetTextLeading(_)
-            | Command::MoveToNextLine
-            | Command::Type3SetMetrics { .. } => self.handle_text_command(cmd),
-            Command::SetFillColor(_) | Command::SetStrokeColor(_) => self.handle_color_command(cmd),
-            Command::DrawXObject(_)
-            | Command::BeginMarkedContent { .. }
-            | Command::EndMarkedContent
-            | Command::DrawInlineImage { .. }
-            | Command::RawOperator { .. } => self.handle_misc_command(cmd),
-        }
-    }
-
-    fn handle_state_command(&mut self, cmd: &Command) -> PdfResult<()> {
-        match cmd {
+            // --- Graphics State ---
             Command::PushState => self.handle_state_operator("q"),
             Command::PopState => self.handle_state_operator("Q"),
             Command::Transform(m) => {
                 self.push_affine(m);
                 self.handle_state_operator("cm")
             }
-            _ => Ok(()),
-        }
-    }
 
-    fn handle_path_command(&mut self, cmd: &Command) -> PdfResult<()> {
-        match cmd {
+            // --- Path Construction ---
             Command::MoveTo(p) => {
                 self.push_point(*p);
                 self.handle_path_operator("m")
@@ -276,12 +235,8 @@ impl<'a> Interpreter<'a> {
                 WindingRule::NonZero => self.handle_path_operator("W"),
                 WindingRule::EvenOdd => self.handle_path_operator("W*"),
             },
-            _ => Ok(()),
-        }
-    }
 
-    fn handle_painting_command(&mut self, cmd: &Command) -> PdfResult<()> {
-        match cmd {
+            // --- Painting ---
             Command::Fill(rule) => match rule {
                 WindingRule::NonZero => self.handle_painting_operator("f"),
                 WindingRule::EvenOdd => self.handle_painting_operator("f*"),
@@ -291,44 +246,104 @@ impl<'a> Interpreter<'a> {
                 WindingRule::NonZero => self.handle_painting_operator("B"),
                 WindingRule::EvenOdd => self.handle_painting_operator("B*"),
             },
-            _ => Ok(()),
-        }
-    }
 
-    fn handle_color_command(&mut self, cmd: &Command) -> PdfResult<()> {
-        match cmd {
+            // --- Text ---
+            Command::BeginText
+            | Command::EndText
+            | Command::ShowText(_)
+            | Command::ShowTextArray(_)
+            | Command::SetFont { .. }
+            | Command::MoveText(_)
+            | Command::SetTextMatrix(_)
+            | Command::SetTextRise(_)
+            | Command::SetCharSpacing(_)
+            | Command::SetWordSpacing(_)
+            | Command::SetHorizontalScaling(_)
+            | Command::SetTextRenderMode(_)
+            | Command::SetWritingMode(_)
+            | Command::SetTextLeading(_)
+            | Command::MoveToNextLine
+            | Command::Type3SetMetrics { .. } => self.handle_text_command(cmd),
+
+            // --- Color ---
             Command::SetFillColor(color) => {
-                if let ferruginous_core::graphics::Color::Rgb(r, g, b) = color {
-                    self.stack.push(Object::Real(*r));
-                    self.stack.push(Object::Real(*g));
-                    self.stack.push(Object::Real(*b));
-                    self.handle_color_operator("rg")
-                } else {
-                    Ok(())
+                match color {
+                    ferruginous_core::graphics::Color::Gray(g) => {
+                        self.stack.push(Object::Real(*g));
+                        self.handle_color_operator("g")
+                    }
+                    ferruginous_core::graphics::Color::Rgb(r, g, b) => {
+                        self.stack.push(Object::Real(*r));
+                        self.stack.push(Object::Real(*g));
+                        self.stack.push(Object::Real(*b));
+                        self.handle_color_operator("rg")
+                    }
+                    ferruginous_core::graphics::Color::Cmyk(c, m, y, k) => {
+                        self.stack.push(Object::Real(*c));
+                        self.stack.push(Object::Real(*m));
+                        self.stack.push(Object::Real(*y));
+                        self.stack.push(Object::Real(*k));
+                        self.handle_color_operator("k")
+                    }
+                    ferruginous_core::graphics::Color::Lab(l, a, b) => {
+                        self.stack.push(Object::Real(*l));
+                        self.stack.push(Object::Real(*a));
+                        self.stack.push(Object::Real(*b));
+                        log::warn!("[SDK] Lab color in Command::SetFillColor not directly mappable to operator");
+                        Ok(())
+                    }
                 }
             }
             Command::SetStrokeColor(color) => {
-                if let ferruginous_core::graphics::Color::Rgb(r, g, b) = color {
-                    self.stack.push(Object::Real(*r));
-                    self.stack.push(Object::Real(*g));
-                    self.stack.push(Object::Real(*b));
-                    self.handle_color_operator("RG")
-                } else {
-                    Ok(())
+                match color {
+                    ferruginous_core::graphics::Color::Gray(g) => {
+                        self.stack.push(Object::Real(*g));
+                        self.handle_color_operator("G")
+                    }
+                    ferruginous_core::graphics::Color::Rgb(r, g, b) => {
+                        self.stack.push(Object::Real(*r));
+                        self.stack.push(Object::Real(*g));
+                        self.stack.push(Object::Real(*b));
+                        self.handle_color_operator("RG")
+                    }
+                    ferruginous_core::graphics::Color::Cmyk(c, m, y, k) => {
+                        self.stack.push(Object::Real(*c));
+                        self.stack.push(Object::Real(*m));
+                        self.stack.push(Object::Real(*y));
+                        self.stack.push(Object::Real(*k));
+                        self.handle_color_operator("K")
+                    }
+                    ferruginous_core::graphics::Color::Lab(l, a, b) => {
+                        self.stack.push(Object::Real(*l));
+                        self.stack.push(Object::Real(*a));
+                        self.stack.push(Object::Real(*b));
+                        log::warn!("[SDK] Lab color in Command::SetStrokeColor not directly mappable to operator");
+                        Ok(())
+                    }
                 }
             }
-            _ => Ok(()),
-        }
-    }
+            Command::SetFillColorSpace(name) => {
+                self.push_name(name);
+                self.handle_color_operator("cs")
+            }
+            Command::SetStrokeColorSpace(name) => {
+                self.push_name(name);
+                self.handle_color_operator("CS")
+            }
 
-    fn handle_misc_command(&mut self, cmd: &Command) -> PdfResult<()> {
-        match cmd {
+            // --- XObjects & Images ---
             Command::DrawXObject(h) => {
                 let name_h = self.doc.arena().intern_name(PdfName::new(h));
                 self.stack.push(Object::Name(name_h));
                 self.handle_xobject_operator()
             }
             Command::BeginMarkedContent { .. } | Command::EndMarkedContent => Ok(()),
+            Command::DrawInlineImage { .. } => {
+                // Inline images are handled during sublimation or via specific backend calls
+                Ok(())
+            }
+
+            // --- Fallback ---
             Command::RawOperator { name, operands } => {
                 fn ir_to_refined(ir: &ferruginous_core::object::sublimation::IrObject) -> ferruginous_core::refine::RefinedObject {
                     use ferruginous_core::object::sublimation::IrObject;
@@ -358,32 +373,31 @@ impl<'a> Interpreter<'a> {
                 }
                 self.execute_operator(name)
             }
-            _ => Ok(()),
         }
     }
 
     fn execute_operator(&mut self, op: &str) -> PdfResult<()> {
         match op {
             "m" | "l" | "c" | "v" | "y" | "re" | "h" | "W" | "W*" => {
-                self.handle_path_operator(op)?;
+                self.handle_path_operator(op)
             }
             "S" | "f" | "F" | "f*" | "n" | "b" | "b*" | "B" | "B*" | "s" => {
-                self.handle_painting_operator(op)?;
+                self.handle_painting_operator(op)
             }
-            "q" | "Q" | "cm" | "gs" => self.handle_state_operator(op)?,
-            "g" | "G" | "rg" | "RG" | "k" | "K" => self.handle_color_operator(op)?,
+            "q" | "Q" | "cm" | "gs" => self.handle_state_operator(op),
+            "g" | "G" | "rg" | "RG" | "k" | "K" | "cs" | "CS" => self.handle_color_operator(op),
             "Tc" | "Tw" | "Tz" | "TL" | "Tf" | "Tr" | "Ts" => {
-                self.handle_text_state_operator(op)?;
+                self.handle_text_state_operator(op)
             }
-            "BT" | "ET" => self.handle_text_scope_operator(op)?,
-            "Td" | "TD" | "Tm" | "T*" => self.handle_text_positioning_operator(op)?,
-            "Tj" | "TJ" | "'" | "\"" => self.handle_text_showing_operator(op)?,
-            "Do" => self.handle_xobject_operator()?,
-            "BMC" | "BDC" | "EMC" | "MP" | "DP" => self.handle_marked_content_operator(op)?,
+            "BT" | "ET" => self.handle_text_scope_operator(op),
+            "Td" | "TD" | "Tm" | "T*" => self.handle_text_positioning_operator(op),
+            "Tj" | "TJ" | "'" | "\"" => self.handle_text_showing_operator(op),
+            "Do" => self.handle_xobject_operator(),
+            "BMC" | "BDC" | "EMC" | "MP" | "DP" => self.handle_marked_content_operator(op),
             "d0" => {
                 let wy = self.pop_f64()?;
                 let wx = self.pop_f64()?;
-                self.set_type3_metrics(wx, wy)?;
+                self.set_type3_metrics(wx, wy)
             }
             "d1" => {
                 let ury = self.pop_f64()?;
@@ -392,19 +406,21 @@ impl<'a> Interpreter<'a> {
                 let llx = self.pop_f64()?;
                 let wy = self.pop_f64()?;
                 let wx = self.pop_f64()?;
-                self.set_type3_metrics_bbox(wx, wy, llx, lly, urx, ury)?;
+                self.set_type3_metrics_bbox(wx, wy, llx, lly, urx, ury)
             }
-            "CS" | "cs" | "SCN" | "scn" | "sc" | "SC" | "J" | "j" | "w" | "M" | "d" | "i" => {
-                // Consume operands but do nothing (silent fallback for raw interpretation)
+            "J" | "j" | "w" | "M" | "d" | "i" => {
+                self.handle_state_operator(op)
+            }
+            "SCN" | "scn" | "sc" | "SC" => {
+                self.handle_color_operator(op)
             }
             _ => {
                 if !op.is_empty() {
                     log::warn!("Unknown or unhandled operator: {op}");
                 }
+                Ok(())
             }
         }
-        self.stack.clear();
-        Ok(())
     }
 
     pub(crate) fn pop_i64(&mut self) -> PdfResult<i64> {

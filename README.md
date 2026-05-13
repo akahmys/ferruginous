@@ -4,7 +4,7 @@
 
 The project strictly adheres to the **RR-15 (Reliable Rust-15)** hardening protocol—a mission-critical safety standard derived from aerospace principles to ensure memory safety, bit-perfect determinism, and absolute reliability.
 
-**🚀 Status: Rendering Pipeline Stabilized** — As of May 2026, the core engine has achieved stable rendering parity for complex CJK layouts and advanced path construction (Intel SDM baseline).
+**🚀 Status: Rendering Pipeline Stabilized** — As of May 2026, the core engine has achieved stable rendering parity for complex CJK layouts, advanced path construction, and high-fidelity color management (Intel SDM baseline).
 
 ---
 

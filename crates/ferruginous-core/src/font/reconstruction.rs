@@ -23,6 +23,20 @@ pub struct ReconstructedFont {
     pub name_to_gid_map: Option<BTreeMap<String, u32>>,
     /// Discovered CFF SID to GID mapping.
     pub sid_to_gid_map: Option<BTreeMap<u32, u32>>,
+    /// Discovered or synthesized glyph count.
+    pub num_glyphs: Option<u32>,
+}
+
+struct Type1Data {
+    charstrings: BTreeMap<String, Vec<u8>>,
+    subrs: Vec<Vec<u8>>,
+    len_iv: usize,
+}
+
+struct Type1Segments {
+    pub ascii: Vec<u8>,
+    pub binary: Vec<u8>,
+    pub trailer: Vec<u8>,
 }
 
 /// Standard CFF SID for the last predefined standard string.
@@ -46,6 +60,24 @@ pub enum FontFormat {
 }
 
 impl FontFormat {
+    /// Detects the font format from raw binary data, optionally using metadata hints.
+    pub fn detect_with_resource(data: &[u8], resource: &crate::font::FontResource) -> Self {
+        let format = Self::detect(data);
+        
+        // Hardening (RR-15): If metadata says CIDFontType0 (CFF) but we detected Type1Pfb,
+        // it might be a misidentified CFF font or a CID-keyed Type 1 font.
+        // We check if it's actually CFF but just has a weird start (coincidental 0x80 0x01).
+        if format == FontFormat::Type1Pfb && resource.subtype.as_str() == "CIDFontType0" {
+            // CFF should start with version 1.x or 2.x.
+            // If data[0] is 1 or 2, it's likely CFF even if the first 2 bytes match PFB.
+            if data.len() >= 4 && (data[0] == 1 || data[0] == 2) {
+                return if data[0] == 1 { FontFormat::Cff1 } else { FontFormat::Cff2 };
+            }
+        }
+        
+        format
+    }
+
     /// Detects the font format from raw binary data.
     pub fn detect(data: &[u8]) -> Self {
         if data.len() < 2 {
@@ -63,7 +95,7 @@ impl FontFormat {
         }
 
         // 2. CFF Signatures
-        // CFF1: major=1, minor=0
+        // CFF1: major=1, minor=0 (Standard)
         if data.len() >= 2 && data[0] == 1 && data[1] == 0 {
             return FontFormat::Cff1;
         }
@@ -92,12 +124,14 @@ impl FontReconstructor {
     /// This method performs surgical patching of font tables (hmtx, cmap) to align
     /// the physical font file with the metrics declared in the PDF document.
     pub fn reconstruct(resource: &FontResource, raw_data: &[u8]) -> PdfResult<ReconstructedFont> {
-        let format = FontFormat::detect(raw_data);
+        let format = FontFormat::detect_with_resource(raw_data, resource);
+        let sig = if raw_data.len() >= 4 { format!("{:02x}{:02x}{:02x}{:02x}", raw_data[0], raw_data[1], raw_data[2], raw_data[3]) } else { "short".to_string() };
         log::debug!(
-            "[RECONSTRUCT] Starting reconstruction for {} (format: {:?}, size: {} bytes)",
+            "[RECONSTRUCT] Starting reconstruction for {} (format: {:?}, size: {} bytes, sig: {})",
             resource.base_font.as_str(),
             format,
-            raw_data.len()
+            raw_data.len(),
+            sig
         );
 
         // Phase 1: Normalization (Convert any format to a Virtual SFNT)
@@ -110,13 +144,25 @@ impl FontReconstructor {
 
         // Phase 2: Surgical Patching (Apply PDF metrics and mappings to the SFNT)
         if let Ok(mut sfnt_dis) = Self::disassemble_sfnt(&sfnt) {
-            // Read native unitsPerEm from head table to ensure proper scaling
+            // Read native unitsPerEm and numGlyphs from head/maxp to ensure consistency
             let native_units_per_em = sfnt_dis.tables.iter()
                 .find(|(t, _)| t == b"head")
                 .and_then(|(_, data)| if data.len() >= 20 { 
                     Some(u16::from_be_bytes([data[18], data[19]])) 
                 } else { None })
                 .unwrap_or(1000);
+
+            let native_num_glyphs = sfnt_dis.tables.iter()
+                .find(|(t, _)| t == b"maxp")
+                .and_then(|(_, data)| if data.len() >= 6 {
+                    Some(u16::from_be_bytes([data[4], data[5]]))
+                } else { None });
+
+            if let Some(n) = native_num_glyphs {
+                // We can't directly mutate 'resource' here as it's a &FontResource,
+                // but the ReconstructedFont struct will be used to update it later.
+                log::debug!("[RECONSTRUCT] Discovered native num_glyphs: {}", n);
+            }
 
             // Patch hmtx (Glyph Widths) - Scale PDF widths (1000-unit) to native units
             Self::patch_hmtx_direct(&mut sfnt_dis.tables, resource, native_units_per_em);
@@ -138,20 +184,17 @@ impl FontReconstructor {
                 }
 
                 log::debug!("[RECONSTRUCT] Synthesized SFNT with {} tables", sfnt_dis.tables.len());
-                for (tag, data) in &sfnt_dis.tables {
-                    let tag_str = String::from_utf8_lossy(tag);
-                    log::debug!("[RECONSTRUCT] Table {}: size {} bytes", tag_str, data.len());
-                }
 
                 if let Ok(new_data) = Self::assemble_sfnt(&sfnt_dis.magic, &sfnt_dis.tables) {
                     sfnt = new_data;
                 }
             }
 
-            let mut final_cid_map = normalized.cid_to_gid_map;
-            if !synthesized_cid_map.is_empty() {
-                final_cid_map = Some(synthesized_cid_map);
-            }
+            let final_cid_map = if !synthesized_cid_map.is_empty() {
+                Some(synthesized_cid_map)
+            } else {
+                normalized.cid_to_gid_map
+            };
 
             return Ok(ReconstructedFont {
                 data: sfnt,
@@ -159,6 +202,7 @@ impl FontReconstructor {
                 cid_to_gid_map: final_cid_map,
                 name_to_gid_map: discovered_name_map,
                 sid_to_gid_map: discovered_sid_map,
+                num_glyphs: native_num_glyphs.map(|n| n as u32),
             });
         }
 
@@ -168,6 +212,7 @@ impl FontReconstructor {
             cid_to_gid_map: discovered_map_bt,
             name_to_gid_map: discovered_name_map,
             sid_to_gid_map: discovered_sid_map,
+            num_glyphs: None,
         })
     }
 
@@ -272,10 +317,11 @@ impl FontReconstructor {
                     }
                 }
 
-                let mut cid_to_gid_map = Self::build_cid_to_gid_map(&info);
-                if !synthesized_cid_map.is_empty() {
-                    cid_to_gid_map = Some(synthesized_cid_map);
-                }
+                let cid_to_gid_map = if !synthesized_cid_map.is_empty() {
+                    Some(synthesized_cid_map)
+                } else {
+                    Self::build_cid_to_gid_map(&info)
+                };
 
                 Ok(ReconstructedFont {
                     data: final_data,
@@ -283,6 +329,7 @@ impl FontReconstructor {
                     cid_to_gid_map,
                     name_to_gid_map: info.name_to_gid,
                     sid_to_gid_map: info.sid_to_gid,
+                    num_glyphs: Some(info.num_glyphs as u32),
                 })
             }
             FontFormat::Cff1 | FontFormat::Cff2 => {
@@ -302,6 +349,7 @@ impl FontReconstructor {
                     cid_to_gid_map: None,
                     name_to_gid_map: None,
                     sid_to_gid_map: None,
+                    num_glyphs: None,
                 })
             }
         }
@@ -311,23 +359,572 @@ impl FontReconstructor {
         data: &[u8],
         resource: &FontResource,
     ) -> PdfResult<ReconstructedFont> {
-        if let (Some(l1), Some(l2), Some(l3)) =
-            (resource.length1, resource.length2, resource.length3)
-        {
-            log::info!(
-                "[RECONSTRUCT] Type 1 segments detected: L1={}, L2={}, L3={}. Length match: {}",
-                l1,
-                l2,
-                l3,
-                (l1 + l2 + l3) as usize == data.len()
-            );
-            // Future: Implement PFB reconstruction and CFF transcoding here.
+        let segments = Self::parse_pfb(data)?;
+        log::info!(
+            "[RECONSTRUCT] Type 1 segments extracted for {}: ASCII={} bytes, Binary={} bytes, Trailer={} bytes",
+            resource.base_font.as_str(),
+            segments.ascii.len(),
+            segments.binary.len(),
+            segments.trailer.len()
+        );
+
+        // 1. Decrypt the eexec segment
+        let decrypted_eexec = Self::decrypt_type1(&segments.binary, 55665, 4);
+        
+        // 2. Parse Type 1 Data
+        let t1_data = Self::parse_type1_data(&segments.ascii, &decrypted_eexec)?;
+        
+        // 3. Transcode CharStrings from T1 to T2
+        let mut t2_charstrings = Vec::new();
+        let mut glyph_names = Vec::new();
+        for (name, t1_bytes) in t1_data.charstrings {
+            let t2_bytes = Self::convert_t1_to_t2(&t1_bytes, &t1_data.subrs, t1_data.len_iv);
+            t2_charstrings.push(t2_bytes);
+            glyph_names.push(name);
         }
 
-        // For now, we still return an error as Type 1 cannot be directly wrapped in SFNT for modern renderers.
-        Err(PdfError::Other(
-            "Type 1 font transcoding to Virtual OpenType not yet implemented".into(),
-        ))
+        // 4. Serialize to CFF
+        let cff_data = Self::serialize_cff(&glyph_names, &t2_charstrings);
+        
+        // 5. Wrap in SFNT
+        Self::wrap_naked_outline(*b"CFF ", &cff_data, resource)
+    }
+
+    fn serialize_cff(_names: &[String], charstrings: &[Vec<u8>]) -> Vec<u8> {
+        let mut out = Vec::new();
+        // Header
+        out.extend_from_slice(&[1, 0, 4, 4]); // major, minor, hdrSize, offSize=4
+
+        // Name INDEX
+        Self::push_cff_index(&mut out, &[b"TranscodedFont"]);
+
+        // Top DICT INDEX (Pre-calculate offsets)
+        // We'll build the rest first to know the offsets.
+        let mut charstrings_buf = Vec::new();
+        let charstring_refs: Vec<&[u8]> = charstrings.iter().map(|v| v.as_slice()).collect();
+        Self::push_cff_index(&mut charstrings_buf, &charstring_refs);
+
+        let mut private_dict = Vec::new();
+        Self::push_cff_dict_entry(&mut private_dict, 20, &[0]); // defaultWidthX
+        Self::push_cff_dict_entry(&mut private_dict, 21, &[0]); // nominalWidthX
+
+        // 1st Pass: Build Top DICT with fixed-size placeholders for offsets
+        let mut top_dict = Vec::new();
+        Self::push_cff_dict_number_fixed(&mut top_dict, 0); // Placeholder CharStrings
+        top_dict.push(17);
+        Self::push_cff_dict_number_fixed(&mut top_dict, 0); // Placeholder Private size
+        Self::push_cff_dict_number_fixed(&mut top_dict, 0); // Placeholder Private offset
+        top_dict.push(18);
+
+        let top_dict_size = top_dict.len();
+        let top_dict_index_header_size = 2 + 1 + 1 + 4; // count(2) + offSize(1) + offset1(1) + offset2(4)
+        
+        let mut string_idx = Vec::new();
+        Self::push_cff_index(&mut string_idx, &[]);
+        let mut gsubr_idx = Vec::new();
+        Self::push_cff_index(&mut gsubr_idx, &[]);
+
+        let charstrings_pos = out.len() + top_dict_index_header_size + top_dict_size + string_idx.len() + gsubr_idx.len();
+        let private_pos = charstrings_pos + charstrings_buf.len();
+
+        // 2nd Pass: Build actual Top DICT using fixed-size numbers to match calculated size
+        top_dict.clear();
+        Self::push_cff_dict_number_fixed(&mut top_dict, charstrings_pos as i32);
+        top_dict.push(17);
+        Self::push_cff_dict_number_fixed(&mut top_dict, private_dict.len() as i32);
+        Self::push_cff_dict_number_fixed(&mut top_dict, private_pos as i32);
+        top_dict.push(18);
+
+        Self::push_cff_index(&mut out, &[&top_dict]);
+        out.extend_from_slice(&string_idx);
+        out.extend_from_slice(&gsubr_idx);
+        out.extend_from_slice(&charstrings_buf);
+        out.extend_from_slice(&private_dict);
+        
+        out
+    }
+
+    fn push_cff_index(out: &mut Vec<u8>, entries: &[&[u8]]) {
+        let count = entries.len() as u16;
+        out.extend_from_slice(&count.to_be_bytes());
+        if count == 0 { return; }
+        
+        out.push(4); // offSize
+        let mut offset = 1u32;
+        out.extend_from_slice(&offset.to_be_bytes());
+        for entry in entries {
+            offset += entry.len() as u32;
+            out.extend_from_slice(&offset.to_be_bytes());
+        }
+        for entry in entries {
+            out.extend_from_slice(entry);
+        }
+    }
+
+    fn push_cff_dict_entry(out: &mut Vec<u8>, op: u8, args: &[i32]) {
+        for &arg in args {
+            Self::push_cff_dict_number(out, arg);
+        }
+        out.push(op);
+    }
+
+    fn push_cff_dict_number(out: &mut Vec<u8>, val: i32) {
+        if val >= -107 && val <= 107 {
+            out.push((val + 139) as u8);
+        } else if val >= 108 && val <= 1131 {
+            let v = val - 108;
+            out.push((v / 256 + 247) as u8);
+            out.push((v % 256) as u8);
+        } else if val >= -1131 && val <= -108 {
+            let v = -val - 108;
+            out.push((v / 256 + 251) as u8);
+            out.push((v % 256) as u8);
+        } else if val >= -32768 && val <= 32767 {
+            out.push(28);
+            out.extend_from_slice(&(val as i16).to_be_bytes());
+        } else {
+            out.push(29);
+            out.extend_from_slice(&val.to_be_bytes());
+        }
+    }
+
+    fn push_cff_dict_number_fixed(out: &mut Vec<u8>, val: i32) {
+        out.push(29);
+        out.extend_from_slice(&val.to_be_bytes());
+    }
+
+
+    fn parse_type1_data(ascii: &[u8], binary: &[u8]) -> PdfResult<Type1Data> {
+        let mut charstrings = BTreeMap::new();
+        let mut subrs = Vec::new();
+        let mut len_iv = 4;
+
+        // Combine for scanning (some info might be in ASCII or Binary)
+        let mut full_text = Vec::with_capacity(ascii.len() + binary.len());
+        full_text.extend_from_slice(ascii);
+        full_text.extend_from_slice(binary);
+
+        // 1. Find lenIV in /Private
+        if let Some(pos) = Self::find_subslice(&full_text, b"/lenIV") {
+            let chunk = &full_text[pos..std::cmp::min(pos + 20, full_text.len())];
+            if let Some(val) = Self::extract_number(chunk) {
+                len_iv = val as usize;
+            }
+        }
+
+        // 2. Find /Subrs
+        if let Some(pos) = Self::find_subslice(&full_text, b"/Subrs") {
+            let mut search_pos = pos;
+            while let Some(dup_pos) = Self::find_subslice(&full_text[search_pos..], b"dup") {
+                let current_dup = search_pos + dup_pos;
+                let chunk = &full_text[current_dup..std::cmp::min(current_dup + 50, full_text.len())];
+                let chunk_str = String::from_utf8_lossy(chunk);
+                let parts: Vec<&str> = chunk_str.split_whitespace().collect();
+                if parts.len() >= 3 && parts[0] == "dup" {
+                    if let Ok(index) = parts[1].parse::<usize>() {
+                        if let Some((data, next_pos)) = Self::extract_rd_data(&full_text, current_dup + 4 + parts[1].len()) {
+                            if index >= subrs.len() {
+                                subrs.resize(index + 1, Vec::new());
+                            }
+                            subrs[index] = data;
+                            search_pos = next_pos;
+                            continue;
+                        }
+                    }
+                }
+                search_pos = current_dup + 3;
+                if search_pos >= full_text.len() || &full_text[search_pos..std::cmp::min(search_pos+3, full_text.len())] == b"def" {
+                    break;
+                }
+            }
+        }
+
+
+        // 3. Find /CharStrings
+        if let Some(pos) = Self::find_subslice(&full_text, b"/CharStrings") {
+            let mut search_pos = pos;
+            while let Some(name_pos) = Self::find_next_name(&full_text, search_pos) {
+                let name = Self::extract_name(&full_text, name_pos);
+                if name == "CharStrings" || name == "dict" || name == "begin" || name == "end" {
+                    search_pos = name_pos + name.len() + 1;
+                    continue;
+                }
+                
+                if let Some((data, next_pos)) = Self::extract_rd_data(&full_text, name_pos + name.len()) {
+                    charstrings.insert(name, data);
+                    search_pos = next_pos;
+                } else {
+                    search_pos = name_pos + name.len() + 1;
+                }
+                
+                if search_pos >= full_text.len() || &full_text[search_pos..std::cmp::min(search_pos+3, full_text.len())] == b"end" {
+                    break;
+                }
+            }
+        }
+
+        Ok(Type1Data { charstrings, subrs, len_iv })
+    }
+
+    fn convert_t1_to_t2(t1_bytes: &[u8], subrs: &[Vec<u8>], len_iv: usize) -> Vec<u8> {
+        let mut t2_bytes = Vec::new();
+        let mut stack = Vec::new();
+        let mut width_written = false;
+        
+        let decrypted = Self::decrypt_charstring(t1_bytes, len_iv);
+        
+        Self::convert_recursive(
+            &decrypted,
+            subrs,
+            len_iv,
+            &mut t2_bytes,
+            &mut stack,
+            &mut width_written,
+            0,
+        );
+        
+        // Ensure it ends with endchar if not already present
+        if t2_bytes.last() != Some(&14) {
+            t2_bytes.push(14);
+        }
+        
+        t2_bytes
+    }
+
+    fn convert_recursive(
+        t1_bytes: &[u8],
+        subrs: &[Vec<u8>],
+        len_iv: usize,
+        t2_bytes: &mut Vec<u8>,
+        stack: &mut Vec<i32>,
+        width_written: &mut bool,
+        depth: usize,
+    ) {
+        if depth > 10 {
+            return; // Safety limit for nested subroutines
+        }
+
+        let mut i = 0;
+        while i < t1_bytes.len() {
+            let b = t1_bytes[i];
+            if b >= 32 {
+                // Number parsing (Type 1 format)
+                let (val, next_i) = if b <= 246 {
+                    (b as i32 - 139, i + 1)
+                } else if b <= 250 {
+                    ((b as i32 - 247) * 256 + t1_bytes[i + 1] as i32 + 108, i + 2)
+                } else if b <= 254 {
+                    (-(b as i32 - 251) * 256 - t1_bytes[i + 1] as i32 - 108, i + 2)
+                } else {
+                    let v = i32::from_be_bytes([
+                        t1_bytes[i + 1],
+                        t1_bytes[i + 2],
+                        t1_bytes[i + 3],
+                        t1_bytes[i + 4],
+                    ]);
+                    (v, i + 5)
+                };
+                stack.push(val);
+                i = next_i;
+            } else {
+                // Operator
+                i += 1;
+                match b {
+                    1 => { // hstem
+                        for &val in stack.iter() {
+                            Self::push_t2_number(t2_bytes, val);
+                        }
+                        t2_bytes.push(1);
+                        stack.clear();
+                    }
+                    3 => { // vstem
+                        for &val in stack.iter() {
+                            Self::push_t2_number(t2_bytes, val);
+                        }
+                        t2_bytes.push(3);
+                        stack.clear();
+                    }
+                    4 => { // vmoveto
+                        for &val in stack.iter() {
+                            Self::push_t2_number(t2_bytes, val);
+                        }
+                        t2_bytes.push(4);
+                        stack.clear();
+                    }
+                    5 => { // rlineto
+                        for &val in stack.iter() {
+                            Self::push_t2_number(t2_bytes, val);
+                        }
+                        t2_bytes.push(5);
+                        stack.clear();
+                    }
+                    6 => { // hlineto
+                        for &val in stack.iter() {
+                            Self::push_t2_number(t2_bytes, val);
+                        }
+                        t2_bytes.push(6);
+                        stack.clear();
+                    }
+                    7 => { // vlineto
+                        for &val in stack.iter() {
+                            Self::push_t2_number(t2_bytes, val);
+                        }
+                        t2_bytes.push(7);
+                        stack.clear();
+                    }
+                    8 => { // rrcurveto
+                        for &val in stack.iter() {
+                            Self::push_t2_number(t2_bytes, val);
+                        }
+                        t2_bytes.push(8);
+                        stack.clear();
+                    }
+                    9 => { // closepath (Implicit in T2)
+                        stack.clear();
+                    }
+                    10 => { // callsubr
+                        if let Some(idx) = stack.pop() {
+                            if idx >= 0 && (idx as usize) < subrs.len() {
+                                let subr_data = &subrs[idx as usize];
+                                let decrypted = Self::decrypt_charstring(subr_data, len_iv);
+                                Self::convert_recursive(
+                                    &decrypted,
+                                    subrs,
+                                    len_iv,
+                                    t2_bytes,
+                                    stack,
+                                    width_written,
+                                    depth + 1,
+                                );
+                            }
+                        }
+                    }
+                    11 => { // return
+                        return;
+                    }
+                    13 => { // hsbw (sbx sby width hsbw)
+                        if stack.len() >= 2 {
+                            let width = stack[stack.len() - 1];
+                            if !*width_written {
+                                Self::push_t2_number(t2_bytes, width);
+                                *width_written = true;
+                            }
+                        }
+                        stack.clear();
+                    }
+                    14 => { // endchar
+                        t2_bytes.push(14);
+                        stack.clear();
+                    }
+                    21 => { // rmoveto
+                        for &val in stack.iter() {
+                            Self::push_t2_number(t2_bytes, val);
+                        }
+                        t2_bytes.push(21);
+                        stack.clear();
+                    }
+                    22 => { // hmoveto
+                        for &val in stack.iter() {
+                            Self::push_t2_number(t2_bytes, val);
+                        }
+                        t2_bytes.push(22);
+                        stack.clear();
+                    }
+                    30 => { // vhcurveto
+                        for &val in stack.iter() {
+                            Self::push_t2_number(t2_bytes, val);
+                        }
+                        t2_bytes.push(30);
+                        stack.clear();
+                    }
+                    31 => { // hvcurveto
+                        for &val in stack.iter() {
+                            Self::push_t2_number(t2_bytes, val);
+                        }
+                        t2_bytes.push(31);
+                        stack.clear();
+                    }
+                    12 => { // Escape sequences
+                        if i < t1_bytes.len() {
+                            let b2 = t1_bytes[i];
+                            i += 1;
+                            match b2 {
+                                6 => { // seac (asb adx ady bchar achar seac)
+                                    // In CFF version 1, endchar with 4 args is seac
+                                    // Stack: [asb, adx, ady, bchar, achar]
+                                    if stack.len() >= 5 {
+                                        let adx = stack[1];
+                                        let ady = stack[2];
+                                        let bchar = stack[3];
+                                        let achar = stack[4];
+                                        Self::push_t2_number(t2_bytes, adx);
+                                        Self::push_t2_number(t2_bytes, ady);
+                                        Self::push_t2_number(t2_bytes, bchar);
+                                        Self::push_t2_number(t2_bytes, achar);
+                                        t2_bytes.push(14); // endchar (acting as seac)
+                                    }
+                                    stack.clear();
+                                }
+                                7 => { // sbw (lsbx lsby wx wy sbw)
+                                    if stack.len() >= 4 {
+                                        let wx = stack[2];
+                                        if !*width_written {
+                                            Self::push_t2_number(t2_bytes, wx);
+                                            *width_written = true;
+                                        }
+                                    }
+                                    stack.clear();
+                                }
+                                0 | 1 | 2 => { // dotsection, vstem3, hstem3
+                                    // Map to nothing or standard stems
+                                    stack.clear();
+                                }
+                                12 | 16 | 17 => { // div, callothersubr, pop
+                                    // callothersubr and pop are tricky.
+                                    // Othersubrs 0-3 are for flex, which we can simplify.
+                                    // For now, clear stack to avoid invalid ops.
+                                    stack.clear();
+                                }
+                                _ => {
+                                    stack.clear();
+                                }
+                            }
+                        }
+                    }
+                    _ => {
+                        stack.clear();
+                    }
+                }
+            }
+        }
+    }
+
+    fn push_t2_number(out: &mut Vec<u8>, val: i32) {
+        if val >= -107 && val <= 107 {
+            out.push((val + 139) as u8);
+        } else if val >= 108 && val <= 1131 {
+            let v = val - 108;
+            out.push((v / 256 + 247) as u8);
+            out.push((v % 256) as u8);
+        } else if val >= -1131 && val <= -108 {
+            let v = -val - 108;
+            out.push((v / 256 + 251) as u8);
+            out.push((v % 256) as u8);
+        } else {
+            out.push(255);
+            out.extend_from_slice(&(val as i32).to_be_bytes());
+        }
+    }
+
+    fn decrypt_charstring(data: &[u8], len_iv: usize) -> Vec<u8> {
+        Self::decrypt_type1(data, 4330, len_iv)
+    }
+
+    fn find_subslice(data: &[u8], sub: &[u8]) -> Option<usize> {
+        data.windows(sub.len()).position(|w| w == sub)
+    }
+
+    fn extract_number(data: &[u8]) -> Option<i32> {
+        let s = String::from_utf8_lossy(data);
+        s.split_whitespace()
+            .find_map(|p| p.parse::<i32>().ok())
+    }
+
+    fn find_next_name(data: &[u8], start: usize) -> Option<usize> {
+        data[start..].iter().position(|&b| b == b'/').map(|p| start + p)
+    }
+
+    fn extract_name(data: &[u8], pos: usize) -> String {
+        let mut end = pos + 1;
+        while end < data.len() && !data[end].is_ascii_whitespace() && data[end] != b'/' && data[end] != b'{' && data[end] != b'[' {
+            end += 1;
+        }
+        String::from_utf8_lossy(&data[pos+1..end]).to_string()
+    }
+
+    fn extract_rd_data(data: &[u8], pos: usize) -> Option<(Vec<u8>, usize)> {
+        // Look for "<number> RD" or "<number> -|"
+        let mut i = pos;
+        while i < data.len() && data[i].is_ascii_whitespace() { i += 1; }
+        let start_num = i;
+        while i < data.len() && !data[i].is_ascii_whitespace() { i += 1; }
+        let num_str = String::from_utf8_lossy(&data[start_num..i]);
+        let len = num_str.parse::<usize>().ok()?;
+        
+        while i < data.len() && data[i].is_ascii_whitespace() { i += 1; }
+        let op_start = i;
+        while i < data.len() && !data[i].is_ascii_whitespace() { i += 1; }
+        let op = &data[op_start..i];
+        
+        if op == b"RD" || op == b"-|" {
+            let data_start = i + 1; // Usually a space after RD
+            if data_start + len <= data.len() {
+                return Some((data[data_start..data_start + len].to_vec(), data_start + len));
+            }
+        }
+        None
+    }
+
+    fn decrypt_type1(data: &[u8], mut r: u16, n: usize) -> Vec<u8> {
+        if data.len() <= n {
+            return Vec::new();
+        }
+        let mut output = Vec::with_capacity(data.len() - n);
+        let c1: u16 = 52845;
+        let c2: u16 = 22719;
+
+        for (i, &b) in data.iter().enumerate() {
+            let plain = b ^ (r >> 8) as u8;
+            if i >= n {
+                output.push(plain);
+            }
+            r = (b as u16).wrapping_add(r).wrapping_mul(c1).wrapping_add(c2);
+        }
+        output
+    }
+
+
+    fn parse_pfb(data: &[u8]) -> PdfResult<Type1Segments> {
+        let mut ascii = Vec::new();
+        let mut binary = Vec::new();
+        let mut trailer = Vec::new();
+        let mut pos = 0;
+
+        while pos + 6 <= data.len() {
+            if data[pos] != 0x80 {
+                break;
+            }
+            let tag = data[pos + 1];
+            let len = u32::from_le_bytes([
+                data[pos + 2],
+                data[pos + 3],
+                data[pos + 4],
+                data[pos + 5],
+            ]) as usize;
+            pos += 6;
+
+            if pos + len > data.len() {
+                return Err(PdfError::Other("Malformed PFB: segment exceeds data length".into()));
+            }
+
+            match tag {
+                1 => ascii.extend_from_slice(&data[pos..pos + len]),
+                2 => binary.extend_from_slice(&data[pos..pos + len]),
+                3 => trailer.extend_from_slice(&data[pos..pos + len]),
+                _ => {}
+            }
+            pos += len;
+        }
+
+        if ascii.is_empty() && binary.is_empty() {
+            return Err(PdfError::Other("Malformed PFB: no valid segments found".into()));
+        }
+
+        Ok(Type1Segments {
+            ascii,
+            binary,
+            trailer,
+        })
     }
 
     fn wrap_naked_outline(
@@ -364,7 +961,7 @@ impl FontReconstructor {
 
         let mut hmtx = Vec::with_capacity(num_glyphs * 4);
         for gid in 0..num_glyphs {
-            let width = resource.glyph_width_by_cid(gid as u32);
+            let width = resource.glyph_width_by_gid(gid as u32);
             hmtx.extend_from_slice(&(width as i16).to_be_bytes());
             hmtx.extend_from_slice(&0i16.to_be_bytes());
         }
@@ -413,10 +1010,12 @@ impl FontReconstructor {
             tables.push((*b"cmap", cmap_data));
         }
 
-        let sfnt_data = if let Ok(new_data) = Self::assemble_sfnt(b"OTTO", &tables) {
-            new_data
-        } else {
-            outline_data.to_vec()
+        let sfnt_data = match Self::assemble_sfnt(b"OTTO", &tables) {
+            Ok(new_data) => new_data,
+            Err(e) => {
+                log::error!("[RECONSTRUCT] SFNT assembly FAILED for {}: {:?}", resource.base_font.as_str(), e);
+                outline_data.to_vec()
+            }
         };
 
         let mut cid_to_gid_map = Self::build_cid_to_gid_map(&info);
@@ -430,6 +1029,7 @@ impl FontReconstructor {
             cid_to_gid_map,
             name_to_gid_map: info.name_to_gid,
             sid_to_gid_map: info.sid_to_gid,
+            num_glyphs: Some(info.num_glyphs as u32),
         })
     }
 
@@ -440,13 +1040,10 @@ impl FontReconstructor {
         name_to_gid: Option<&BTreeMap<String, u32>>,
         _is_cid: bool,
     ) -> (Option<Vec<u8>>, BTreeMap<u32, u32>) {
-        if resource.unified_map.is_empty() {
-            return (None, BTreeMap::new());
-        }
+        // No early return for empty unified_map, we'll use heuristics if needed.
 
         let mut internal_unicode_map = BTreeMap::new();
         let mut internal_code_map = BTreeMap::new();
-        let mut cid_to_gid_map = BTreeMap::new();
 
         // GID Rescue: Build physical CID -> GID map by scanning all internal cmap tables
         if let Ok(face) = ttf_parser::Face::parse(raw_data, 0) {
@@ -464,8 +1061,22 @@ impl FontReconstructor {
             }
         }
 
+        let info = Self::inspect_cff(raw_data).unwrap_or(CffInfo::empty());
+
         let mut mappings = Vec::new();
-        for (uni_str, &cid) in resource.unified_map.iter() {
+        
+        // If unified_map is empty, we fallback to a simple 0..255 character code mapping for simple fonts.
+        // This is essential for Type 1 fonts that lack ToUnicode but have embedded CFF data.
+        let default_map;
+        let it: Box<dyn Iterator<Item = (String, u32)>> = if resource.unified_map.is_empty() && !resource.is_cid_keyed {
+            default_map = (0..=255u32).map(|c| (String::from_utf8_lossy(&[c as u8]).to_string(), c as u32)).collect::<Vec<_>>();
+            Box::new(default_map.into_iter())
+        } else {
+            Box::new(resource.unified_map.iter().map(|(s, &c)| (s.clone(), c)))
+        };
+
+        let mut cid_to_gid_map = discovered_map.cloned().unwrap_or_default();
+        for (uni_str, cid) in it {
             let Some(c) = uni_str.chars().next() else {
                 continue;
             };
@@ -479,9 +1090,29 @@ impl FontReconstructor {
                     resource.encoding.as_ref().and_then(|e| e.map(&[cid as u8]))
             {
                 let name = glyph_name.strip_prefix('/').unwrap_or(&glyph_name);
+                log::debug!("[RECONSTRUCT] CID {} maps to PDF name: {}", cid, name);
                 actual_gid = nmap.get(name).copied();
                 if actual_gid.is_some() {
                     resolved_via = "Name-to-GID";
+                } else {
+                    // Bridge /cXX, /cXXX, or /uniXXXX to SID-based lookup if direct name match fails
+                    let sid_candidate = if name.starts_with('c') {
+                        u32::from_str_radix(&name[1..], 10).ok()
+                    } else if name.starts_with("uni") {
+                        u32::from_str_radix(&name[3..], 16).ok()
+                    } else {
+                        None
+                    };
+
+                    if let Some(sid) = sid_candidate {
+                        if let Some(map) = discovered_map {
+                            actual_gid = map.get(&sid).copied();
+                            if actual_gid.is_some() {
+                                resolved_via = "Name-to-SID-Bridge";
+                                log::debug!("[RECONSTRUCT] Bridged PDF name {} to SID {} -> GID {:?}", name, sid, actual_gid);
+                            }
+                        }
+                    }
                 }
             }
 
@@ -494,10 +1125,16 @@ impl FontReconstructor {
                     actual_gid = Some(*gid);
                     resolved_via = "Direct-Unicode-Name";
                 } else {
-                    let hex_name = format!("uni{:04X}", c as u32);
-                    if let Some(gid) = nmap.get(&hex_name) {
+                    let agl_name = Self::unicode_to_agl_name(c);
+                    if let Some(gid) = nmap.get(agl_name) {
                         actual_gid = Some(*gid);
-                        resolved_via = "Direct-Unicode-Hex-Name";
+                        resolved_via = "AGL-Name-Bridge";
+                    } else {
+                        let hex_name = format!("uni{:04X}", c as u32);
+                        if let Some(gid) = nmap.get(&hex_name) {
+                            actual_gid = Some(*gid);
+                            resolved_via = "Direct-Unicode-Hex-Name";
+                        }
                     }
                 }
             }
@@ -521,17 +1158,40 @@ impl FontReconstructor {
             // Priority 2: Original font cmap tables (via ttf-parser)
             if actual_gid.is_none() {
                 // First try Unicode lookup (standard)
-                actual_gid = internal_unicode_map.get(&(c as u32)).copied();
-                if actual_gid.is_some() {
+                if let Some(&gid) = internal_unicode_map.get(&(c as u32)) && gid != 0 {
+                    actual_gid = Some(gid);
                     resolved_via = "Internal-Unicode";
                 }
 
                 // Then try Code/CID lookup (essential for subset TrueType with custom cmaps)
                 if actual_gid.is_none() {
-                    actual_gid = internal_code_map.get(&{ cid }).copied();
-                    if actual_gid.is_some() {
+                    if let Some(&gid) = internal_code_map.get(&cid) && gid != 0 {
+                        actual_gid = Some(gid);
                         resolved_via = "Internal-Code";
                     }
+                }
+            }
+
+
+            // Priority 4: Greedy Mapping for Tiny Subsetted Fonts
+            // Authoritative for many modern subsetted fonts (e.g. from Adobe Distiller or weird CAD exporters)
+            // that split every single character into its own tiny font with exactly one glyph (besides .notdef).
+            // In these cases, the character code/CID in the PDF usually doesn't match the internal CID/name,
+            // but since there's only one glyph, we must use it.
+            if actual_gid.unwrap_or(0) == 0 && info.num_glyphs == 2 {
+                actual_gid = Some(1);
+                resolved_via = "Greedy-Tiny-Subset";
+                log::debug!("[RECONSTRUCT] Resolved '{}' (CID {}) -> GID 1 via Greedy-Tiny-Subset (Font has only 1 glyph)", c, cid);
+            }
+
+            // Priority 5: Identity Mapping (Lying Identity fallback)
+            // Authoritative for Western subsetted "Lying Identity" fonts when no internal map is available.
+            if actual_gid.is_none() {
+                let is_identity = resource.cid_ordering.as_deref().is_none_or(|o| o == "Identity");
+                let is_lying_identity = resource.is_cid_keyed && is_identity && !resource.is_cjk();
+                if is_lying_identity && cid != 0 {
+                    actual_gid = Some(cid);
+                    resolved_via = "Lying-Identity";
                 }
             }
 
@@ -545,16 +1205,6 @@ impl FontReconstructor {
                 );
             }
 
-            // Priority 3: Identity Mapping (Lying Identity fallback)
-            // Authoritative for Western subsetted "Lying Identity" fonts when no internal map is available.
-            if actual_gid.is_none() {
-                let is_identity = resource.cid_ordering.as_deref().is_none_or(|o| o == "Identity");
-                let is_lying_identity = resource.is_cid_keyed && is_identity && !resource.is_cjk();
-                if is_lying_identity && cid != 0 {
-                    actual_gid = Some(cid);
-                }
-            }
-
             // Final fallback: Resource's own mapping (Identity fallback)
             // Note: We only use the Identity fallback if we are SURE it's a CID-keyed font
             // where CID == GID is the intended path. For subsetted Western fonts,
@@ -564,8 +1214,8 @@ impl FontReconstructor {
             } else if resource.is_cid_keyed && resource.cid_to_gid_map.is_some() {
                 // If the PDF provided an explicit CIDToGIDMap, we trust it.
                 resource.to_gid(cid, None)
-            } else if resource.is_cid_keyed && !resource.base_font.as_str().contains('+') {
-                // If it's a standard (non-subset) CID font, Identity is usually safe.
+            } else if resource.is_cid_keyed && (!resource.base_font.as_str().contains('+') || resource.is_cjk()) {
+                // If it's a standard CID font OR a CJK font (even if subsetted), Identity is usually safe.
                 resource.to_gid(cid, None)
             } else {
                 // For subsetted fonts (+ in name), Identity is often lying.
@@ -860,6 +1510,16 @@ impl FontReconstructor {
                     for gid in 1..std::cmp::min(ng, 229) {
                         sid_map.insert(gid as u32, gid as u32);
                     }
+                } else if o == 1 {
+                    // Expert set (Simplified)
+                    for gid in 1..std::cmp::min(ng, 166) {
+                        sid_map.insert(gid as u32, gid as u32); // Fallback: Assume Identity for Expert SIDs
+                    }
+                } else if o == 2 {
+                    // Expert Subset (Simplified)
+                    for gid in 1..std::cmp::min(ng, 87) {
+                        sid_map.insert(gid as u32, gid as u32);
+                    }
                 }
             }
         } else {
@@ -948,6 +1608,7 @@ impl FontReconstructor {
         string_idx_pos: usize,
     ) -> BTreeMap<String, u32> {
         let mut nm = BTreeMap::new();
+        log::debug!("[RECONSTRUCT] Deriving name map for {} SIDs, String INDEX at {}", sid_map.len(), string_idx_pos);
         use crate::font::cff_standard::CFF_STANDARD_STRINGS;
 
         for (&sid, &gid) in sid_map {
@@ -961,9 +1622,99 @@ impl FontReconstructor {
                     format!("c{:03}", sid)
                 }
             };
-            nm.insert(name, gid);
+            nm.insert(name.clone(), gid);
+            log::debug!("[RECONSTRUCT] Derived name: {} -> GID {}", name, gid);
+
+            // Add Unicode alias for standard SIDs (e.g. "!" for "exclam")
+            if sid <= CFF_LAST_STANDARD_SID {
+                if let Some(c) = Self::standard_sid_to_unicode(sid) {
+                    nm.insert(c.to_string(), gid);
+                    log::debug!("[RECONSTRUCT] Added Unicode alias: {} -> GID {}", c, gid);
+                }
+            }
         }
         nm
+    }
+
+    fn standard_sid_to_unicode(sid: u32) -> Option<char> {
+        // Subset of Adobe Glyph List for standard CFF SIDs
+        match sid {
+            1 => Some(' '),
+            2 => Some('!'),
+            3 => Some('"'),
+            4 => Some('#'),
+            5 => Some('$'),
+            6 => Some('%'),
+            7 => Some('&'),
+            8 => Some('\''),
+            9 => Some('('),
+            10 => Some(')'),
+            11 => Some('*'),
+            12 => Some('+'),
+            13 => Some(','),
+            14 => Some('-'),
+            15 => Some('.'),
+            16 => Some('/'),
+            17..=26 => Some(std::char::from_u32(0x30 + (sid - 17)).unwrap()), // 0-9
+            27 => Some(':'),
+            28 => Some(';'),
+            29 => Some('<'),
+            30 => Some('='),
+            31 => Some('>'),
+            32 => Some('?'),
+            33 => Some('@'),
+            34..=59 => Some(std::char::from_u32(0x41 + (sid - 34)).unwrap()), // A-Z
+            60 => Some('['),
+            61 => Some('\\'),
+            62 => Some(']'),
+            63 => Some('^'),
+            64 => Some('_'),
+            65 => Some('`'),
+            66..=91 => Some(std::char::from_u32(0x61 + (sid - 66)).unwrap()), // a-z
+            92 => Some('{'),
+            93 => Some('|'),
+            94 => Some('}'),
+            95 => Some('~'),
+            _ => None,
+        }
+    }
+
+    fn unicode_to_agl_name(c: char) -> &'static str {
+        match c {
+            '!' => "exclam",
+            '"' => "quotedbl",
+            '#' => "numbersign",
+            '$' => "dollar",
+            '%' => "percent",
+            '&' => "ampersand",
+            '\'' => "quoteright",
+            '(' => "parenleft",
+            ')' => "parenright",
+            '*' => "asterisk",
+            '+' => "plus",
+            ',' => "comma",
+            '-' => "hyphen",
+            '.' => "period",
+            '/' => "slash",
+            ':' => "colon",
+            ';' => "semicolon",
+            '<' => "less",
+            '=' => "equal",
+            '>' => "greater",
+            '?' => "question",
+            '@' => "at",
+            '[' => "bracketleft",
+            '\\' => "backslash",
+            ']' => "bracketright",
+            '^' => "asciicircum",
+            '_' => "underscore",
+            '`' => "grave",
+            '{' => "braceleft",
+            '|' => "bar",
+            '}' => "braceright",
+            '~' => "asciitilde",
+            _ => ".notdef",
+        }
     }
 
     fn parse_cff_top_dict(
@@ -1060,7 +1811,7 @@ impl FontReconstructor {
                             }
                         }
                         15 => cso2 = ops.last().copied().map(|v| v as usize),
-                        0x0C1E | 0x0C1F | 0x0C22 | 0x0C23 => is_cid = true,
+                        0x0C1E | 0x0C1F | 0x0C22 | 0x0C23 | 0x0C16 => is_cid = true,
                         _ => {}
                     }
                     ops.clear();

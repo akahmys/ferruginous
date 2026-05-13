@@ -512,43 +512,20 @@ impl Document {
     /// Normalizes the page tree by flattening it into a single-level structure (Phase 4).
     /// Inherited attributes are pushed down to leaf Page nodes.
     pub fn normalize_page_tree(&mut self) {
-        let count = match self.page_count() {
-            Ok(c) => c,
-            Err(_) => return,
-        };
-
-        let mut page_handles = Vec::new();
-        let arena = &self.arena;
-
-        // 1. Collect and flatten individual pages
-        for i in 0..count {
-            if let Ok(page) = self.get_page(i) {
-                // We want to keep the original handle if possible to preserve references (e.g. from /Annots /P)
-                let ph = page.obj_handle();
-                if let Some(Object::Dictionary(dh)) = arena.get_object(ph) {
-                    let mut dict = arena.get_dict(dh).unwrap_or_default();
-
-                    // Flatten inherited attributes (ISO 32000-2:2020 Clause 7.7.3.3)
-                    let attrs = ["Resources", "MediaBox", "CropBox", "Rotate"];
-                    for attr in attrs {
-                        let attr_name = arena.name(attr);
-                        if !dict.contains_key(&attr_name)
-                            && let Some(val) = page.resolve_attribute(attr)
-                        {
-                            dict.insert(attr_name, val);
-                        }
-                    }
-
-                    // Set Parent to the new root (we'll set the root handle later)
-                    arena.set_dict(dh, dict);
-                    page_handles.push(Object::Reference(ph));
-                }
-            }
+        let arena = self.arena.clone();
+        let mut pages = Vec::new();
+        
+        if let Ok(root_h) = self.get_pages_root() {
+            let mut inherited = BTreeMap::new();
+            let _ = self.flatten_pages_recursive(root_h, &mut pages, &mut inherited, 0);
         }
 
-        if page_handles.is_empty() {
+        if pages.is_empty() {
             return;
         }
+
+        let count = pages.len();
+        let page_handles: Vec<Object> = pages.iter().map(|&h| Object::Reference(h)).collect();
 
         // 2. Create new flat Pages root
         let pages_root_key = arena.name("Pages");
@@ -583,6 +560,68 @@ impl Document {
             cat_dict.insert(pages_root_key, Object::Reference(pages_root_h));
             arena.set_dict(cat_dh, cat_dict);
         }
+    }
+
+    fn flatten_pages_recursive(
+        &self,
+        node_h: Handle<Object>,
+        out: &mut Vec<Handle<Object>>,
+        inherited: &mut BTreeMap<Handle<PdfName>, Object>,
+        depth: usize,
+    ) -> PdfResult<()> {
+        if depth > 32 {
+            return Err(PdfError::Other("Page tree depth limit exceeded".into()));
+        }
+
+        let dict_h = self.resolve_to_dict(node_h)?;
+        let dict = self.arena.get_dict(dict_h).ok_or_else(|| PdfError::Other("Invalid node".into()))?;
+
+        let type_key = self.arena.name("Type");
+        let node_type = dict.get(&type_key)
+            .and_then(|o| o.resolve(&self.arena).as_name())
+            .and_then(|h| self.arena.get_name(h));
+
+        // Update inherited attributes for this level
+        let attrs = ["Resources", "MediaBox", "CropBox", "Rotate"];
+        let mut local_inherited = inherited.clone();
+        for attr in attrs {
+            let key = self.arena.name(attr);
+            if let Some(val) = dict.get(&key) {
+                local_inherited.insert(key, val.clone());
+            }
+        }
+
+        if let Some(name) = node_type && name.as_str() == "Page" {
+            // It's a leaf. Ensure all inherited attributes are present.
+            let mut leaf_dict = dict.clone();
+            let mut changed = false;
+            for (key, val) in local_inherited {
+                if !leaf_dict.contains_key(&key) {
+                    leaf_dict.insert(key, val);
+                    changed = true;
+                }
+            }
+            if changed {
+                self.arena.set_dict(dict_h, leaf_dict);
+            }
+            out.push(node_h);
+            return Ok(());
+        }
+
+        // It's a Pages node
+        let kids_key = self.arena.name("Kids");
+        if let Some(kids_obj) = dict.get(&kids_key) {
+            let ah = kids_obj.resolve(&self.arena).as_array().ok_or_else(|| PdfError::Other("Invalid Kids".into()))?;
+            if let Some(kids) = self.arena.get_array(ah) {
+                for kid in kids {
+                    if let Some(kh) = kid.resolve(&self.arena).as_reference() {
+                        self.flatten_pages_recursive(kh, out, &mut local_inherited, depth + 1)?;
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 
     fn resolve_missing_font_data(&mut self) {
