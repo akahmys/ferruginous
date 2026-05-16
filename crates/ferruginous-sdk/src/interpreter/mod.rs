@@ -331,6 +331,31 @@ impl<'a> Interpreter<'a> {
                 self.handle_color_operator("CS")
             }
 
+            // --- Graphics State Parameters ---
+            Command::SetLineWidth(w) => {
+                self.stack.push(Object::Real(*w));
+                self.handle_state_operator("w")
+            }
+            Command::SetLineCap(cap) => {
+                self.stack.push(Object::Integer(*cap as i64));
+                self.handle_state_operator("J")
+            }
+            Command::SetLineJoin(join) => {
+                self.stack.push(Object::Integer(*join as i64));
+                self.handle_state_operator("j")
+            }
+            Command::SetMiterLimit(m) => {
+                self.stack.push(Object::Real(*m));
+                self.handle_state_operator("M")
+            }
+            Command::SetDashPattern(dash, phase) => {
+                let items: Vec<Object> = dash.iter().map(|&d| Object::Real(d)).collect();
+                let arr_h = self.doc.arena().alloc_array(items);
+                self.stack.push(Object::Array(arr_h));
+                self.stack.push(Object::Real(*phase));
+                self.handle_state_operator("d")
+            }
+
             // --- XObjects & Images ---
             Command::DrawXObject(h) => {
                 let name_h = self.doc.arena().intern_name(PdfName::new(h));
@@ -338,8 +363,8 @@ impl<'a> Interpreter<'a> {
                 self.handle_xobject_operator()
             }
             Command::BeginMarkedContent { .. } | Command::EndMarkedContent => Ok(()),
-            Command::DrawInlineImage { .. } => {
-                // Inline images are handled during sublimation or via specific backend calls
+            Command::DrawInlineImage { width, height, format, data } => {
+                self.backend.draw_image(data, *width, *height, *format, None);
                 Ok(())
             }
 

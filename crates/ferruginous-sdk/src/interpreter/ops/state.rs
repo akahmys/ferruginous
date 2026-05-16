@@ -1,5 +1,5 @@
 use crate::interpreter::Interpreter;
-use ferruginous_core::{FromPdfObject, Matrix, Object, PdfName, PdfResult};
+use ferruginous_core::{FromPdfObject, LineCap, LineJoin, Matrix, Object, PdfName, PdfResult};
 
 impl Interpreter<'_> {
     #[allow(clippy::many_single_char_names)]
@@ -40,6 +40,31 @@ impl Interpreter<'_> {
             "gs" => {
                 let name = self.pop_name()?;
                 self.handle_gs_operator(&name)?;
+            }
+            "w" => {
+                self.state.stroke_style.width = self.pop_f64()?;
+            }
+            "J" => {
+                self.state.stroke_style.cap = LineCap::from_i64(self.pop_i64()?);
+            }
+            "j" => {
+                self.state.stroke_style.join = LineJoin::from_i64(self.pop_i64()?);
+            }
+            "M" => {
+                self.state.stroke_style.miter_limit = self.pop_f64()?;
+            }
+            "d" => {
+                let phase = self.pop_f64()?;
+                let arr_h = self.pop_array()?;
+                let mut dash = Vec::new();
+                if let Some(arr) = self.doc.arena().get_array(arr_h) {
+                    for item in arr {
+                        if let Some(f) = item.as_f64() {
+                            dash.push(f);
+                        }
+                    }
+                }
+                self.state.stroke_style.dash_pattern = Some((dash, phase));
             }
             _ => {}
         }

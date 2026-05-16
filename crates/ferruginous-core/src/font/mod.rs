@@ -197,6 +197,9 @@ impl FontResource {
             is_embedded_resource: false,
             char_procs: None,
             font_matrix: None,
+            cid_ordering: None,
+            cid_registry: None,
+            num_glyphs: 0,
             force_fallback: false,
         }
     }

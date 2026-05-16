@@ -8,7 +8,7 @@
 ## 1. Function Complexity & Scale
 - **Rule**: Limit effective logic to 50 lines.
 - **Purpose**: Maintain precision of the borrow checker and minimize cognitive load.
-- **Compliance**: All functions MUST stay within 50 effective logic lines. Blank lines and doc-comments are excluded.
+- **Compliance**: All functions MUST stay within 50 effective logic lines. Blank lines and doc-comments are excluded. **Atomic Verification**: Functional verification MUST be performed at the same granularity as code changes; massive edits without intermediate verification are prohibited.
 
 ## 2. No-Panic Invariance
 - **Rule**: Strict prohibition of `unwrap()`, `expect()`, and `panic!()` for input-dependent paths.

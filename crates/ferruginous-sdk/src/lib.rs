@@ -589,18 +589,18 @@ impl PdfDocument {
         }
 
         let file = std::fs::File::create(output_path).map_err(PdfError::Io)?;
-        let mut writer = crate::writer::PdfWriter::new(file, self.inner.arena());
+        let final_arena = PdfArena::new();
+        let mut cloner = crate::cloning::ObjectCloner::new(self.inner.arena(), &final_arena);
+        let root = cloner.clone_handle(*self.inner.root_handle())?;
+        let info = self.inner.info_handle().map(|h| cloner.clone_handle(h)).transpose()?;
+
+        let mut writer = crate::writer::PdfWriter::new(file, &final_arena);
         writer.set_string_encoding(options.string_encoding);
-
-        if options.vacuum {
-            writer.set_vacuum(true);
-        }
-
         if options.compress {
             writer.set_compression(options.compression_level);
         }
         writer.write_header(version)?;
-        writer.finish(*self.inner.root_handle(), self.inner.info_handle())?;
+        writer.finish(root, info)?;
         Ok(())
     }
 
@@ -627,19 +627,20 @@ impl PdfDocument {
         ferruginous_core::metadata::update_document_metadata(&self.inner, &metadata)?;
 
         let file = std::fs::File::create(output_path).map_err(PdfError::Io)?;
-        let mut writer = crate::writer::PdfWriter::new(file, self.inner.arena());
-        writer.set_string_encoding(options.string_encoding);
+        let final_arena = PdfArena::new();
+        let mut cloner = crate::cloning::ObjectCloner::new(self.inner.arena(), &final_arena);
+        let root = cloner.clone_handle(*self.inner.root_handle())?;
+        let info = self.inner.info_handle().map(|h| cloner.clone_handle(h)).transpose()?;
 
+        let mut writer = crate::writer::PdfWriter::new(file, &final_arena);
+        writer.set_string_encoding(options.string_encoding);
         writer.set_linearize(true);
-        if options.vacuum {
-            writer.set_vacuum(true);
-        }
         if options.compress {
             writer.set_compression(options.compression_level);
         }
 
         writer.write_header(version)?;
-        writer.finish(*self.inner.root_handle(), self.inner.info_handle())?;
+        writer.finish(root, info)?;
         Ok(())
     }
 

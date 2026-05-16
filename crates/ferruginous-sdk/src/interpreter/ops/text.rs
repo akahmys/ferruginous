@@ -83,8 +83,16 @@ impl Interpreter<'_> {
             | Command::DrawXObject(_)
             | Command::BeginMarkedContent { .. }
             | Command::EndMarkedContent
-            | Command::DrawInlineImage { .. }
-            | Command::RawOperator { .. } => Ok(()),
+            | Command::SetLineWidth(_)
+            | Command::SetLineCap(_)
+            | Command::SetLineJoin(_)
+            | Command::SetMiterLimit(_)
+            | Command::SetDashPattern(..) => Ok(()),
+            Command::DrawInlineImage { width, height, format, data } => {
+                self.backend.draw_image(data, *width, *height, *format, None);
+                Ok(())
+            }
+            Command::RawOperator { .. } => Ok(()),
         }
     }
 

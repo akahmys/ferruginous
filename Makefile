@@ -6,7 +6,7 @@ GUI_BINARY_NAME=ferruginous
 CRATE_PATH=crates/fepdf
 GUI_CRATE_PATH=crates/ferruginous
 VERSION=$(shell grep "^version" crates/fepdf/Cargo.toml | head -n 1 | cut -d '"' -f 2)
-DIST_DIR=dist
+DIST_DIR=out/dist
 
 # Targets
 TARGET_APPLE_SILICON=aarch64-apple-darwin
@@ -59,7 +59,7 @@ dist: build-all
 
 clean:
 	cargo clean
-	rm -rf $(DIST_DIR)
+	rm -rf out/
 
 setup-arlington:
 	@echo "Setting up Arlington PDF Model environment..."
@@ -70,4 +70,4 @@ setup-arlington:
 
 audit-external:
 	@if [ -z "$(PDF)" ]; then echo "Error: Please specify target PDF using PDF=<file>"; exit 1; fi
-	./scripts/arlington_audit.sh $(PDF)
+	./scripts/audit/arlington_audit.sh $(PDF)

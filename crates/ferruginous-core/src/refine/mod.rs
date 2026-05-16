@@ -283,12 +283,19 @@ impl ParallelRefinery {
 
         // Content Stream Restructuring (Sublimation Phase 2)
         let subtype = refined_dict.get(&PdfName::new("Subtype")).and_then(|o| o.as_str());
+        let is_image = subtype == Some("Image");
         let is_form = subtype == Some("Form");
-        let is_likely_content = subtype.is_none() || is_form;
+        let is_likely_content = (subtype.is_none() || is_form) && !is_image;
+        let is_font = refined_dict.contains_key(&PdfName::new("Length1")) || refined_dict.contains_key(&PdfName::new("Length2")) || refined_dict.contains_key(&PdfName::new("Length3"));
 
-        let (content, was_decompressed) = match s.decompressed_content() {
-            Ok(c) => (Bytes::from(c), true),
-            Err(_) => (Bytes::copy_from_slice(&s.content), false),
+        let (content, was_decompressed) = if is_image || is_font {
+            // High-Fidelity Preservation: Never decompress image or font streams during refine.
+            (Bytes::copy_from_slice(&s.content), false)
+        } else {
+            match s.decompressed_content() {
+                Ok(c) => (Bytes::from(c), true),
+                Err(_) => (Bytes::copy_from_slice(&s.content), false),
+            }
         };
 
         if was_decompressed {
@@ -356,15 +363,12 @@ pub fn commit_to_arena(arena: &PdfArena, refined: RefinedObject, depth: usize) -
                 .map(|n: PdfName| n.as_str() == "Image")
                 .unwrap_or(false);
 
-            let sublimated = if is_image {
-                arena.sublimate_image(&bytes, &committed_dict).unwrap_or_else(|_| {
-                    let compressed =
-                        zstd::encode_all(&*bytes, 3).unwrap_or_else(|_| bytes.to_vec());
-                    crate::object::SublimatedData::Compressed {
-                        original_len: bytes.len(),
-                        data: compressed,
-                    }
-                })
+            let is_font = committed_dict.contains_key(&arena.name("Length1")) || committed_dict.contains_key(&arena.name("Length2")) || committed_dict.contains_key(&arena.name("Length3"));
+
+            let sublimated = if is_image || is_font {
+                // High-Fidelity Preservation (Phase 2 & 3): 
+                // Do NOT decode or re-compress images/fonts to internal format during refine.
+                crate::object::SublimatedData::Raw(bytes)
             } else if bytes.len() > 4096 {
                 let compressed = zstd::encode_all(&*bytes, 3).unwrap_or_else(|_| bytes.to_vec());
                 crate::object::SublimatedData::Compressed {

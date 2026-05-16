@@ -82,6 +82,23 @@ Ferruginous operates on the principles of **"Normalization-at-Load"** and **"Del
     *   **State Preservation**: All IR commands (e.g., `SetFillColor`, `SetStrokeColor`) MUST be mapped back to their canonical PDF operators (`rg`, `RG`, `g`, `G`, `k`, `K`). Omissions here lead to "Default-to-Black" regressions.
     *   **Raw Operator Passthrough**: Operators captured as `RawOperator` (e.g., `n`, `v`, `y`) must be emitted exactly as captured to preserve path logic and drawing order.
     *   **Compliance Verification**: The resulting PDF must pass iterative structural auditing for the target standard (e.g., PDF/UA-2).
+*   **Linearization (Fast Web View) Integrity**:
+    *   **Strict Object Partitioning**:
+        *   **Section 2 (Primary)**: MUST contain the Catalog, the Primary Hint Stream, and all resources/ancestors required for Page 1.
+        *   **Section 6 (Overflow)**: Contains all other pages and non-shared resources.
+    *   **Mandatory ID Mapping**:
+        *   **Object ID 1**: Linearization Dictionary.
+        *   **Object ID 2**: Document Catalog.
+        *   **Object ID 3**: Primary Hint Stream (must be the first object in Section 2).
+        *   **Object ID 4**: First Page object.
+    *   **Hint Table Synchronization & Bit-Perfect Alignment**:
+        *   **Page Offset Table**: Must dynamically reflect the number of objects and physical byte offsets for every page.
+        *   **Shared Object Table**: Must account for resources shared across page boundaries to prevent redundant byte transfers.
+        *   **Bitstream Alignment**: Hint table bitstreams MUST be padded to byte boundaries at the end of each table to prevent bit-offset overflow in strict parsers (e.g., qpdf).
+    *   **Dual-Xref Linkage**:
+        *   The main trailer at the end of the file MUST contain a `/Prev` entry pointing to the first Xref table (Section 1).
+        *   The first Xref table (Section 1) MUST NOT contain a `/Prev` entry pointing back to the main table to avoid circular reference recursion.
+    *   **Object Stream Exclusion**: Section 2 objects MUST NOT be stored in object streams to ensure compatibility with basic linear parsers.
 
 ---
 

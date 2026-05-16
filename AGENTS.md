@@ -10,6 +10,7 @@ Global project principles and the Hierarchy of Truth are defined in [.antigravit
 - **Processing Pipeline**: The canonical processing lifecycle is documented in [.antigravity/rules/pipeline.md](file:///.antigravity/rules/pipeline.md).
 
 ## 🎨 Domain Conventions
+- **Structure**: Canonical workspace organization in [.antigravity/rules/structure.md](file:///.antigravity/rules/structure.md).
 - **Rendering**: Graphics and typography standards in [.antigravity/rules/rendering.md](file:///.antigravity/rules/rendering.md).
 - **Naming**: Identifier and API conventions in [.antigravity/rules/naming.md](file:///.antigravity/rules/naming.md).
 - **Debugging**: Troubleshooting protocols in [.antigravity/rules/debugging.md](file:///.antigravity/rules/debugging.md).

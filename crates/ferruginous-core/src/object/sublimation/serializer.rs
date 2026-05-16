@@ -61,20 +61,45 @@ fn serialize_command(cmd: &Command, buf: &mut Vec<u8>) {
         Command::BeginText => buf.extend_from_slice(b"BT\n"),
         Command::EndText => buf.extend_from_slice(b"ET\n"),
         Command::SetFont { font, size } => {
-            buf.extend_from_slice(format!("/{} {} Tf\n", font, size).as_bytes());
+            buf.extend_from_slice(format!("/{} {:.6} Tf\n", font, size).as_bytes());
         }
-        Command::SetFillColor(color) => {
-            let rgb = color.to_rgb();
-            if let crate::graphics::Color::Rgb(r, g, b) = rgb {
-                buf.extend_from_slice(format!("{:.4} {:.4} {:.4} rg\n", r, g, b).as_bytes());
+        Command::SetFillColor(color) => match color {
+            crate::graphics::Color::Gray(g) => {
+                buf.extend_from_slice(format!("{:.6} g\n", g).as_bytes());
             }
-        }
-        Command::SetStrokeColor(color) => {
-            let rgb = color.to_rgb();
-            if let crate::graphics::Color::Rgb(r, g, b) = rgb {
-                buf.extend_from_slice(format!("{:.4} {:.4} {:.4} RG\n", r, g, b).as_bytes());
+            crate::graphics::Color::Rgb(r, g, b) => {
+                buf.extend_from_slice(format!("{:.6} {:.6} {:.6} rg\n", r, g, b).as_bytes());
             }
-        }
+            crate::graphics::Color::Cmyk(c, m, y, k) => {
+                buf.extend_from_slice(format!("{:.6} {:.6} {:.6} {:.6} k\n", c, m, y, k).as_bytes());
+            }
+            crate::graphics::Color::Lab(_l, _a, _b) => {
+                // Lab requires cs/scn, but for simplicity in base IR we might need to handle it.
+                // However, usually Lab is handled via SetFillColorSpace.
+                // If it's a raw Lab value in the IR, we'll fallback to RGB for now but mark it.
+                let rgb = color.to_rgb();
+                if let crate::graphics::Color::Rgb(r, g, b) = rgb {
+                    buf.extend_from_slice(format!("{:.6} {:.6} {:.6} rg\n", r, g, b).as_bytes());
+                }
+            }
+        },
+        Command::SetStrokeColor(color) => match color {
+            crate::graphics::Color::Gray(g) => {
+                buf.extend_from_slice(format!("{:.6} G\n", g).as_bytes());
+            }
+            crate::graphics::Color::Rgb(r, g, b) => {
+                buf.extend_from_slice(format!("{:.6} {:.6} {:.6} RG\n", r, g, b).as_bytes());
+            }
+            crate::graphics::Color::Cmyk(c, m, y, k) => {
+                buf.extend_from_slice(format!("{:.6} {:.6} {:.6} {:.6} K\n", c, m, y, k).as_bytes());
+            }
+            crate::graphics::Color::Lab(_l, _a, _b) => {
+                let rgb = color.to_rgb();
+                if let crate::graphics::Color::Rgb(r, g, b) = rgb {
+                    buf.extend_from_slice(format!("{:.6} {:.6} {:.6} RG\n", r, g, b).as_bytes());
+                }
+            }
+        },
         Command::ShowText(bytes) => {
             buf.push(b'<');
             for &b in bytes {
@@ -94,29 +119,61 @@ fn serialize_command(cmd: &Command, buf: &mut Vec<u8>) {
                         buf.push(b'>');
                     }
                     TextArrayItem::Offset(o) => {
-                        buf.extend_from_slice(format!(" {}", o).as_bytes());
+                        buf.extend_from_slice(format!(" {:.6}", o).as_bytes());
                     }
                 }
             }
             buf.extend_from_slice(b"] TJ\n");
         }
         Command::MoveText(p) => {
-            buf.extend_from_slice(format!("{} {} Td\n", p.x, p.y).as_bytes());
+            buf.extend_from_slice(format!("{:.6} {:.6} Td\n", p.x, p.y).as_bytes());
         }
         Command::SetTextMatrix(affine) => {
             write_affine(affine, buf);
             buf.extend_from_slice(b" Tm\n");
         }
-        Command::SetCharSpacing(s) => buf.extend_from_slice(format!("{} Tc\n", s).as_bytes()),
-        Command::SetWordSpacing(s) => buf.extend_from_slice(format!("{} Tw\n", s).as_bytes()),
-        Command::SetHorizontalScaling(s) => buf.extend_from_slice(format!("{} Tz\n", s).as_bytes()),
+        Command::SetCharSpacing(s) => buf.extend_from_slice(format!("{:.6} Tc\n", s).as_bytes()),
+        Command::SetWordSpacing(s) => buf.extend_from_slice(format!("{:.6} Tw\n", s).as_bytes()),
+        Command::SetHorizontalScaling(s) => buf.extend_from_slice(format!("{:.6} Tz\n", s).as_bytes()),
         Command::SetTextRenderMode(m) => {
             buf.extend_from_slice(format!("{} Tr\n", *m as i32).as_bytes())
         }
-        Command::SetTextRise(s) => buf.extend_from_slice(format!("{} Ts\n", s).as_bytes()),
-        Command::SetTextLeading(s) => buf.extend_from_slice(format!("{} TL\n", s).as_bytes()),
+        Command::SetTextRise(s) => buf.extend_from_slice(format!("{:.6} Ts\n", s).as_bytes()),
+        Command::SetTextLeading(s) => buf.extend_from_slice(format!("{:.6} TL\n", s).as_bytes()),
         Command::MoveToNextLine => buf.extend_from_slice(b"T*\n"),
         Command::DrawXObject(name) => buf.extend_from_slice(format!("/{} Do\n", name).as_bytes()),
+        Command::SetLineWidth(w) => buf.extend_from_slice(format!("{:.6} w\n", w).as_bytes()),
+        Command::SetLineCap(cap) => buf.extend_from_slice(format!("{} J\n", *cap as i32).as_bytes()),
+        Command::SetLineJoin(join) => {
+            buf.extend_from_slice(format!("{} j\n", *join as i32).as_bytes())
+        }
+        Command::SetMiterLimit(m) => buf.extend_from_slice(format!("{:.6} M\n", m).as_bytes()),
+        Command::SetDashPattern(dash, phase) => {
+            buf.push(b'[');
+            for (i, d) in dash.iter().enumerate() {
+                if i > 0 {
+                    buf.push(b' ');
+                }
+                buf.extend_from_slice(format!("{:.6}", d).as_bytes());
+            }
+            buf.extend_from_slice(format!("] {:.6} d\n", phase).as_bytes());
+        }
+        Command::DrawInlineImage { width, height, format, data } => {
+            buf.extend_from_slice(b"BI\n");
+            buf.extend_from_slice(format!("  /W {}\n", width).as_bytes());
+            buf.extend_from_slice(format!("  /H {}\n", height).as_bytes());
+            let cs = match format {
+                crate::graphics::PixelFormat::Gray8 => "/G",
+                crate::graphics::PixelFormat::Rgb8 => "/RGB",
+                crate::graphics::PixelFormat::Rgba8 => "/RGB", // PDF doesn't support RGBA inline images directly easily, usually uses SMask
+                crate::graphics::PixelFormat::Cmyk8 => "/CMYK",
+            };
+            buf.extend_from_slice(format!("  /CS {}\n", cs).as_bytes());
+            buf.extend_from_slice(b"  /BPC 8\n");
+            buf.extend_from_slice(b"ID\n");
+            buf.extend_from_slice(data);
+            buf.extend_from_slice(b"\nEI\n");
+        }
         Command::RawOperator { name, operands } => {
             for op in operands {
                 write_ir_object(op, buf);
@@ -130,13 +187,13 @@ fn serialize_command(cmd: &Command, buf: &mut Vec<u8>) {
 }
 
 fn write_point(p: &Point, buf: &mut Vec<u8>) {
-    buf.extend_from_slice(format!("{} {}", p.x, p.y).as_bytes());
+    buf.extend_from_slice(format!("{:.6} {:.6}", p.x, p.y).as_bytes());
 }
 
 fn write_affine(a: &Affine, buf: &mut Vec<u8>) {
     let c = a.as_coeffs();
     buf.extend_from_slice(
-        format!("{} {} {} {} {} {}", c[0], c[1], c[2], c[3], c[4], c[5]).as_bytes(),
+        format!("{:.6} {:.6} {:.6} {:.6} {:.6} {:.6}", c[0], c[1], c[2], c[3], c[4], c[5]).as_bytes(),
     );
 }
 
@@ -144,7 +201,7 @@ fn write_ir_object(obj: &IrObject, buf: &mut Vec<u8>) {
     match obj {
         IrObject::Boolean(b) => buf.extend_from_slice(if *b { b"true" } else { b"false" }),
         IrObject::Integer(i) => buf.extend_from_slice(i.to_string().as_bytes()),
-        IrObject::Real(f) => buf.extend_from_slice(format!("{:.4}", f).as_bytes()),
+        IrObject::Real(f) => buf.extend_from_slice(format!("{:.6}", f).as_bytes()),
         IrObject::String(b) => {
             buf.push(b'(');
             buf.extend_from_slice(&escape_pdf_string(b));

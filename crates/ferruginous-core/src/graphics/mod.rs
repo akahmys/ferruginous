@@ -88,12 +88,34 @@ pub enum LineCap {
     Square,
 }
 
+impl LineCap {
+    pub fn from_i64(val: i64) -> Self {
+        match val {
+            0 => Self::Butt,
+            1 => Self::Round,
+            2 => Self::Square,
+            _ => Self::Butt,
+        }
+    }
+}
+
 /// Line Join Styles (ISO 32000-2 Table 54)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LineJoin {
     Miter,
     Round,
     Bevel,
+}
+
+impl LineJoin {
+    pub fn from_i64(val: i64) -> Self {
+        match val {
+            0 => Self::Miter,
+            1 => Self::Round,
+            2 => Self::Bevel,
+            _ => Self::Miter,
+        }
+    }
 }
 
 /// Stroke Style Parameters.

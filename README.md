@@ -88,7 +88,8 @@ Ferruginous utilizes a multi-pass "Sublimation" pipeline to transform volatile p
 ## ⚙️ Development Environment
 
 - **Toolchain**: Rust 1.94+ (Edition 2024).
-- **Verification**: Execute `make verify` to run the full RR-15 compliance suite and regression tests.
+- **Verification**: Execute `make help` to see available tasks.
+- **Structure**: Refer to [WS-01: Workspace Structure](file:///.antigravity/rules/structure.md) for detailed directory organization.
 
 ---
 

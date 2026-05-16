@@ -29,3 +29,8 @@ Standard procedures for rapid troubleshooting and mathematical verification of r
 ## 7. Tool-Chain Discipline
 - **Command Verification**: When utilizing project-specific CLI tools (e.g., `fepdf`), always verify the command signature using `--help` before execution. Do not rely on positional inference or memory for complex argument structures.
 - **Atomic Modification**: Prefer atomic, single-file edits when updating sensitive configuration or rule documents to prevent broad failure modes in AI-driven processing.
+
+## 8. External Structural Validation
+- **Mutool Audit**: Use `mutool info` and `mutool clean` to verify page tree integrity and resource reachability. A reported page count of 0 or missing fonts indicates a structural partitioning failure in Section 2 or Section 6.
+- **QPDF Compliance**: Use `qpdf --check` for authoritative linearization and Xref/Trailer linkage validation. "File is linearized" must be the result.
+- **Bitstream Verification**: Pay close attention to "overflow reading bit stream" warnings in `qpdf`; these indicate bit-level alignment errors in hint tables that can cause Fast Web View failures.

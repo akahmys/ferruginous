@@ -1,0 +1,33 @@
+# Workspace Structure (WS-01)
+
+This document defines the canonical directory structure of Ferruginous. Adherence to this hierarchy is mandatory for both human developers and autonomous agents to ensure discovery efficiency and data isolation.
+
+## 1. Directory Hierarchy
+
+| Path | Purpose | Ownership |
+| :--- | :--- | :--- |
+| `.antigravity/` | Governance & Agent Protocols | Antigravity IDE |
+| `assets/` | Static, Read-only Resources (Fonts, Models) | Project |
+| `crates/` | Modular Rust Logic Layer | Engineering |
+| `docs/` | Technical Specs & Architectural History | Architecture |
+| `external/` | Submodules & Third-party Compliance Data | Engineering |
+| `out/` | Ephemeral & Persistent Outputs (Ignored by Git) | Pipeline |
+| `out/artifacts/`| Test results, renders, and temporary PDFs | CI/CD |
+| `out/exports/` | Extracted document assets (Fonts, Images) | Refinery |
+| `samples/` | Test Input Corpus (PDFs) | QA |
+| `scripts/` | Automation & CI/CD Scripts | DevOps |
+
+## 2. Organization Rules
+
+1.  **Consolidation**: All static resources MUST reside within `assets/`. Prohibit root-level resource directories (e.g., `resources/`).
+2.  **Output Isolation**: All dynamically generated files MUST reside within `out/`.
+3.  **Script Categorization**:
+    *   `scripts/audit/`: Compliance, security, and static analysis.
+    *   `scripts/dev/`: Developer productivity and UI utilities.
+    *   `scripts/test/`: Integration and functional testing.
+4.  **Documentation Locality**: All technical specifications and architectural history MUST reside within `docs/`. High-level vision documents (`README.md`, `ROADMAP.md`, `AGENTS.md`) are permitted at the root for maximum visibility.
+
+## 3. Maintenance
+
+- Every new directory added to the root MUST be registered in this document.
+- Root-level stray files are prohibited except for core configuration (`Cargo.toml`, `Makefile`, `LICENSE`).

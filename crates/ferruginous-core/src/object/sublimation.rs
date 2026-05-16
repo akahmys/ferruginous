@@ -96,6 +96,18 @@ pub enum Command {
     /// Set the stroke color space (CS).
     SetStrokeColorSpace(String),
 
+    // --- Graphics State Parameters ---
+    /// Set the line width (w).
+    SetLineWidth(f64),
+    /// Set the line cap style (J).
+    SetLineCap(crate::graphics::LineCap),
+    /// Set the line join style (j).
+    SetLineJoin(crate::graphics::LineJoin),
+    /// Set the miter limit (M).
+    SetMiterLimit(f64),
+    /// Set the line dash pattern (d).
+    SetDashPattern(Vec<f64>, f64),
+
     // --- XObjects & Images ---
     /// Draw an external object (Do).
     DrawXObject(String),
@@ -145,6 +157,14 @@ impl IrObject {
         match self {
             Self::Integer(i) => Some(*i),
             Self::Real(f) => Some(*f as i64),
+            _ => None,
+        }
+    }
+
+    pub fn as_f64(&self) -> Option<f64> {
+        match self {
+            Self::Real(f) => Some(*f),
+            Self::Integer(i) => Some(*i as f64),
             _ => None,
         }
     }

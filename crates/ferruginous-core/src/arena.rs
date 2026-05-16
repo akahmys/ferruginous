@@ -5,8 +5,6 @@ use bytes::Bytes;
 use parking_lot::RwLock;
 use std::collections::BTreeMap;
 use std::sync::Arc;
-// Use absolute path for workspace dependency
-use ::image;
 
 /// A sequential arena for PDF objects, optimized for cache locality and thread safety.
 ///
@@ -220,6 +218,24 @@ impl PdfArena {
                 // Determine if it's a content stream
                 let is_content = Object::Stream(dh, data_arc.clone()).is_likely_content_stream(self);
 
+                let is_image = if let Some(dict) = self.get_dict(dh) {
+                    let subtype = dict.get(&self.name("Subtype")).and_then(|o| o.resolve(self).as_name()).and_then(|n| self.get_name(n));
+                    subtype.as_ref().map(|n| n.as_str() == "Image").unwrap_or(false)
+                } else {
+                    false
+                };
+                
+                let is_font = if let Some(dict) = self.get_dict(dh) {
+                    dict.contains_key(&self.name("Length1")) || dict.contains_key(&self.name("Length2")) || dict.contains_key(&self.name("Length3"))
+                } else {
+                    false
+                };
+
+                if (is_image || is_font) && matches!(&*data_arc, SublimatedData::Raw(_)) {
+                    // Preservation: Already Raw (encoded), skip re-processing
+                    continue;
+                }
+
                 // Get raw bytes (decompressing if it was Compressed)
                 let raw_bytes = self.get_stream_bytes(&data_arc)?;
                 self.sublimate_stream(handle, raw_bytes, is_content)?;
@@ -241,25 +257,19 @@ impl PdfArena {
         } else if let Some(Object::Stream(dh, _)) = self.get_object(handle)
             && let Some(dict) = self.get_dict(dh)
             && {
-                
-                dict
-                    .get(&self.name("Subtype"))
+                let subtype = dict.get(&self.name("Subtype"))
                     .and_then(|o: &Object| o.resolve(self).as_name())
-                    .and_then(|n: Handle<PdfName>| self.get_name(n))
-                    .map(|n: PdfName| n.as_str() == "Image")
-                    .unwrap_or(false)
+                    .and_then(|n: Handle<PdfName>| self.get_name(n));
+                let is_image = subtype.as_ref().map(|n| n.as_str() == "Image").unwrap_or(false);
+                let is_font = dict.contains_key(&self.name("Length1")) || dict.contains_key(&self.name("Length2")) || dict.contains_key(&self.name("Length3"));
+                is_image || is_font
             }
         {
-            // Sublimation Phase 1: Pre-decode Image XObjects
-            match self.sublimate_image(&data, &dict) {
-                Ok(img_data) => img_data,
-                Err(_) => {
-                    // Fallback to compression if decoding fails
-                    let compressed = zstd::encode_all(&*data, 3)
-                        .map_err(|e| crate::PdfError::Other(e.to_string().into()))?;
-                    SublimatedData::Compressed { original_len: data.len(), data: compressed }
-                }
-            }
+            // High-Fidelity Preservation (Phase 2 & 3): 
+            // Do NOT decode images or fonts to raw pixels/data during ingestion.
+            // Preserve the original encoded bytes (Solid state) for lossless serialization.
+            // On-demand sublimation (Gas state) occurs during interpretation/rendering.
+            SublimatedData::Raw(data)
         } else if data.len() > 1024 {
             // Heuristic: If it already looks like Zstd, don't double compress
             if data.starts_with(&[0x28, 0xB5, 0x2F, 0xFD]) {
@@ -283,90 +293,6 @@ impl PdfArena {
         Ok(())
     }
 
-    pub(crate) fn sublimate_image(
-        &self,
-        raw_data: &[u8],
-        dict: &BTreeMap<Handle<PdfName>, Object>,
-    ) -> PdfResult<crate::object::SublimatedData> {
-        // Normalization-at-Load: Always ensure we are working with decompressed data.
-        let decoded = self
-            .process_filters(raw_data, dict)
-            .unwrap_or_else(|_| Bytes::copy_from_slice(raw_data));
-        let data = &decoded;
-
-        let width =
-            dict.get(&self.name("Width")).and_then(|o| o.resolve(self).as_integer()).unwrap_or(0)
-                as u32;
-        let height =
-            dict.get(&self.name("Height")).and_then(|o| o.resolve(self).as_integer()).unwrap_or(0)
-                as u32;
-        let _bpc = dict
-            .get(&self.name("BitsPerComponent"))
-            .and_then(|o| o.resolve(self).as_integer())
-            .unwrap_or(8) as u32;
-        let color_space = dict
-            .get(&self.name("ColorSpace"))
-            .and_then(|o| o.resolve(self).as_name())
-            .and_then(|n| self.get_name(n))
-            .map(|n| n.as_str().to_string())
-            .unwrap_or_else(|| "DeviceRGB".to_string());
-
-        if width == 0 || height == 0 {
-            return Err(crate::PdfError::Other("Invalid image dimensions".into()));
-        }
-
-        // Try decoding as JPEG first if it looks like one
-        if data.starts_with(&[0xFF, 0xD8, 0xFF])
-            && let Ok(img) = image::load_from_memory_with_format(data, image::ImageFormat::Jpeg) {
-                let rgba = img.to_rgba8();
-                return Ok(crate::object::SublimatedData::Image {
-                    width: rgba.width(),
-                    height: rgba.height(),
-                    format: crate::graphics::PixelFormat::Rgba8,
-                    data: rgba.into_raw(),
-                });
-            }
-
-        // Raw pixel decoding (for FlateDecode or uncompressed)
-        match color_space.as_str() {
-            "DeviceGray" | "G" => {
-                Ok(crate::object::SublimatedData::Image {
-                    width,
-                    height,
-                    format: crate::graphics::PixelFormat::Gray8,
-                    data: data.to_vec(),
-                })
-            }
-            "DeviceRGB" | "RGB" => {
-                let mut rgba_data = Vec::with_capacity((width * height * 4) as usize);
-                for chunk in data.chunks_exact(3).take((width * height) as usize) {
-                    rgba_data.extend_from_slice(&[chunk[0], chunk[1], chunk[2], 255]);
-                }
-                Ok(crate::object::SublimatedData::Image {
-                    width,
-                    height,
-                    format: crate::graphics::PixelFormat::Rgba8,
-                    data: rgba_data,
-                })
-            }
-            _ => {
-                // Fallback: If we can't decode it as raw, try image crate general load
-                if let Ok(img) = image::load_from_memory(data) {
-                    let rgba = img.to_rgba8();
-                    return Ok(crate::object::SublimatedData::Image {
-                        width: rgba.width(),
-                        height: rgba.height(),
-                        format: crate::graphics::PixelFormat::Rgba8,
-                        data: rgba.into_raw(),
-                    });
-                }
-                Err(crate::PdfError::Other(
-                    format!("Unsupported color space: {}", color_space).into(),
-                ))
-            }
-        }
-    }
-
     /// Accesses the raw bytes of a stream, transparently decompressing if necessary.
     pub fn get_stream_bytes(
         &self,
@@ -380,11 +306,7 @@ impl PdfArena {
                 Ok(bytes::Bytes::from(decoded))
             }
             crate::object::SublimatedData::Commands { items: cmds } => {
-                let mut output = Vec::new();
-                for cmd in cmds {
-                    output.extend_from_slice(format!("{:?}\n", cmd).as_bytes());
-                }
-                Ok(bytes::Bytes::from(output))
+                Ok(bytes::Bytes::from(crate::object::sublimation::serializer::serialize_commands(cmds)))
             }
             crate::object::SublimatedData::Image { data, .. } => {
                 Ok(bytes::Bytes::from(data.clone()))

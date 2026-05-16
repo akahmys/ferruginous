@@ -2,7 +2,7 @@
 
 use super::{Command, IrObject};
 use crate::font::FontResource;
-use crate::graphics::{Color, LineCap, LineJoin, StrokeStyle, TextRenderingMode, WindingRule};
+use crate::graphics::{Color, StrokeStyle, TextRenderingMode, WindingRule};
 use crate::lexer::{Lexer, Token};
 use crate::object::PdfName;
 use kurbo::{Affine, Point, Rect};
@@ -16,6 +16,7 @@ pub struct Sublimator<'a> {
     current_font: Option<Arc<FontResource>>,
     fill_color_space: crate::graphics::ColorSpaceKind,
     stroke_color_space: crate::graphics::ColorSpaceKind,
+    current_stroke_style: crate::graphics::StrokeStyle,
 }
 
 impl<'a> Sublimator<'a> {
@@ -26,6 +27,13 @@ impl<'a> Sublimator<'a> {
             current_font: None,
             fill_color_space: crate::graphics::ColorSpaceKind::DeviceGray,
             stroke_color_space: crate::graphics::ColorSpaceKind::DeviceGray,
+            current_stroke_style: crate::graphics::StrokeStyle {
+                width: 1.0,
+                cap: crate::graphics::LineCap::Butt,
+                join: crate::graphics::LineJoin::Miter,
+                miter_limit: 10.0,
+                dash_pattern: None,
+            },
         }
     }
 
@@ -202,17 +210,54 @@ impl<'a> Sublimator<'a> {
             "W" => vec![Command::Clip(WindingRule::NonZero)],
             "W*" => vec![Command::Clip(WindingRule::EvenOdd)],
             "Do" => self.pop_name().map(|n| Command::DrawXObject(n.as_str().to_string())).into_iter().collect(),
-            "w" | "J" | "j" | "M" | "d" | "i" | "gs" | "sh" | "ri" => {
-                let mut operands = Vec::new();
-                if op == "d" {
-                    let op2 = self.stack.pop();
-                    let op1 = self.stack.pop();
-                    if let Some(o1) = op1 { operands.push(o1); }
-                    if let Some(o2) = op2 { operands.push(o2); }
+            "w" => {
+                if let Some(w) = self.pop_f64() {
+                    self.current_stroke_style.width = w;
+                    vec![Command::SetLineWidth(w)]
                 } else {
-                    if let Some(op1) = self.stack.pop() {
-                        operands.push(op1);
-                    }
+                    Vec::new()
+                }
+            }
+            "J" => {
+                if let Some(i) = self.pop_i64() {
+                    let cap = crate::graphics::LineCap::from_i64(i);
+                    self.current_stroke_style.cap = cap;
+                    vec![Command::SetLineCap(cap)]
+                } else {
+                    Vec::new()
+                }
+            }
+            "j" => {
+                if let Some(i) = self.pop_i64() {
+                    let join = crate::graphics::LineJoin::from_i64(i);
+                    self.current_stroke_style.join = join;
+                    vec![Command::SetLineJoin(join)]
+                } else {
+                    Vec::new()
+                }
+            }
+            "M" => {
+                if let Some(m) = self.pop_f64() {
+                    self.current_stroke_style.miter_limit = m;
+                    vec![Command::SetMiterLimit(m)]
+                } else {
+                    Vec::new()
+                }
+            }
+            "d" => {
+                let dash_phase = self.pop_f64();
+                let dash_array = self.pop_f64_array();
+                if let (Some(arr), Some(phase)) = (dash_array, dash_phase) {
+                    self.current_stroke_style.dash_pattern = Some((arr.clone(), phase));
+                    vec![Command::SetDashPattern(arr, phase)]
+                } else {
+                    Vec::new()
+                }
+            }
+            "i" | "gs" | "sh" | "ri" => {
+                let mut operands = Vec::new();
+                if let Some(op1) = self.stack.pop() {
+                    operands.push(op1);
                 }
                 vec![Command::RawOperator { name: op.to_string(), operands }]
             }
@@ -513,14 +558,23 @@ impl<'a> Sublimator<'a> {
         }
     }
 
+    fn pop_f64_array(&mut self) -> Option<Vec<f64>> {
+        match self.stack.pop()? {
+            IrObject::Array(arr) => {
+                let mut vals = Vec::new();
+                for item in arr {
+                    if let Some(f) = item.as_f64() {
+                        vals.push(f);
+                    }
+                }
+                Some(vals)
+            }
+            _ => None,
+        }
+    }
+
     fn create_stroke(&self) -> Option<StrokeStyle> {
-        Some(StrokeStyle {
-            width: 1.0,
-            cap: LineCap::Butt,
-            join: LineJoin::Miter,
-            miter_limit: 10.0,
-            dash_pattern: None,
-        })
+        Some(self.current_stroke_style.clone())
     }
 
     fn handle_font_selection(&mut self) -> Vec<Command> {

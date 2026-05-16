@@ -115,6 +115,18 @@ impl<'a> ObjectCloner<'a> {
                 }
             }
         }
+
+        // RR-15 HARDENING: Final validation pass to ensure no objects were left as Null
+        // unless they were explicitly Null in the source.
+        for (&source_h, &target_h) in &self.handle_map {
+            let source_obj = self.source.get_object(source_h).unwrap_or(Object::Null);
+            let target_obj = self.target.get_object(target_h).unwrap_or(Object::Null);
+            if matches!(target_obj, Object::Null) && !matches!(source_obj, Object::Null) {
+                return Err(ferruginous_core::PdfError::Other(
+                    format!("Cloning failed: Object {:?} remains Null in target", target_h).into()
+                ));
+            }
+        }
         Ok(())
     }
 
@@ -151,6 +163,9 @@ impl<'a> ObjectCloner<'a> {
                 Object::Dictionary(self.target.alloc_dict(target_dict))
             }
             Object::Stream(dh, data) => {
+                // RR-15: Streams MUST be indirect objects. If we encounter a stream
+                // variant during shallow cloning (e.g., inside a dictionary), 
+                // we must promote it to a top-level object and return a reference.
                 let source_dict = self.source.get_dict(*dh).unwrap_or_default();
                 let mut target_dict = BTreeMap::new();
                 for (k, v) in source_dict {
@@ -159,7 +174,9 @@ impl<'a> ObjectCloner<'a> {
                     target_dict.insert(target_k, self.clone_object_shallow(&v));
                 }
                 let target_dh = self.target.alloc_dict(target_dict);
-                Object::Stream(target_dh, data.clone())
+                let stream_obj = Object::Stream(target_dh, data.clone());
+                let target_h = self.target.alloc_object(stream_obj);
+                Object::Reference(target_h)
             }
             Object::Text(s) => Object::Text(s.clone()),
         }

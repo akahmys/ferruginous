@@ -151,7 +151,8 @@ impl Ingestor {
         }
 
         // Map font file stream handles to their distilled (reconstructed) data
-        let mut distilled_fonts = std::collections::BTreeMap::new();
+        let distilled_fonts = std::collections::BTreeMap::new();
+        /*
         for res in handle_font_cache.values() {
             if let Some(sh) = res.file_handle
                 && let Some(ref data) = res.reconstructed_data
@@ -159,6 +160,7 @@ impl Ingestor {
                 distilled_fonts.insert(sh, Arc::clone(data));
             }
         }
+        */
 
         let mut all_issues = Vec::new();
         if _options.active_refinement {

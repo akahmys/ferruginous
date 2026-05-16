@@ -46,8 +46,7 @@ clippy_*.txt
 .agent/tools/
 
 # Test data & Results
-/verification_results/
-/artifacts/
+/out/
 /scratch/
 
 # Developer Playground
