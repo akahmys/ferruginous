@@ -1,0 +1,115 @@
+#![allow(clippy::float_cmp)]
+use crate::{PdfDocument, PdfStandard};
+use bytes::Bytes;
+use std::io::Write;
+
+fn get_minimal_pdf() -> Bytes {
+    let mut doc = lopdf::Document::with_version("1.7");
+    
+    let mut pages_dict = lopdf::Dictionary::new();
+    pages_dict.set("Type", lopdf::Object::Name(b"Pages".to_vec()));
+    pages_dict.set("Kids", lopdf::Object::Array(vec![]));
+    pages_dict.set("Count", lopdf::Object::Integer(0));
+    let pages_id = doc.add_object(lopdf::Object::Dictionary(pages_dict));
+
+    let mut catalog_dict = lopdf::Dictionary::new();
+    catalog_dict.set("Type", lopdf::Object::Name(b"Catalog".to_vec()));
+    catalog_dict.set("Pages", lopdf::Object::Reference(pages_id));
+    let catalog_id = doc.add_object(lopdf::Object::Dictionary(catalog_dict));
+
+    doc.trailer.set("Root", lopdf::Object::Reference(catalog_id));
+    doc.trailer.set("Size", lopdf::Object::Integer(i64::from(catalog_id.0 + 1)));
+    
+    let id_item = lopdf::Object::String(b"0123456789abcdef0123456789abcdef".to_vec(), lopdf::StringFormat::Hexadecimal);
+    doc.trailer.set("ID", lopdf::Object::Array(vec![id_item.clone(), id_item]));
+
+    let mut buf = Vec::new();
+    doc.save_to(&mut buf).unwrap();
+    Bytes::from(buf)
+}
+
+#[test]
+fn test_document_save_settings_sync() {
+    let data = get_minimal_pdf();
+    let mut doc = PdfDocument::open(data).unwrap();
+    
+    // Test initial states
+    assert!(!doc.vacuum);
+    assert!(!doc.strip);
+    assert!(doc.password.is_none());
+
+    // Modify states
+    doc.set_vacuum(true);
+    doc.set_strip(true);
+    doc.set_password(Some("secret".to_string()));
+
+    // Verify mutations
+    assert!(doc.vacuum);
+    assert!(doc.strip);
+    assert_eq!(doc.password.as_deref(), Some("secret"));
+
+    // Verify SaveOptions serialization syncing
+    let file_path = std::env::temp_dir().join("ferruginous_test_output.pdf");
+    let res = doc.save_as_version(&file_path, "2.0");
+    assert!(res.is_ok());
+
+    // Cleanup
+    let _ = std::fs::remove_file(file_path);
+}
+
+#[test]
+fn test_upgrade_to_standard() {
+    let data = get_minimal_pdf();
+    let mut doc = PdfDocument::open(data).unwrap();
+
+    // Verify base version
+    assert_eq!(doc.inner().arena().version(), 1.7);
+
+    // Upgrade to modern PDF 2.0
+    doc.upgrade_to_standard(PdfStandard::ISO32000_2).unwrap();
+    assert_eq!(doc.inner().arena().version(), 2.0);
+
+    // Upgrade to PDF/A-4 standard and check GTS tag
+    doc.upgrade_to_standard(PdfStandard::A4).unwrap();
+    assert_eq!(doc.inner().arena().version(), 2.0);
+    
+    let cah = doc.inner().catalog_handle().unwrap();
+    let cadh = doc.inner().resolve_to_dict(cah).unwrap();
+    let catalog = doc.inner().arena().get_dict(cadh).unwrap();
+    let gts_key = doc.inner().arena().name("GTS_PDFA14");
+    assert!(catalog.contains_key(&gts_key));
+}
+
+#[test]
+fn test_object_stream_packer() {
+    use crate::obj_stm::ObjectStreamPacker;
+    let mut packer = ObjectStreamPacker::new();
+    assert_eq!(packer.count(), 0);
+
+    // Add dummy object serializations
+    packer.add_object(5, |w| {
+        w.write_all(b"<< /Dummy 1 >>")?;
+        Ok(())
+    }).unwrap();
+    assert_eq!(packer.count(), 1);
+
+    packer.add_object(6, |w| {
+        w.write_all(b"[1 2 3]")?;
+        Ok(())
+    }).unwrap();
+    assert_eq!(packer.count(), 2);
+
+    // Finish and verify no unwrap panics
+    let (n, first, full) = packer.finish();
+    assert_eq!(n, 2);
+    assert!(first > 0);
+    assert!(!full.is_empty());
+}
+
+#[test]
+fn test_heuristic_retag_execution() {
+    let data = get_minimal_pdf();
+    let mut doc = PdfDocument::open(data).unwrap();
+    let res = doc.retag_document();
+    assert!(res.is_ok());
+}

@@ -664,13 +664,17 @@ impl<'a> Sublimator<'a> {
             if token == Token::RightDict || token == Token::EOF {
                 break;
             }
-            let key_token = lexer.next_token().unwrap();
+            let Ok(key_token) = lexer.next_token() else {
+                break;
+            };
             let key = match key_token {
                 Token::Name(b) => crate::refine::text::recover_string(&b),
                 _ => continue, // Should be an error but let's be robust
             };
 
-            let val_token = lexer.next_token().unwrap();
+            let Ok(val_token) = lexer.next_token() else {
+                break;
+            };
             let val = match val_token {
                 Token::LeftArray => self.parse_ir_array(lexer),
                 Token::LeftDict => self.parse_ir_dict(lexer),

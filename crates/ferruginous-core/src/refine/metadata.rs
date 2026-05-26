@@ -57,10 +57,8 @@ pub fn parse_date_string(s: &str) -> Option<xmp_writer::DateTime> {
                 if tz_digits.len() >= 2 {
                     let tz_h = tz_digits[0..2].parse::<i8>().ok().map(|h| h * sign);
                     let mut tz_min = 0;
-                    if tz_digits.len() >= 4 {
-                        if let Ok(m) = tz_digits[2..4].parse::<i8>() {
-                            tz_min = m;
-                        }
+                    if tz_digits.len() >= 4 && let Ok(m) = tz_digits[2..4].parse::<i8>() {
+                        tz_min = m;
                     }
                     if let Some(h) = tz_h {
                         timezone = Some(xmp_writer::Timezone::Local { hour: h, minute: tz_min });
@@ -110,10 +108,8 @@ pub fn parse_date_string(s: &str) -> Option<xmp_writer::DateTime> {
                     if tz_digits.len() >= 2 {
                         let tz_h = tz_digits[0..2].parse::<i8>().ok().map(|h| h * sign);
                         let mut tz_min = 0;
-                        if tz_digits.len() >= 4 {
-                            if let Ok(m) = tz_digits[2..4].parse::<i8>() {
-                                tz_min = m;
-                            }
+                        if tz_digits.len() >= 4 && let Ok(m) = tz_digits[2..4].parse::<i8>() {
+                            tz_min = m;
                         }
                         if let Some(h) = tz_h {
                             timezone = Some(xmp_writer::Timezone::Local { hour: h, minute: tz_min });
@@ -223,22 +219,20 @@ pub fn info_to_xmp(info: &BTreeMap<PdfName, RefinedObject>) -> String {
     // 3. Document and Instance UUIDs (Media Management Schema)
     let mut doc_hasher = md5::Context::new();
     let mut title_val = String::new();
-    if let Some(obj) = info.get(&PdfName::new("Title")) {
-        if let RefinedObject::Text(s) = obj {
-            title_val = s.clone();
-        }
+    if let Some(RefinedObject::Text(s)) = info.get(&PdfName::new("Title")) {
+        title_val = s.clone();
     }
     doc_hasher.consume(title_val.as_bytes());
     doc_hasher.consume(b"ferruginous-pdf2.0-stable-document-id-salt");
     let doc_bytes = doc_hasher.finalize().0;
 
     let mut inst_hasher = md5::Context::new();
-    inst_hasher.consume(&doc_bytes);
+    inst_hasher.consume(doc_bytes);
     let salt = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    inst_hasher.consume(&salt.to_be_bytes());
+    inst_hasher.consume(salt.to_be_bytes());
     let inst_bytes = inst_hasher.finalize().0;
 
     let doc_uuid = format!(

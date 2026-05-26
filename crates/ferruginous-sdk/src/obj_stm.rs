@@ -50,7 +50,7 @@ impl ObjectStreamPacker {
         
         // Write index: <obj_id> <offset>
         for (id, offset) in &self.indices {
-            write!(full_data, "{id} {offset} ").unwrap();
+            let _ = write!(full_data, "{id} {offset} ");
         }
         
         let first_offset = full_data.len();

@@ -146,28 +146,7 @@ impl Document {
     pub fn load_system_fonts(&mut self) {
         let mut fonts = BTreeMap::new();
 
-        // macOS standard paths
-        let mac_paths = [
-            (
-                crate::font::FallbackFontType::JapaneseSerif,
-                "/System/Library/Fonts/ヒラギノ明朝 ProN.ttc",
-            ),
-            (
-                crate::font::FallbackFontType::JapaneseSans,
-                "/System/Library/Fonts/ヒラギノ角ゴ Interface.ttc",
-            ),
-            (crate::font::FallbackFontType::Serif, "/System/Library/Fonts/Times.ttc"),
-            (crate::font::FallbackFontType::SansSerif, "/System/Library/Fonts/Helvetica.ttc"),
-            (crate::font::FallbackFontType::Monospace, "/System/Library/Fonts/Courier.dfont"),
-        ];
-
-        for (ftype, path) in mac_paths {
-            if let Ok(data) = std::fs::read(path) {
-                fonts.insert(ftype, Arc::new(data));
-            }
-        }
-
-        // Also check FERRUGINOUS_RESOURCES/fonts
+        // 1. First check FERRUGINOUS_RESOURCES/fonts
         let resource_dir =
             std::env::var("FERRUGINOUS_RESOURCES").unwrap_or_else(|_| "resources".to_string());
         let base_path = std::path::Path::new(&resource_dir).join("fonts");
@@ -178,9 +157,99 @@ impl Document {
             (crate::font::FallbackFontType::JapaneseSerif, "mincho.ttf"),
             (crate::font::FallbackFontType::JapaneseSans, "gothic.ttf"),
         ];
+
         for (ftype, filename) in mappings {
             if let Ok(data) = std::fs::read(base_path.join(filename)) {
                 fonts.insert(ftype, Arc::new(data));
+            }
+        }
+
+        // 2. Fallback to platform-specific well-known paths for missing fonts
+        let missing_types: Vec<_> = [
+            crate::font::FallbackFontType::Serif,
+            crate::font::FallbackFontType::SansSerif,
+            crate::font::FallbackFontType::Monospace,
+            crate::font::FallbackFontType::JapaneseSerif,
+            crate::font::FallbackFontType::JapaneseSans,
+        ]
+        .into_iter()
+        .filter(|ft| !fonts.contains_key(ft))
+        .collect();
+
+        if !missing_types.is_empty() {
+            #[cfg(target_os = "macos")]
+            {
+                let mac_paths = [
+                    (
+                        crate::font::FallbackFontType::JapaneseSerif,
+                        "/System/Library/Fonts/ヒラギノ明朝 ProN.ttc",
+                    ),
+                    (
+                        crate::font::FallbackFontType::JapaneseSans,
+                        "/System/Library/Fonts/ヒラギノ角ゴ Interface.ttc",
+                    ),
+                    (crate::font::FallbackFontType::Serif, "/System/Library/Fonts/Times.ttc"),
+                    (crate::font::FallbackFontType::SansSerif, "/System/Library/Fonts/Helvetica.ttc"),
+                    (crate::font::FallbackFontType::Monospace, "/System/Library/Fonts/Courier.dfont"),
+                ];
+                for (ftype, path) in mac_paths {
+                    if !missing_types.contains(&ftype) {
+                        continue;
+                    }
+                    if let Ok(data) = std::fs::read(path) {
+                        fonts.insert(ftype, Arc::new(data));
+                    }
+                }
+            }
+
+            #[cfg(target_os = "windows")]
+            {
+                let win_paths = [
+                    (
+                        crate::font::FallbackFontType::JapaneseSerif,
+                        "C:\\Windows\\Fonts\\msmincho.ttc",
+                    ),
+                    (
+                        crate::font::FallbackFontType::JapaneseSans,
+                        "C:\\Windows\\Fonts\\msgothic.ttc",
+                    ),
+                    (crate::font::FallbackFontType::Serif, "C:\\Windows\\Fonts\\times.ttf"),
+                    (crate::font::FallbackFontType::SansSerif, "C:\\Windows\\Fonts\\arial.ttf"),
+                    (crate::font::FallbackFontType::Monospace, "C:\\Windows\\Fonts\\cour.ttf"),
+                ];
+                for (ftype, path) in win_paths {
+                    if !missing_types.contains(&ftype) {
+                        continue;
+                    }
+                    if let Ok(data) = std::fs::read(path) {
+                        fonts.insert(ftype, Arc::new(data));
+                    }
+                }
+            }
+
+            #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+            {
+                let linux_paths = [
+                    (
+                        crate::font::FallbackFontType::JapaneseSerif,
+                        "/usr/share/fonts/truetype/fonts-japanese-mincho.ttf",
+                    ),
+                    (
+                        crate::font::FallbackFontType::JapaneseSans,
+                        "/usr/share/fonts/truetype/fonts-japanese-gothic.ttf",
+                    ),
+                    (crate::font::FallbackFontType::Serif, "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf"),
+                    (crate::font::FallbackFontType::SansSerif, "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
+                    (crate::font::FallbackFontType::Monospace, "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"),
+                ];
+                for (ftype, path) in linux_paths {
+                    if !missing_types.contains(&ftype) {
+                        continue;
+                    }
+                    if let Ok(data) = std::fs::read(path) {
+                        fonts.insert(ftype, Arc::new(data));
+                    }
+                }
             }
         }
 
@@ -683,14 +752,12 @@ impl Document {
             let cb_key = self.arena.name("CropBox");
             let rot_key = self.arena.name("Rotate");
 
-            if !leaf_dict.contains_key(&cb_key) {
-                if let Some(mb_val) = leaf_dict.get(&mb_key) {
-                    leaf_dict.insert(cb_key, mb_val.clone());
-                }
+            if !leaf_dict.contains_key(&cb_key)
+                && let Some(mb_val) = leaf_dict.get(&mb_key)
+            {
+                leaf_dict.insert(cb_key, mb_val.clone());
             }
-            if !leaf_dict.contains_key(&rot_key) {
-                leaf_dict.insert(rot_key, Object::Integer(0));
-            }
+            leaf_dict.entry(rot_key).or_insert(Object::Integer(0));
 
             self.arena.set_dict(dict_h, leaf_dict);
             return Ok(());
@@ -770,9 +837,18 @@ impl Document {
                         && let Ok(m) = crate::font::cmap::CMap::parse(&data)
                     {
                         let count = m.mappings.len();
-                        if count > *best_to_unicode_count.get(&key).unwrap_or(&0) {
-                            best_to_unicode_count.insert(key.clone(), count);
-                            best_to_unicode.insert(key, tu.clone());
+                        use std::collections::btree_map::Entry;
+                        match best_to_unicode_count.entry(key.clone()) {
+                            Entry::Vacant(e) => {
+                                e.insert(count);
+                                best_to_unicode.insert(key, tu.clone());
+                            }
+                            Entry::Occupied(mut e) => {
+                                if count > *e.get() {
+                                    e.insert(count);
+                                    best_to_unicode.insert(key, tu.clone());
+                                }
+                            }
                         }
                     }
                 }

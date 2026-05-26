@@ -35,6 +35,8 @@ struct ArenaInner {
     name_map: RwLock<BTreeMap<PdfName, Handle<PdfName>>>,
     /// The document version (e.g., 1.7, 2.0).
     version: RwLock<f32>,
+    /// Index for fast lookup: Map of Object value to list of indirect handles containing that value.
+    object_index: RwLock<BTreeMap<Object, Vec<Handle<Object>>>>,
 }
 
 impl PdfArena {
@@ -107,7 +109,10 @@ impl PdfArena {
     pub fn alloc_object(&self, object: Object) -> Handle<Object> {
         let mut objects = self.inner.objects.write();
         let h = Handle::new(objects.len() as u32);
-        objects.push(ObjectEntry { object, generation: 0 });
+        objects.push(ObjectEntry { object: object.clone(), generation: 0 });
+
+        let mut idx = self.inner.object_index.write();
+        idx.entry(object).or_default().push(h);
         h
     }
 
@@ -141,8 +146,23 @@ impl PdfArena {
     }
 
     pub fn set_object(&self, handle: Handle<Object>, object: Object) {
-        if let Some(e) = self.inner.objects.write().get_mut(handle.index() as usize) {
-            e.object = object;
+        let mut objects = self.inner.objects.write();
+        if let Some(e) = objects.get_mut(handle.index() as usize) {
+            let old_val = e.object.clone();
+            e.object = object.clone();
+
+            let mut idx = self.inner.object_index.write();
+            // Remove from old entry list
+            if let Some(list) = idx.get_mut(&old_val) {
+                if let Some(pos) = list.iter().position(|&x| x == handle) {
+                    list.remove(pos);
+                }
+                if list.is_empty() {
+                    idx.remove(&old_val);
+                }
+            }
+            // Add to new entry list
+            idx.entry(object).or_default().push(handle);
         }
     }
 
@@ -151,8 +171,24 @@ impl PdfArena {
     }
 
     pub fn set_object_entry(&self, handle: Handle<Object>, entry: ObjectEntry) {
-        if let Some(e) = self.inner.objects.write().get_mut(handle.index() as usize) {
+        let mut objects = self.inner.objects.write();
+        if let Some(e) = objects.get_mut(handle.index() as usize) {
+            let old_val = e.object.clone();
+            let new_val = entry.object.clone();
             *e = entry;
+
+            let mut idx = self.inner.object_index.write();
+            // Remove from old entry list
+            if let Some(list) = idx.get_mut(&old_val) {
+                if let Some(pos) = list.iter().position(|&x| x == handle) {
+                    list.remove(pos);
+                }
+                if list.is_empty() {
+                    idx.remove(&old_val);
+                }
+            }
+            // Add to new entry list
+            idx.entry(new_val).or_default().push(handle);
         }
     }
 
@@ -182,13 +218,8 @@ impl PdfArena {
 
     /// Searches for an existing indirect object that matches the provided object.
     pub fn find_object(&self, object: &Object) -> Option<Handle<Object>> {
-        let objects = self.inner.objects.read();
-        for (i, entry) in objects.iter().enumerate() {
-            if &entry.object == object {
-                return Some(Handle::new(i as u32));
-            }
-        }
-        None
+        let idx = self.inner.object_index.read();
+        idx.get(object).and_then(|list| list.first().copied())
     }
 
     pub fn object_count(&self) -> u32 {
@@ -252,7 +283,7 @@ impl PdfArena {
         is_content_stream: bool,
     ) -> PdfResult<()> {
         let sublimated = if is_content_stream {
-            // STUB: This will be replaced by the real IR parser in Pass 2
+            // Keep raw bytes for subsequent parser extraction in SDK pipeline
             SublimatedData::Raw(data)
         } else if let Some(Object::Stream(dh, _)) = self.get_object(handle)
             && let Some(dict) = self.get_dict(dh)

@@ -398,6 +398,55 @@ pub struct ObjectEntry {
     pub generation: u16,
 }
 
+
+impl Eq for Object {}
+
+impl PartialOrd for Object {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Object {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        use std::cmp::Ordering;
+        match (self, other) {
+            (Object::Boolean(a), Object::Boolean(b)) => a.cmp(b),
+            (Object::Integer(a), Object::Integer(b)) => a.cmp(b),
+            (Object::Real(a), Object::Real(b)) => a.total_cmp(b),
+            (Object::String(a), Object::String(b)) => a.cmp(b),
+            (Object::Hex(a), Object::Hex(b)) => a.cmp(b),
+            (Object::Text(a), Object::Text(b)) => a.cmp(b),
+            (Object::Name(a), Object::Name(b)) => a.cmp(b),
+            (Object::Null, Object::Null) => Ordering::Equal,
+            (Object::Reference(a), Object::Reference(b)) => a.cmp(b),
+            (Object::Array(a), Object::Array(b)) => a.cmp(b),
+            (Object::Dictionary(a), Object::Dictionary(b)) => a.cmp(b),
+            (Object::Stream(a, _), Object::Stream(b, _)) => a.cmp(b),
+            (a, b) => a.variant_index().cmp(&b.variant_index()),
+        }
+    }
+}
+
+impl Object {
+    fn variant_index(&self) -> u8 {
+        match self {
+            Object::Null => 0,
+            Object::Boolean(_) => 1,
+            Object::Integer(_) => 2,
+            Object::Real(_) => 3,
+            Object::String(_) => 4,
+            Object::Hex(_) => 5,
+            Object::Text(_) => 6,
+            Object::Name(_) => 7,
+            Object::Reference(_) => 8,
+            Object::Array(_) => 9,
+            Object::Dictionary(_) => 10,
+            Object::Stream(_, _) => 11,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

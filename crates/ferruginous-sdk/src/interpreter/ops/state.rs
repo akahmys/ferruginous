@@ -97,7 +97,7 @@ impl Interpreter<'_> {
                     self.doc.arena(),
                 ) {
                     self.state.blend_mode = bm;
-                    // FIXME: Tell backend about blend mode
+                    self.backend.set_blend_mode(bm);
                 }
             }
             if let Some(smask_obj) = gs_dict.get(&smask_key) {

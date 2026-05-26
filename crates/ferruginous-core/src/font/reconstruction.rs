@@ -2047,14 +2047,11 @@ mod tests {
 
                     // Try to draw GID 1
                     let mut builder = NoopBuilder;
-                    if let Some(_rect) = face.outline_glyph(ttf_parser::GlyphId(1), &mut builder) {
-                        println!("GID 1 outline extraction SUCCEEDED");
-                    } else {
-                        panic!("GID 1 outline extraction FAILED");
-                    }
+                    let outline_res = face.outline_glyph(ttf_parser::GlyphId(1), &mut builder);
+                    assert!(outline_res.is_some(), "GID 1 outline extraction FAILED");
                 }
                 Err(e) => {
-                    panic!("Failed to parse reconstructed font: {:?}", e);
+                    panic!("Failed to parse reconstructed font: {e:?}");
                 }
             }
         }

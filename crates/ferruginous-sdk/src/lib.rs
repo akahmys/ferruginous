@@ -175,6 +175,9 @@ pub enum IssueSeverity {
 /// High-level entry point for interacting with a PDF document.
 pub struct PdfDocument {
     inner: Document,
+    vacuum: bool,
+    strip: bool,
+    password: Option<String>,
 }
 
 impl PdfDocument {
@@ -189,7 +192,12 @@ impl PdfDocument {
         options: &ferruginous_core::ingest::IngestionOptions,
     ) -> PdfResult<Self> {
         let inner = Document::open(data, options)?;
-        Ok(Self { inner })
+        Ok(Self {
+            inner,
+            vacuum: false,
+            strip: false,
+            password: None,
+        })
     }
 
     /// Returns the internal document.
@@ -253,7 +261,12 @@ impl PdfDocument {
         options: &ferruginous_core::ingest::IngestionOptions,
     ) -> PdfResult<Self> {
         let inner = Document::open_repair(data, options)?;
-        Ok(Self { inner })
+        Ok(Self {
+            inner,
+            vacuum: false,
+            strip: false,
+            password: None,
+        })
     }
 
     /// Merges multiple documents into a new one.
@@ -428,7 +441,12 @@ impl PdfDocument {
 
         let catalog_h =
             target_arena.alloc_object(Object::Dictionary(target_arena.alloc_dict(catalog_dict)));
-        Ok(Self { inner: Document::new(target_arena, catalog_h, None) })
+        Ok(Self {
+            inner: Document::new(target_arena, catalog_h, None),
+            vacuum: false,
+            strip: false,
+            password: None,
+        })
     }
 
     fn merge_link_outlines(
@@ -538,12 +556,23 @@ impl PdfDocument {
         let catalog_handle =
             target_arena.alloc_object(Object::Dictionary(target_arena.alloc_dict(catalog_dict)));
 
-        Ok(Self { inner: Document::new(target_arena, catalog_handle, None) })
+        Ok(Self {
+            inner: Document::new(target_arena, catalog_handle, None),
+            vacuum: false,
+            strip: false,
+            password: None,
+        })
     }
 
     /// Saves the document to a file with a specific version and default options.
     pub fn save_as_version(&self, output_path: &Path, version: &str) -> PdfResult<()> {
-        self.save_with_options(output_path, version, &SaveOptions::default())
+        let options = SaveOptions {
+            vacuum: self.vacuum,
+            strip: self.strip,
+            password: self.password.clone(),
+            ..SaveOptions::default()
+        };
+        self.save_with_options(output_path, version, &options)
     }
 
     /// Saves the document with custom options.
@@ -880,8 +909,46 @@ impl PdfDocument {
     }
 
     /// Upgrades the document to a specific standard (A-4, X-6, UA-2).
-    pub fn upgrade_to_standard(&mut self, _standard: PdfStandard) -> PdfResult<()> {
-        // TODO: Rule-based upgrade logic
+    pub fn upgrade_to_standard(&mut self, standard: PdfStandard) -> PdfResult<()> {
+        let arena = self.inner.arena();
+        match standard {
+            PdfStandard::ISO32000_2 => {
+                arena.set_version(2.0);
+            }
+            PdfStandard::A4 => {
+                arena.set_version(2.0);
+                if let Some(cah) = self.inner.catalog_handle() {
+                    if let Ok(cadh) = self.inner.resolve_to_dict(cah) {
+                        let mut catalog = arena.get_dict(cadh).unwrap_or_default();
+                        let gts_key = arena.intern_name(PdfName::new("GTS_PDFA14"));
+                        catalog.insert(gts_key, Object::Name(arena.intern_name(PdfName::new("Yes"))));
+                        arena.set_dict(cadh, catalog);
+                    }
+                }
+            }
+            PdfStandard::UA2 => {
+                arena.set_version(2.0);
+                if let Some(cah) = self.inner.catalog_handle() {
+                    if let Ok(cadh) = self.inner.resolve_to_dict(cah) {
+                        let mut catalog = arena.get_dict(cadh).unwrap_or_default();
+                        let ua_key = arena.intern_name(PdfName::new("PdfUA"));
+                        catalog.insert(ua_key, Object::Integer(2));
+                        arena.set_dict(cadh, catalog);
+                    }
+                }
+            }
+            PdfStandard::X6 => {
+                arena.set_version(2.0);
+                if let Some(cah) = self.inner.catalog_handle() {
+                    if let Ok(cadh) = self.inner.resolve_to_dict(cah) {
+                        let mut catalog = arena.get_dict(cadh).unwrap_or_default();
+                        let gts_key = arena.intern_name(PdfName::new("GTS_PDFX"));
+                        catalog.insert(gts_key, Object::Name(arena.intern_name(PdfName::new("PDFX6"))));
+                        arena.set_dict(cadh, catalog);
+                    }
+                }
+            }
+        }
         Ok(())
     }
 
@@ -916,11 +983,17 @@ impl PdfDocument {
     }
 
     /// Controls whether unreachable objects are removed on save.
-    pub fn set_vacuum(&mut self, _vacuum: bool) {}
+    pub fn set_vacuum(&mut self, vacuum: bool) {
+        self.vacuum = vacuum;
+    }
     /// Controls whether descriptive metadata is stripped on save.
-    pub fn set_strip(&mut self, _strip: bool) {}
+    pub fn set_strip(&mut self, strip: bool) {
+        self.strip = strip;
+    }
     /// Sets the document open password.
-    pub fn set_password(&mut self, _password: Option<String>) {}
+    pub fn set_password(&mut self, password: Option<String>) {
+        self.password = password;
+    }
 
     /// Sets the rotation of a specific page.
     pub fn set_page_rotation(&mut self, index: usize, angle: i32) -> PdfResult<()> {
@@ -1053,3 +1126,6 @@ pub fn retag_document(doc: &mut Document) -> PdfResult<()> {
     // Automatic application logic would follow
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

@@ -82,6 +82,23 @@ fn parse_line_join(input: &str) -> IResult<&str, LineJoin> {
     ))(input)
 }
 
+fn parse_dash_pattern(input: &str) -> IResult<&str, Option<(Vec<f64>, f64)>> {
+    alt((
+        map(tag("dash_pattern: None"), |_| None),
+        map(
+            tuple((
+                tag("dash_pattern: Some((["),
+                separated_list0(tuple((char(','), multispace0)), parse_f64),
+                tag("],"),
+                multispace0,
+                parse_f64,
+                tag("))"),
+            )),
+            |(_, dash, _, _, phase, _)| Some((dash, phase)),
+        ),
+    ))(input)
+}
+
 fn parse_stroke_style(input: &str) -> IResult<&str, StrokeStyle> {
     let (input, _) = tag("StrokeStyle {")(input)?;
     let (input, _) = multispace0(input)?;
@@ -111,11 +128,11 @@ fn parse_stroke_style(input: &str) -> IResult<&str, StrokeStyle> {
     let (input, _) = char(',')(input)?;
     let (input, _) = multispace0(input)?;
 
-    let (input, _) = tag("dash_pattern: None")(input)?; // STUB: Dash patterns not yet recovered
+    let (input, dash_pattern) = parse_dash_pattern(input)?;
     let (input, _) = multispace0(input)?;
     let (input, _) = char('}')(input)?;
 
-    Ok((input, StrokeStyle { width, cap, join, miter_limit, dash_pattern: None }))
+    Ok((input, StrokeStyle { width, cap, join, miter_limit, dash_pattern }))
 }
 
 fn parse_string_literal(input: &str) -> IResult<&str, String> {
@@ -132,7 +149,16 @@ fn parse_ir_object(input: &str) -> IResult<&str, IrObject> {
         map(preceded(tag("Integer("), terminated_char(parse_i64, ')')), IrObject::Integer),
         map(preceded(tag("Real("), terminated_char(parse_f64, ')')), IrObject::Real),
         map(preceded(tag("Name("), terminated_char(parse_string_literal, ')')), IrObject::Name),
-        // STUB: Array and Dictionary recursion if needed, but for now simple ones
+        map(
+            preceded(
+                tag("Array(["),
+                nom::sequence::terminated(
+                    separated_list0(tuple((char(','), multispace0)), parse_ir_object),
+                    tag("])"),
+                ),
+            ),
+            IrObject::Array,
+        ),
     ))(input)
 }
 

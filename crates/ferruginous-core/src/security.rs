@@ -98,6 +98,15 @@ impl SecurityHandler {
         Ok(hash[..16].to_vec())
     }
 
+    /// Creates a new security handler for AES-256 (Revision 5).
+    ///
+    /// # Compliance Warning
+    /// This is a simplified Revision 5 key derivation logic primarily used for internal validation,
+    /// and does not fully conform to the multi-stage key hashing and AES-decryption requirements
+    /// specified in ISO 32000-2:2020 Clause 7.6.4.3.3 (Algorithm 2.A/Algorithm 3.A).
+    ///
+    /// TODO(RR-15-EXT): Transition to full multi-stage key verification using validation salts,
+    /// key salts, and owner password checking as detailed in ISO 32000-2 Algorithms 8, 9, 2.A, and 3.A.
     pub fn new_v5(user_password: &str, owner_password: &str, file_id: &[u8]) -> PdfResult<Self> {
         let mut hasher = Sha256::new();
         hasher.update(user_password.as_bytes());

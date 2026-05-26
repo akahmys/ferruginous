@@ -1483,14 +1483,13 @@ impl<'a, W: Write> PdfWriter<'a, W> {
                 b[5..7].copy_from_slice(&0u16.to_be_bytes());
             } else {
                 // Main objects (including Part 8 shared objects with high IDs!)
+                b[5..7].copy_from_slice(&0u16.to_be_bytes());
                 if let Some(&offset) = self.xref.get(&id) {
                     b[0] = 1;
                     b[1..5].copy_from_slice(&(offset as u32).to_be_bytes());
-                    b[5..7].copy_from_slice(&0u16.to_be_bytes());
                 } else {
                     b[0] = 0;
                     b[1..5].copy_from_slice(&0u32.to_be_bytes());
-                    b[5..7].copy_from_slice(&0u16.to_be_bytes());
                 }
             }
             let entry_bytes = b;
@@ -2074,7 +2073,7 @@ impl<W: std::io::Write> PdfWriter<'_, W> {
         if !outline_exclusive.is_empty() {
             let first_id = self.id_map[&outline_exclusive[0]];
             let first_off = *self.xref.get(&first_id).unwrap_or(&0);
-            let last_id = self.id_map[outline_exclusive.last().unwrap()];
+            let last_id = outline_exclusive.last().and_then(|k| self.id_map.get(k)).copied().unwrap_or(0);
             let last_off = *self.xref.get(&last_id).unwrap_or(&0);
             let last_size = *self.obj_sizes.get(&last_id).unwrap_or(&0);
             let outlines_len = last_off.saturating_add(last_size).saturating_sub(first_off);

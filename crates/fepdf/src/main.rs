@@ -1295,8 +1295,8 @@ fn parse_unicode(s: &str) -> Result<char> {
         let val = u32::from_str_radix(hex, 16).with_context(|| "Invalid hex code")?;
         std::char::from_u32(val)
             .ok_or_else(|| anyhow::anyhow!("Invalid unicode scalar: U+{:04X}", val))
-    } else if s.chars().count() == 1 {
-        Ok(s.chars().next().unwrap())
+    } else if let Some(c) = s.chars().next() {
+        Ok(c)
     } else {
         anyhow::bail!(
             "Invalid unicode input. Use single char or U+XXXX format (e.g. 'A' or 'U+6C38')"

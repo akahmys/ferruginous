@@ -322,11 +322,6 @@ impl ParallelRefinery {
     }
 }
 
-#[allow(dead_code)]
-fn arena_placeholder_intern(_name: &PdfName) -> Handle<crate::object::PdfName> {
-    Handle::new(0) // FIXME: Real implementation needs access to the arena being built
-}
-
 pub fn commit_to_arena(arena: &PdfArena, refined: RefinedObject, depth: usize) -> Object {
     if depth > 64 {
         return Object::Null;

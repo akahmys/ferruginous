@@ -136,8 +136,7 @@ fn update_xmp_metadata(doc: &crate::Document, info: &MetadataInfo) -> crate::Pdf
         // Append 2KB space padding and replace the read-only flag end="r" with writable flag end="w"
         let trimmed = raw_xmp.trim_end();
         let suffix = "<?xpacket end=\"r\"?>";
-        let xmp_str = if trimmed.ends_with(suffix) {
-            let base = &trimmed[..trimmed.len() - suffix.len()];
+        let xmp_str = if let Some(base) = trimmed.strip_suffix(suffix) {
             let mut padded = String::with_capacity(base.len() + 2048 + 32);
             padded.push_str(base);
             // Append 20 lines of 100-character spaces as padding (2000 spaces)

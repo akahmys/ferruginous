@@ -545,6 +545,7 @@ pub enum RemediationActionType {
 /// Automatically infers and applies structural tags to a document.
 pub fn retag(doc: &mut Document) -> PdfResult<()> {
     let engine = HeuristicEngine::new();
-    let _candidates = engine.infer_structure(doc)?;
+    let candidates = engine.infer_structure(doc)?;
+    engine.apply_remediations(doc, candidates)?;
     Ok(())
 }

@@ -96,7 +96,6 @@ missing_errors_doc = "allow"
 missing_panics_doc = "allow"
 if_not_else = "allow"
 redundant_else = "allow"
-unnecessary_wraps = "allow"
 items_after_statements = "allow"
 option_if_let_else = "allow"
 collapsible_if = "warn"
@@ -118,7 +117,7 @@ redundant_closure = "allow"
 needless_pass_by_value = "allow"
 trivially_copy_pass_by_ref = "allow"
 similar_names = "allow"
-needless_borrows_for_generic_args = "allow"
+unnecessary_wraps = "allow"
 
 [profile.release]
 opt-level = 3

@@ -351,7 +351,7 @@ impl Interpreter<'_> {
             "DeviceGray" | "G" | "Gray" => ferruginous_core::graphics::PixelFormat::Gray8,
             "DeviceCMYK" | "CMYK" => ferruginous_core::graphics::PixelFormat::Cmyk8,
             "Indexed" | "I" => {
-                // FIXME: Properly expand indexed images. For now, assume base is RGB
+                // TODO(RR-15-EXT): Transition from fallback RGB8 and implement proper index expansion lookup mapping.
                 ferruginous_core::graphics::PixelFormat::Rgb8
             }
             _ => ferruginous_core::graphics::PixelFormat::Rgb8,
