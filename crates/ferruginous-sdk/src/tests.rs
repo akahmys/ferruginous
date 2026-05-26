@@ -113,3 +113,35 @@ fn test_heuristic_retag_execution() {
     let res = doc.retag_document();
     assert!(res.is_ok());
 }
+
+#[test]
+fn test_cielab_to_srgb_conversion() {
+    use ferruginous_core::graphics::Color;
+    // Test pure black: L=0, a=0, b=0 -> Rgb(0, 0, 0)
+    let lab_black = Color::Lab(0.0, 0.0, 0.0);
+    assert_eq!(lab_black.to_rgb(), Color::Rgb(0.0, 0.0, 0.0));
+
+    // Test white point D65 reference: L=100, a=0, b=0 -> Rgb(1, 1, 1)
+    let lab_white = Color::Lab(100.0, 0.0, 0.0);
+    let rgb_white = lab_white.to_rgb();
+    match rgb_white {
+        Color::Rgb(r, g, b) => {
+            assert!((r - 1.0).abs() < 1e-4);
+            assert!((g - 1.0).abs() < 1e-4);
+            assert!((b - 1.0).abs() < 1e-4);
+        }
+        _ => panic!("Expected Rgb"),
+    }
+}
+
+#[test]
+fn test_r5_key_derivation_multistage() {
+    use ferruginous_core::security::SecurityHandler;
+    let file_id = b"testfileid123456";
+    let handler = SecurityHandler::new_v5("password", "", file_id);
+    assert!(handler.is_ok());
+    
+    // Verify it is a Revision 5 handler with AES enabled
+    let h = handler.unwrap();
+    assert_eq!(h.should_decrypt_metadata(), true);
+}

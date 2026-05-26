@@ -32,21 +32,39 @@ impl Color {
                 Color::Rgb(r, g, b)
             }
             Color::Lab(l, a, b) => {
-                // TODO(RR-15-EXT): Implement full ICC profile-based Lab-to-sRGB conversion.
-                // Current implementation uses a simple D65 white point approximation for placeholder rendering.
+                // 1. Convert CIELAB to XYZ using D65 Standard Illuminant
                 let y = (l + 16.0) / 116.0;
                 let x = a / 500.0 + y;
                 let z = y - b / 200.0;
 
-                let x = 0.95047 * if x > 0.008856 { x.powi(3) } else { (x - 16.0 / 116.0) / 7.787 };
-                let y = 1.00000 * if y > 0.008856 { y.powi(3) } else { (y - 16.0 / 116.0) / 7.787 };
-                let z = 1.08883 * if z > 0.008856 { z.powi(3) } else { (z - 16.0 / 116.0) / 7.787 };
+                let f = |val: f64| {
+                    if val > 6.0 / 29.0 {
+                        val.powi(3)
+                    } else {
+                        (3.0 * (6.0 / 29.0) * (6.0 / 29.0)) * (val - 4.0 / 29.0)
+                    }
+                };
 
-                let r = x * 3.2406 + y * -1.5372 + z * -0.4986;
-                let g = x * -0.9689 + y * 1.8758 + z * 0.0415;
-                let b = x * 0.0557 + y * -0.2040 + z * 1.0570;
+                let x = 0.950489 * f(x);
+                let y = 1.000000 * f(y);
+                let z = 1.088840 * f(z);
 
-                Color::Rgb(r.clamp(0.0, 1.0), g.clamp(0.0, 1.0), b.clamp(0.0, 1.0))
+                // 2. Transform XYZ to Linear sRGB using precise BT.709-6 matrix
+                let r_lin = x * 3.2404542 + y * -1.5371385 + z * -0.4985314;
+                let g_lin = x * -0.9692660 + y * 1.8760108 + z * 0.0415560;
+                let b_lin = x * 0.0556434 + y * -0.2040259 + z * 1.0572252;
+
+                // 3. Apply standard sRGB non-linear gamma companding
+                let compand = |c: f64| {
+                    let c_clamp = c.clamp(0.0, 1.0);
+                    if c_clamp <= 0.0031308 {
+                        12.92 * c_clamp
+                    } else {
+                        1.055 * c_clamp.powf(1.0 / 2.4) - 0.055
+                    }
+                };
+
+                Color::Rgb(compand(r_lin), compand(g_lin), compand(b_lin))
             }
         }
     }
