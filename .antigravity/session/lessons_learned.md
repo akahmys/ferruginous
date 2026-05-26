@@ -70,10 +70,40 @@ While implementing multi-pass structural remediation (UA-2 tagging), we discover
 70: 1.  **Path Construction Leakage**: Discarding the `n` (EndPath) operator during sublimation is hazardous. In PDF, `n` resets the current path without painting. If missing, subsequent painting operators (e.g., `f`) will include the previous "construction-only" segments (like clipping rectangles), resulting in unintended solid fills.
 71: 2.  **Serialization Gap**: The "Desublimation" (serialization) phase MUST handle 100% of the IR command variants. Omissions in `SetFillColor` or `SetStrokeColor` mappings lead to the loss of all color state, causing documents to default to black during physical reconstruction.
 72: 
-73: ## Resolution
-74: - **Operator Completeness**: Added explicit support for the `n` operator in the `Sublimator` and ensured it resets the `Interpreter` path state.
-75: - **Fidelity Synchronization**: Implemented missing color command mappings in `serializer.rs`. Every IR command now has a verified bidirectional mapping between PDF operators and the internal model.
-76: 
-77: ## Impact on Future Work
-78: - **Rule 20**: The `Sublimator` (Parser) and `Desublimator` (Serializer) MUST be updated in sync. Any new IR command added for normalization MUST have a corresponding serialization mapping.
-79: - **Acrobat as Ground Truth**: Visual validation against Acrobat is the definitive proof of serialization fidelity, as it exposes structural and state-management errors that simpler renderers might ignore.
+
+# Lessons Learned: Path Integrity & Serialization Fidelity
+
+## Context
+During the stabilization of the Intel SDM document, we encountered persistent "black mask" artifacts and a "Default-to-Black" regression in regenerated PDFs.
+
+## Key Discovery
+1.  **Path Construction Leakage**: Discarding the `n` (EndPath) operator during sublimation is hazardous. In PDF, `n` resets the current path without painting. If missing, subsequent painting operators (e.g., `f`) will include the previous "construction-only" segments (like clipping rectangles), resulting in unintended solid fills.
+2.  **Serialization Gap**: The "Desublimation" (serialization) phase MUST handle 100% of the IR command variants. Omissions in `SetFillColor` or `SetStrokeColor` mappings lead to the loss of all color state, causing documents to default to black during physical reconstruction.
+
+## Resolution
+- **Operator Completeness**: Added explicit support for the `n` operator in the `Sublimator` and ensured it resets the `Interpreter` path state.
+- **Fidelity Synchronization**: Implemented missing color command mappings in `serializer.rs`. Every IR command now has a verified bidirectional mapping between PDF operators and the internal model.
+
+## Impact on Future Work
+- **Rule 20**: The `Sublimator` (Parser) and `Desublimator` (Serializer) MUST be updated in sync. Any new IR command added for normalization MUST have a corresponding serialization mapping.
+- **Acrobat as Ground Truth**: Visual validation against Acrobat is the definitive proof of serialization fidelity, as it exposes structural and state-management errors that simpler renderers might ignore.
+
+---
+
+# Lessons Learned: High-Fidelity Color Spaces & Compliant Key Derivations
+
+## Context
+During the final verification of CIELAB colors and PDF 2.0 security parameters, we addressed two core gaps: (1) color matching rendering regressions where Lab colors rendered excessively dark due to linear space mapping, and (2) audit-level complaints regarding V5 key derivation simplicity.
+
+## Key Discovery
+1.  **Gamma Companding Cruciality**: Simply mapping Lab to XYZ and then linearly mapping to RGB results in dark, high-contrast colors. Standard sRGB requires applying the non-linear gamma companding curve ($C_{\text{srgb}} = 1.055 \cdot C^{1/2.4} - 0.055$ for $C > 0.0031308$) to transition from linear space to perceptual space.
+2.  **SHA-256 Iteration Specifications**: ISO 32000-2 Section 7.6.4.3.3 requires that R5 key derivation uses exactly 50 rounds of nested SHA-256 hashes incorporating the validation/key salts. Raw one-shot SHA-256 is cryptographically weaker and will fail pedantic compliance check engines.
+3.  **Workspace Lints Inheritance**: When setting workspace-wide lints in Cargo.toml, individual member crates must explicitly inherit them via `lints.workspace = true` to apply custom exclusions (like `unnecessary_wraps = "allow"`) cleanly and prevent build command failures under `-D warnings`.
+
+## Resolution
+- **Precision Color Engine**: Upgraded `Color::Lab` to perform standard D65 illuminant XYZ transformations, BT.709-6 matrix mappings, and sRGB gamma companding.
+- **Standard V5 Key Deriver**: Refactored `SecurityHandler::new_v5` to fully implement the 50-round nested SHA-256 key derivation with deterministic salt inputs.
+
+## Impact on Future Work
+- **Strict Specifications Over Approximations**: When implementing color spaces or cryptographic protocols, always implement the standard mathematical spec rather than linear approximations to maintain absolute SSoT fidelity.
+- **Unified Workspace Lints**: Maintain the `Cargo.toml` workspace-level lints structure to keep clean builds across all core, render, and SDK crates without cluttering individual crate files.
