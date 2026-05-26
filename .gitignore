@@ -34,6 +34,9 @@ clippy_*.txt
 /ferruginous_*.png
 /artifacts/
 /scratch/
+out.pdf
+out.txt
+out_check.txt
 
 # PDF Specifications & Tools
 /specs/*.pdf
@@ -55,3 +58,7 @@ verification_results/
 .DS_Store
 # CocoIndex Code (ccc)
 /.cocoindex_code/
+
+# Agent Session Data
+/.gemini/
+

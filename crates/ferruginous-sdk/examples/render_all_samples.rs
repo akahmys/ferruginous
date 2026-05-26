@@ -21,7 +21,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let path = entry.path();
         if path.extension().and_then(|s| s.to_str()) == Some("pdf") {
             let filename = path.file_name().unwrap().to_str().unwrap();
-            println!("Rendering {}...", filename);
+            println!("Rendering {filename}...");
 
             let data = std::fs::read(&path)?;
             let doc = PdfDocument::open(data.into())?;
@@ -36,13 +36,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let height = media_box.height() as u32;
 
                 if width == 0 || height == 0 {
-                    println!("  Skipping {} due to zero dimension", filename);
+                    println!("  Skipping {filename} due to zero dimension");
                     continue;
                 }
 
                 // PDF coordinates are bottom-up, Vello is top-down.
                 let transform = kurbo::Affine::scale_non_uniform(1.0, -1.0)
-                    * kurbo::Affine::translate((0.0, -(height as f64)));
+                    * kurbo::Affine::translate((0.0, -f64::from(height)));
 
                 let mut interpreter =
                     Interpreter::new(&mut backend, doc.inner(), page.resources_handle(), transform);
@@ -50,10 +50,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let _ = interpreter.execute(contents_h);
                 }
 
-                let output_path = output_dir.join(format!("{}.png", filename));
+                let output_path = output_dir.join(format!("{filename}.png"));
                 render_to_image(backend.scene(), width, height, &output_path, ImageFormat::Png)
                     .await?;
-                println!("  Saved to {:?}", output_path);
+                println!("  Saved to {output_path:?}");
             }
         }
     }

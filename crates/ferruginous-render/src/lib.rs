@@ -2,6 +2,11 @@ pub mod headless;
 pub mod path;
 pub mod text;
 
+#[cfg(test)]
+mod path_tests;
+#[cfg(test)]
+mod text_tests;
+
 use ferruginous_core::graphics::TextRenderingMode;
 pub use ferruginous_core::graphics::WindingRule;
 use ferruginous_core::{BlendMode, Color, LineCap, LineJoin, PixelFormat, StrokeStyle};
@@ -147,8 +152,18 @@ impl VelloBackend {
 
         for (ftype, filename) in mappings {
             let path = base_path.join(filename);
-            if let Ok(data) = std::fs::read(path) {
-                fonts.insert(ftype, Arc::new(data));
+            match std::fs::read(&path) {
+                Ok(data) => {
+                    fonts.insert(ftype, Arc::new(data));
+                }
+                Err(e) => {
+                    log::warn!(
+                        "[RENDER] Failed to load system fallback font {:?} from {}: {:?}",
+                        ftype,
+                        path.display(),
+                        e
+                    );
+                }
             }
         }
         Arc::new(fonts)
@@ -195,6 +210,7 @@ impl VelloBackend {
     ///
     /// Handles both horizontal and vertical writing modes, correctly interpreting
     /// signed vertical advances (where negative moves characters DOWN).
+    #[allow(clippy::collapsible_if)]
     fn render_single_glyph(
         scene: &mut Scene,
         skrifa_bridge: &mut crate::text::SkrifaBridge,
@@ -376,7 +392,9 @@ impl RenderBackend for VelloBackend {
             WindingRule::NonZero => vello::peniko::Fill::NonZero,
             WindingRule::EvenOdd => vello::peniko::Fill::EvenOdd,
         };
-        self.scene.fill(vello_rule, self.state.transform, &brush, None, path);
+        let mut closed_path = path.clone();
+        closed_path.close_path();
+        self.scene.fill(vello_rule, self.state.transform, &brush, None, &closed_path);
     }
 
     fn stroke_path(&mut self, path: &BezPath, color: &Color, style: &StrokeStyle) {
@@ -404,12 +422,15 @@ impl RenderBackend for VelloBackend {
             WindingRule::EvenOdd => vello::peniko::Fill::EvenOdd,
         };
 
+        let mut closed_path = path.clone();
+        closed_path.close_path();
+
         self.scene.push_layer(
             vello_rule,
             vello::peniko::Mix::Normal,
             1.0f32,
             self.state.transform,
-            path,
+            &closed_path,
         );
         self.state.clip_count += 1;
     }
@@ -473,6 +494,70 @@ impl RenderBackend for VelloBackend {
                     let g = ((1.0 - m) * (1.0 - k) * 255.0) as u8;
                     let b = ((1.0 - y) * (1.0 - k) * 255.0) as u8;
                     data.extend_from_slice(&[r, g, b, 255]);
+                }
+                data
+            }
+            PixelFormat::MonoMask => {
+                let fill_rgb = self.state.fill_color.to_rgb();
+                let (r, g, b) = match fill_rgb {
+                    Color::Rgb(rv, gv, bv) => {
+                        ((rv * 255.0).clamp(0.0, 255.0) as u8,
+                         (gv * 255.0).clamp(0.0, 255.0) as u8,
+                         (bv * 255.0).clamp(0.0, 255.0) as u8)
+                    }
+                    _ => (0, 0, 0),
+                };
+                let alpha = (self.state.fill_alpha * 255.0).clamp(0.0, 255.0) as u8;
+
+                let bytes_per_row = (width as usize).div_ceil(8);
+                let mut data = Vec::with_capacity((width * height * 4) as usize);
+
+                for y in 0..height {
+                    let row_start = y as usize * bytes_per_row;
+                    for x in 0..width {
+                        let byte_idx = row_start + (x as usize / 8);
+                        let bit_idx = 7 - (x as usize % 8);
+                        let byte_val = image_data.get(byte_idx).copied().unwrap_or(0);
+                        let bit = (byte_val >> bit_idx) & 1;
+
+                        if bit == 0 {
+                            data.extend_from_slice(&[r, g, b, alpha]);
+                        } else {
+                            data.extend_from_slice(&[0, 0, 0, 0]);
+                        }
+                    }
+                }
+                data
+            }
+            PixelFormat::MonoMaskInverted => {
+                let fill_rgb = self.state.fill_color.to_rgb();
+                let (r, g, b) = match fill_rgb {
+                    Color::Rgb(rv, gv, bv) => {
+                        ((rv * 255.0).clamp(0.0, 255.0) as u8,
+                         (gv * 255.0).clamp(0.0, 255.0) as u8,
+                         (bv * 255.0).clamp(0.0, 255.0) as u8)
+                    }
+                    _ => (0, 0, 0),
+                };
+                let alpha = (self.state.fill_alpha * 255.0).clamp(0.0, 255.0) as u8;
+
+                let bytes_per_row = (width as usize).div_ceil(8);
+                let mut data = Vec::with_capacity((width * height * 4) as usize);
+
+                for y in 0..height {
+                    let row_start = y as usize * bytes_per_row;
+                    for x in 0..width {
+                        let byte_idx = row_start + (x as usize / 8);
+                        let bit_idx = 7 - (x as usize % 8);
+                        let byte_val = image_data.get(byte_idx).copied().unwrap_or(0);
+                        let bit = (byte_val >> bit_idx) & 1;
+
+                        if bit == 1 {
+                            data.extend_from_slice(&[r, g, b, alpha]);
+                        } else {
+                            data.extend_from_slice(&[0, 0, 0, 0]);
+                        }
+                    }
                 }
                 data
             }

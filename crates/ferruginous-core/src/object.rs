@@ -248,6 +248,10 @@ impl Object {
         if let Self::Boolean(b) = self { Some(*b) } else { None }
     }
 
+    pub fn is_stream(&self) -> bool {
+        matches!(self, Self::Stream(_, _))
+    }
+
     pub fn as_dict_handle(&self) -> Option<Handle<BTreeMap<Handle<PdfName>, Object>>> {
         match self {
             Self::Dictionary(h) => Some(*h),

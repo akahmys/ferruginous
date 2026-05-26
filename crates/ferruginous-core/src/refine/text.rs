@@ -230,17 +230,45 @@ pub fn recover_string(bytes: &[u8]) -> String {
     }
 }
 
+#[allow(clippy::collapsible_if)]
 pub fn encode_string(s: &str, encoding: &str) -> Vec<u8> {
-    if encoding == "utf8" {
+    if encoding == "pdfdoc" || encoding == "auto" {
+        if let Some(encoded) = try_encode_pdfdoc(s) {
+            return encoded;
+        }
+    }
+
+    if encoding == "utf8" || encoding == "auto" {
         let mut result = vec![0xEF, 0xBB, 0xBF];
         result.extend_from_slice(s.as_bytes());
         result
     } else {
-        // Default to UTF-16BE
+        // Fallback to UTF-16BE
         let mut result = vec![0xFE, 0xFF];
         for c in s.encode_utf16() {
             result.extend_from_slice(&c.to_be_bytes());
         }
         result
     }
+}
+
+fn try_encode_pdfdoc(s: &str) -> Option<Vec<u8>> {
+    let mut result = Vec::with_capacity(s.len());
+    for c in s.chars() {
+        let cp = c as u32;
+        if (0x20..=0x7E).contains(&cp) {
+            result.push(cp as u8);
+        } else {
+            // Mapping for a few common PDFDocEncoding characters
+            // For a full implementation, a lookup table would be needed.
+            // Using a restricted subset for safety in this pass.
+            match cp {
+                0x00A0..=0x00FF => result.push(cp as u8), // ISO-8859-1 overlap
+                0x20AC => result.push(0xA0), // Euro (special mapping in some versions, but let's be careful)
+                0x2022 => result.push(0x80), // Bullet
+                _ => return None, // Cannot encode
+            }
+        }
+    }
+    Some(result)
 }

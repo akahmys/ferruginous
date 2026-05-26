@@ -36,3 +36,18 @@ To ensure the integrity of the project's External Long-Term Memory (ELM), all ru
 | **3** | **Hardening (防壁)** | Absolute implementing-safety constraints (RR-15). | `hardening.md` |
 | **4** | **Domain Standards (規格)** | Technical specs and ISO 32000-2 compliance. | `pipeline.md`, `rendering.md`, `compliance.md` |
 | **5** | **Operational (術式)** | Procedural execution and automated workflows. | `skills/`, `workflows/` |
+
+---
+
+## 4. SSoT Change Authority Hierarchy
+
+To ensure robust human control while fostering continuous agent optimization, changes to all rules and conventions (SSoT) are governed by three explicit Change Authority Levels:
+
+| Level | Authority Profile | Covered Layers | Mandatory Action Flow |
+| :--- | :--- | :--- | :--- |
+| **Level A** | **User-Exclusive** (絶対不可侵) | Layer 1 (Constitution)<br>Layer 2 (Governance)<br>Layer 3 (Hardening) | **Explicit User Approval Required Before Modification.** Agents are strictly prohibited from changing even a single word without the user's manual written approval in the chat. |
+| **Level B** | **Collaborative** (協調提案) | Layer 4 (Domain Standards) | **Draft and Propose.** Agents may update these rules during a session, but must explicitly highlight all proposed changes in the final `walkthrough.md` for post-implementation user review and approval before merging. |
+| **Level C** | **Autonomous** (自律改善) | Layer 5 (Operational) | **Continuous Self-Improvement.** Agents are authorized to autonomously update operational skills and technical instructions to improve execution, which are automatically logged in the final walkthrough. |
+
+### 4.1. "Safe-Default" Rule (Level Classification Conflict)
+If any classification ambiguity exists regarding whether a rule change belongs to Level A, B, or C, the agent must fallback to the most secure classification: **Level A (User-Exclusive / Pre-Approval Mandatory)**.

@@ -140,7 +140,7 @@ impl Interpreter<'_> {
                 Ok(Color::Cmyk(c, m, y, k))
             }
             _ => {
-                log::warn!("[SDK] Unhandled {} with {} operands in CS {:?}", op, count, cs);
+                log::warn!("[SDK] Unhandled {op} with {count} operands in CS {cs:?}");
                 // Return Gray(0) as ultimate fallback to avoid stopping execution
                 Ok(Color::Gray(0.0))
             }

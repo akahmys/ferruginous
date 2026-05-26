@@ -120,8 +120,6 @@ impl SkrifaBridge {
             ctx.cid_to_gid_map,
         );
 
-        if path.is_none() && !self.is_blank_char(ctx.unicode_fallback) {
-        }
 
         if let Some(ref p) = path
             && p.segments().count() > 0
@@ -162,11 +160,9 @@ impl SkrifaBridge {
             return None;
         }
 
-        let font_res = FontRef::from_index(data, collection_index);
-        if let Err(_) = &font_res {
+        let Ok(font) = FontRef::from_index(data, collection_index) else {
             return None;
-        }
-        let font = font_res.unwrap();
+        };
 
         let mut final_gid = GlyphId::new(final_gid_in);
 
@@ -202,11 +198,7 @@ impl SkrifaBridge {
 
         let upem = font.head().map(|h| h.units_per_em()).unwrap_or(1000);
         let mut pen = KurboPen::new();
-        let glyph_opt = font.outline_glyphs().get(final_gid);
-        if glyph_opt.is_none() {
-            return None;
-        }
-        let glyph = glyph_opt.unwrap();
+        let glyph = font.outline_glyphs().get(final_gid)?;
         if let Err(e) = glyph.draw(
             DrawSettings::unhinted(SkrifaSize::new(upem as f32), LocationRef::default()),
             &mut pen,

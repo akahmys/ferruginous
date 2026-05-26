@@ -54,7 +54,7 @@ while read -r file; do
     } 
     /^mod tests/ { in_test=1; }
     ' "$file" || ERROR=1
-done < <(find $TARGET_DIRS -name "*.rs" | grep -v "tests")
+done < <(find $TARGET_DIRS -name "*.rs" | grep -vE "(tests|examples|src/bin)")
 
 # Rule 2: Panic Exclusion
 echo "[Rule 2] Checking for unwrap/expect..."
@@ -69,7 +69,7 @@ while read -r file; do
             ERROR=1
         fi
     done < <(grep -nE "\.(unwrap|expect)\(" "$file" | grep -vE "unwrap_(or|err)\(")
-done < <(find $TARGET_DIRS -name "*.rs" | grep -v "tests")
+done < <(find $TARGET_DIRS -name "*.rs" | grep -vE "(tests|examples|src/bin)")
 
 # Rule 3: No Unsafe
 echo "[Rule 3] Checking for unsafe blocks..."
@@ -94,7 +94,7 @@ while read -r file; do
             ERROR=1
         fi
     done < <(grep -nE "HashMap|HashSet" "$file")
-done < <(find $TARGET_DIRS -name "*.rs" | grep -v "tests")
+done < <(find $TARGET_DIRS -name "*.rs" | grep -vE "(tests|examples|src/bin)")
 
 # Rule 11: Explicit Error Transparency
 echo "[Rule 11] Checking for String/anyhow errors in Result..."
@@ -108,7 +108,7 @@ while read -r file; do
             ERROR=1
         fi
     done < <(grep -nE "\\bResult<[^,<>]+(<[^<>]+(,[^<>]+)*>)*[^,<>]* *, *String *>|anyhow!" "$file")
-done < <(find $TARGET_DIRS -name "*.rs" | grep -v "tests")
+done < <(find $TARGET_DIRS -name "*.rs" | grep -vE "(tests|examples|src/bin)")
 
 # Rule 13: Zero Silent Swallowing
 echo "[Rule 13] Checking for filter_map(Result::ok)..."

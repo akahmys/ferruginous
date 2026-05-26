@@ -35,6 +35,12 @@ pub enum PdfError {
     #[error("Internal consistency error: {0}")]
     Internal(std::borrow::Cow<'static, str>),
 
+    #[error("Linearization hint stream overflow: data at {pos} exceeds reserved size {size}")]
+    HintStreamOverflow { pos: usize, size: usize },
+
+    #[error("Linearization parameter synchronization error: {parameter}")]
+    LinearizationSyncError { parameter: String },
+
     #[error("Other error: {0}")]
     Other(std::borrow::Cow<'static, str>),
 }

@@ -7,32 +7,46 @@ use syn::{Data, DeriveInput, Fields, LitFloat, LitStr, parse_macro_input};
 #[proc_macro_derive(FromPdfObject, attributes(pdf_key, pdf_dict))]
 pub fn derive_from_pdf_object(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
+    match derive_from_pdf_object_impl(input) {
+        Ok(expanded) => TokenStream::from(expanded),
+        Err(err) => TokenStream::from(err.into_compile_error()),
+    }
+}
+
+fn derive_from_pdf_object_impl(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let name = &input.ident;
 
     // Parse #[pdf_dict(clause = "...")]
     let mut iso_clause = "Unknown".to_string();
     for attr in &input.attrs {
         if attr.path().is_ident("pdf_dict") {
-            let _ = attr.parse_nested_meta(|meta| {
+            attr.parse_nested_meta(|meta| {
                 if meta.path.is_ident("clause") {
                     let value = meta.value()?;
                     let s: LitStr = value.parse()?;
                     iso_clause = s.value();
                 }
                 Ok(())
-            });
+            })?;
         }
     }
 
     let fields = match &input.data {
         Data::Struct(data) => match &data.fields {
             Fields::Named(fields) => &fields.named,
-            _ => panic!("FromPdfObject only supports structs with named fields"),
+            _ => return Err(syn::Error::new_spanned(
+                &input.ident,
+                "FromPdfObject only supports structs with named fields",
+            )),
         },
-        _ => panic!("FromPdfObject only supports structs"),
+        _ => return Err(syn::Error::new_spanned(
+            &input.ident,
+            "FromPdfObject only supports structs",
+        )),
     };
 
-    let field_parsers = fields.iter().map(|f| {
+    let mut field_parsers = Vec::new();
+    for f in fields {
         let field_name = &f.ident;
         let field_type = &f.ty;
 
@@ -45,7 +59,7 @@ pub fn derive_from_pdf_object(input: TokenStream) -> TokenStream {
                 if let Ok(lit) = attr.parse_args::<LitStr>() {
                     pdf_key = lit.value();
                 } else {
-                    let _ = attr.parse_nested_meta(|meta| {
+                    attr.parse_nested_meta(|meta| {
                         if meta.path.is_ident("name") {
                             let value = meta.value()?;
                             let s: LitStr = value.parse()?;
@@ -60,7 +74,7 @@ pub fn derive_from_pdf_object(input: TokenStream) -> TokenStream {
                             default_expr = Some(s.value());
                         }
                         Ok(())
-                    });
+                    })?;
                 }
             }
         }
@@ -88,8 +102,11 @@ pub fn derive_from_pdf_object(input: TokenStream) -> TokenStream {
                         <#field_type as ferruginous_core::object::FromPdfObject>::from_pdf_object(val, arena)?
                     }
                 },
-                Err(_) => quote! {
-                    compile_error!(concat!("Invalid default expression: ", #def))
+                Err(_) => {
+                    return Err(syn::Error::new_spanned(
+                        f,
+                        format!("Invalid default expression: {}", def),
+                    ));
                 }
             }
         } else {
@@ -98,14 +115,14 @@ pub fn derive_from_pdf_object(input: TokenStream) -> TokenStream {
             }
         };
 
-        quote! {
+        field_parsers.push(quote! {
             let #field_name = {
                 let key = arena.name(#pdf_key);
                 let val = #version_check;
                 #parser
             };
-        }
-    });
+        });
+    }
 
     let field_names = fields.iter().map(|f| &f.ident);
     let iso_clause_str = iso_clause;
@@ -137,5 +154,5 @@ pub fn derive_from_pdf_object(input: TokenStream) -> TokenStream {
         }
     };
 
-    TokenStream::from(expanded)
+    Ok(expanded)
 }

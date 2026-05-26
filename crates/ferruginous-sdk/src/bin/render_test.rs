@@ -9,6 +9,7 @@ use kurbo::Affine;
 use std::fs;
 
 #[tokio::main]
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 async fn main() {
     env_logger::init();
     let args: Vec<String> = std::env::args().collect();
@@ -24,7 +25,7 @@ async fn main() {
     let data = fs::read(pdf_path).expect("Failed to read sample PDF");
     let doc = PdfDocument::open(bytes::Bytes::from(data)).unwrap();
     let (width, height) = doc.get_page_size(page_num - 1).unwrap();
-    println!("Page size: {}x{}", width, height);
+    println!("Page size: {width}x{height}");
 
     let mut backend = VelloBackend::new(VelloBackend::load_system_fonts());
     let transform = Affine::scale_non_uniform(1.0, -1.0) * Affine::translate((0.0, -height));
@@ -40,5 +41,5 @@ async fn main() {
     .await
     .expect("Failed to render to image");
 
-    println!("Rendered to {}", output_path);
+    println!("Rendered to {output_path}");
 }

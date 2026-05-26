@@ -1,3 +1,5 @@
+//! Example to inspect fonts in sample PDF documents.
+
 use ferruginous_sdk::PdfDocument;
 use std::path::Path;
 
@@ -16,19 +18,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let page = doc.get_page(i)?;
                 let arena = doc.inner().arena();
                 let resources_h = page.resources_handle();
-                if let Some(dict) = arena.get_dict(resources_h) {
-                    if let Some(fonts_obj) = dict.get(&arena.name("Font")) {
-                        if let ferruginous_core::Object::Dictionary(dh) = fonts_obj.resolve(arena) {
-                            if let Some(font_dict) = arena.get_dict(dh) {
+                if let Some(dict) = arena.get_dict(resources_h)
+                    && let Some(fonts_obj) = dict.get(&arena.name("Font"))
+                        && let ferruginous_core::Object::Dictionary(dh) = fonts_obj.resolve(arena)
+                            && let Some(font_dict) = arena.get_dict(dh) {
                                 for (name_h, _) in font_dict {
                                     if let Some(name) = arena.get_name(name_h) {
                                         println!("  Page {}: Font {}", i, name.as_str());
                                     }
                                 }
                             }
-                        }
-                    }
-                }
             }
         }
     }

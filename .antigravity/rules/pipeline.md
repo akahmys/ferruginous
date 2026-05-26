@@ -44,9 +44,12 @@ Ferruginous operates on the principles of **"Normalization-at-Load"** and **"Del
         *   **Precipitation (SFNT Wrapping)**: Encapsulate Naked CFF or Type 1 outlines into a minimal Virtual OpenType (SFNT) container. This unifies all font types for modern rendering backends (e.g., `skrifa`).
         *   **Metric & Mapping Injection**: Authoritatively inject `hmtx`, `OS/2`, and synthesized `cmap` tables into the reconstructed binary.
         *   **Metrics Branching**: Explicitly distinguish between `/Widths` (Simple fonts) and `/W` (CIDFonts). Standalone `CIDFontType0/2` resources MUST utilize `/W` parsing to prevent the 1000-unit default width regression.
+        *   **Explicit Rescue Fallback Warnings**: If a custom or unsupported font type fails signature checking and is forced to fallback to system fonts, the incident MUST trigger an explicit developer-facing warning (`log::warn!`) instead of a silent `log::debug!` tracer to maintain absolute diagnostic visibility for layout degradations.
     *   **Handle Stability (RR-15 Hardening)**:
         *   **Object-Centric Modeling**: Persistent structural components (Catalog, Page, StructTreeRoot) MUST utilize stable `Handle<Object>` references. Direct storage of volatile `DictHandle` is prohibited.
         *   **Late-bound Dictionary Resolution**: Resolve `Handle<Object>` to `DictHandle` at the point of access. This ensures reference validity even if the underlying memory is reallocated during a `ParallelRefinery` pass.
+    *   **Logical Structure Traversal Hardening (UA-2)**:
+        *   **Infallible Key Interning**: During DFS/visitor tree traversal of logical document structure (e.g., matching the kids key `K`), the engine MUST utilize infallible, dynamic name interning (`arena.name("K")`) rather than manual lookup unwraps (`get_name_by_str("K").unwrap()`) to eliminate panic vectors under empty or custom test arenas.
     *   **Semantic Mapping & Character Resolution Chain**:
         *   **Bridged CMap Synthesis**:
             *   **Non-CJK (Western) Logic**: Prioritize linguistic metadata over structural PDF claims.
@@ -82,23 +85,31 @@ Ferruginous operates on the principles of **"Normalization-at-Load"** and **"Del
     *   **State Preservation**: All IR commands (e.g., `SetFillColor`, `SetStrokeColor`) MUST be mapped back to their canonical PDF operators (`rg`, `RG`, `g`, `G`, `k`, `K`). Omissions here lead to "Default-to-Black" regressions.
     *   **Raw Operator Passthrough**: Operators captured as `RawOperator` (e.g., `n`, `v`, `y`) must be emitted exactly as captured to preserve path logic and drawing order.
     *   **Compliance Verification**: The resulting PDF must pass iterative structural auditing for the target standard (e.g., PDF/UA-2).
-*   **Linearization (Fast Web View) Integrity**:
-    *   **Strict Object Partitioning**:
-        *   **Section 2 (Primary)**: MUST contain the Catalog, the Primary Hint Stream, and all resources/ancestors required for Page 1.
-        *   **Section 6 (Overflow)**: Contains all other pages and non-shared resources.
+    *   **Linearization (Fast Web View) Hardening**:
+    *   **Strict Object Partitioning & Ordering**:
+        *   **Section 2 (Primary)**: MUST contain the Catalog (ID 2), the Primary Hint Stream (ID 3), and all resources/ancestors required for Page 1.
+        *   **Section 6 (Remaining Pages)**: Contains all other pages and their exclusive resources. Objects MUST be ordered by page number.
+        *   **Page Contiguity**: Each page's section in Section 6 MUST start with its Page dictionary. To ensure this, Page dictionaries MUST NOT be stored in Object Streams.
+    *   **Object Stream Packing Constraints**:
+        *   **Prohibited Objects**: The following MUST NOT be packed into Object Streams:
+            *   Any object in Section 2 (Primary Section).
+            *   Page dictionaries for all pages.
+            *   Any object that has a stream (e.g., Font streams, ICC profiles).
+        *   **Allowed Objects**: Non-stream shared resources in Section 8/9 (Others) are candidates for ObjStm packing.
     *   **Mandatory ID Mapping**:
         *   **Object ID 1**: Linearization Dictionary.
         *   **Object ID 2**: Document Catalog.
-        *   **Object ID 3**: Primary Hint Stream (must be the first object in Section 2).
+        *   **Object ID 3**: Primary Hint Stream.
         *   **Object ID 4**: First Page object.
-    *   **Hint Table Synchronization & Bit-Perfect Alignment**:
-        *   **Page Offset Table**: Must dynamically reflect the number of objects and physical byte offsets for every page.
-        *   **Shared Object Table**: Must account for resources shared across page boundaries to prevent redundant byte transfers.
-        *   **Bitstream Alignment**: Hint table bitstreams MUST be padded to byte boundaries at the end of each table to prevent bit-offset overflow in strict parsers (e.g., qpdf).
+    *   **XRef Stream Integrity (ISO 32000-2 Compatibility)**:
+        *   **Self-Reference**: The main XRef Stream MUST include a Type 1 entry for itself in its own table, pointing to its physical starting offset.
+        *   **Size Synchronization**: The `/Size` entry in both the first-page trailer and the main trailer MUST be identical and reflect the total object count inclusive of the XRef Stream object.
+    *   **Hint Table Standardization**:
+        *   **Header Completeness**: The Page Offset Hint Table header MUST define all 13 items.
+        *   **Structural Alignment**: Every page entry MUST include all fields defined by the header bit widths (e.g., shared object references count), even if they are zero-bit wide or contain zero values, to prevent bit-offset desynchronization in strict parsers like Acrobat.
     *   **Dual-Xref Linkage**:
-        *   The main trailer at the end of the file MUST contain a `/Prev` entry pointing to the first Xref table (Section 1).
-        *   The first Xref table (Section 1) MUST NOT contain a `/Prev` entry pointing back to the main table to avoid circular reference recursion.
-    *   **Object Stream Exclusion**: Section 2 objects MUST NOT be stored in object streams to ensure compatibility with basic linear parsers.
+        *   The first-page trailer (Section 3) MUST contain a `/Prev` entry pointing to the main cross-reference table (Section 11).
+        *   The main trailer (Section 11) MUST NOT contain a `/Prev` entry to avoid circular references.
 
 ---
 

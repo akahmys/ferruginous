@@ -17,6 +17,10 @@ pub struct PdfInfo {
     pub creator: Option<String>,
     #[pdf_key("Producer")]
     pub producer: Option<String>,
+    #[pdf_key("CreationDate")]
+    pub creation_date: Option<String>,
+    #[pdf_key("ModDate")]
+    pub mod_date: Option<String>,
 }
 
 /// Basic document metadata.
@@ -34,6 +38,10 @@ pub struct MetadataInfo {
     pub creator: Option<String>,
     /// The application that produced the PDF.
     pub producer: Option<String>,
+    /// The date and time the document was created.
+    pub creation_date: Option<String>,
+    /// The date and time the document was last modified.
+    pub mod_date: Option<String>,
 }
 
 pub fn extract_metadata(doc: &Document) -> MetadataInfo {
@@ -51,6 +59,8 @@ pub fn extract_metadata(doc: &Document) -> MetadataInfo {
         info.keywords = pdf_info.keywords;
         info.creator = pdf_info.creator;
         info.producer = pdf_info.producer;
+        info.creation_date = pdf_info.creation_date;
+        info.mod_date = pdf_info.mod_date;
     }
 
     // 2. Supplement with XMP Metadata from Catalog/Metadata stream
@@ -92,23 +102,20 @@ fn update_legacy_info(doc: &crate::Document, info: &MetadataInfo) -> crate::PdfR
         && let Some(Object::Dictionary(dh)) = arena.get_object(info_handle)
     {
         let mut dict = arena.get_dict(dh).unwrap_or_default();
-        if let Some(v) = &info.title {
-            dict.insert(arena.name("Title"), Object::String(v.as_bytes().to_vec().into()));
+        // Remove deprecated keys in PDF 2.0
+        dict.remove(&arena.name("Title"));
+        dict.remove(&arena.name("Author"));
+        dict.remove(&arena.name("Subject"));
+        dict.remove(&arena.name("Keywords"));
+        dict.remove(&arena.name("Creator"));
+        dict.remove(&arena.name("Producer"));
+
+        // Format dates as standard ASCII PDF string literals (D:...)
+        if let Some(v) = &info.creation_date {
+            dict.insert(arena.name("CreationDate"), Object::String(bytes::Bytes::from(v.clone())));
         }
-        if let Some(v) = &info.author {
-            dict.insert(arena.name("Author"), Object::String(v.as_bytes().to_vec().into()));
-        }
-        if let Some(v) = &info.subject {
-            dict.insert(arena.name("Subject"), Object::String(v.as_bytes().to_vec().into()));
-        }
-        if let Some(v) = &info.keywords {
-            dict.insert(arena.name("Keywords"), Object::String(v.as_bytes().to_vec().into()));
-        }
-        if let Some(v) = &info.creator {
-            dict.insert(arena.name("Creator"), Object::String(v.as_bytes().to_vec().into()));
-        }
-        if let Some(v) = &info.producer {
-            dict.insert(arena.name("Producer"), Object::String(v.as_bytes().to_vec().into()));
+        if let Some(v) = &info.mod_date {
+            dict.insert(arena.name("ModDate"), Object::String(bytes::Bytes::from(v.clone())));
         }
         arena.set_dict(dh, dict);
     }
@@ -124,7 +131,25 @@ fn update_xmp_metadata(doc: &crate::Document, info: &MetadataInfo) -> crate::Pdf
             .ok_or_else(|| crate::error::PdfError::Other("Invalid Catalog".into()))?;
 
         let refined_map = build_refined_metadata_map(info);
-        let xmp_str = crate::refine::metadata::info_to_xmp(&refined_map);
+        let raw_xmp = crate::refine::metadata::info_to_xmp(&refined_map);
+        
+        // Append 2KB space padding and replace the read-only flag end="r" with writable flag end="w"
+        let trimmed = raw_xmp.trim_end();
+        let suffix = "<?xpacket end=\"r\"?>";
+        let xmp_str = if trimmed.ends_with(suffix) {
+            let base = &trimmed[..trimmed.len() - suffix.len()];
+            let mut padded = String::with_capacity(base.len() + 2048 + 32);
+            padded.push_str(base);
+            // Append 20 lines of 100-character spaces as padding (2000 spaces)
+            for _ in 0..20 {
+                padded.push_str("                                                                                                    \n");
+            }
+            padded.push_str("<?xpacket end=\"w\"?>");
+            padded
+        } else {
+            raw_xmp
+        };
+
         let xmp_refined = crate::refine::metadata::create_metadata_stream(xmp_str);
 
         if let crate::refine::RefinedObject::Stream(dict, data) = xmp_refined {
@@ -164,9 +189,27 @@ fn build_refined_metadata_map(
             crate::refine::RefinedObject::Text(v.clone()),
         );
     }
+    if let Some(v) = &info.creator {
+        refined_map.insert(
+            crate::object::PdfName::new("Creator"),
+            crate::refine::RefinedObject::Text(v.clone()),
+        );
+    }
     if let Some(v) = &info.producer {
         refined_map.insert(
             crate::object::PdfName::new("Producer"),
+            crate::refine::RefinedObject::Text(v.clone()),
+        );
+    }
+    if let Some(v) = &info.creation_date {
+        refined_map.insert(
+            crate::object::PdfName::new("CreationDate"),
+            crate::refine::RefinedObject::Text(v.clone()),
+        );
+    }
+    if let Some(v) = &info.mod_date {
+        refined_map.insert(
+            crate::object::PdfName::new("ModDate"),
             crate::refine::RefinedObject::Text(v.clone()),
         );
     }
@@ -239,5 +282,17 @@ fn apply_xmp_metadata(doc: &roxmltree::Document, info: &mut MetadataInfo) {
         && let Some(text) = node.text()
     {
         info.producer = Some(text.to_string());
+    }
+    // XMP:CreateDate
+    if let Some(node) = doc.descendants().find(|n| n.has_tag_name((xmp_ns, "CreateDate")))
+        && let Some(text) = node.text()
+    {
+        info.creation_date = Some(text.to_string());
+    }
+    // XMP:ModifyDate
+    if let Some(node) = doc.descendants().find(|n| n.has_tag_name((xmp_ns, "ModifyDate")))
+        && let Some(text) = node.text()
+    {
+        info.mod_date = Some(text.to_string());
     }
 }

@@ -89,10 +89,10 @@ impl<'a> Page<'a> {
                 .filter_map(|o| o.as_reference())
                 .collect(),
             Some(Object::Reference(h)) => vec![h],
-            Some(Object::Stream(_, _)) => {
+            Some(stream_obj @ Object::Stream(_, _)) => {
                 // If it's a direct stream, we need to find its handle in the arena.
                 self.arena
-                    .find_object(&self.get_attribute("Contents").unwrap())
+                    .find_object(&stream_obj)
                     .into_iter()
                     .collect()
             }

@@ -97,7 +97,7 @@ impl Interpreter<'_> {
             if !is_sfnt {
                 let fallback_type =
                     res.fallback_type.unwrap_or(ferruginous_core::font::FallbackFontType::Default);
-                log::debug!(
+                log::warn!(
                     "[SDK] Font {backend_name} is not SFNT, using fallback data for type {fallback_type:?}"
                 );
                 data = self.doc.system_fonts.get(&fallback_type).cloned();

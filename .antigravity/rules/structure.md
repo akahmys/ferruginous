@@ -26,6 +26,11 @@ This document defines the canonical directory structure of Ferruginous. Adherenc
     *   `scripts/dev/`: Developer productivity and UI utilities.
     *   `scripts/test/`: Integration and functional testing.
 4.  **Documentation Locality**: All technical specifications and architectural history MUST reside within `docs/`. High-level vision documents (`README.md`, `ROADMAP.md`, `AGENTS.md`) are permitted at the root for maximum visibility.
+5.  **Scratch & Utility Binaries**:
+    *   Prototyping debug scripts in `src/bin/` are permitted for initial verification.
+    *   Once stabilized, their logic MUST be integrated into standard product CLI subcommands (e.g., `fepdf debug <cmd>`) or standardized as formal regression tests.
+    *   Redundant or obsolete prototyping files MUST be purged during milestone stabilization to prevent codebase rot.
+    *   Infrastructure binaries (e.g., `verify_render.rs` for visual regressions, `bypass_decrypt.rs` for emergency recovery) are exempt but MUST be clean of hardcoded values and compile warning-free under RR-15.
 
 ## 3. Maintenance
 

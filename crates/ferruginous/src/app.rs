@@ -100,8 +100,9 @@ impl FerruginousApp {
         self.page_layouts = layouts;
     }
 
-    fn update_vello(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        self.process_worker_messages(ctx);
+    fn update_vello(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+        self.process_worker_messages(&ctx);
 
         let Some(vello_renderer) = &mut self.vello_renderer else { return };
         let Some(rs) = frame.wgpu_render_state() else { return };
@@ -134,7 +135,7 @@ impl FerruginousApp {
             }
         }
 
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default().show_inside(ui, |ui| {
             if let Some(err) = &self.error {
                 ui.centered_and_justified(|ui| {
                     ui.colored_label(egui::Color32::RED, err);
@@ -155,20 +156,21 @@ impl FerruginousApp {
                         && let Some(p) =
                             rfd::FileDialog::new().add_filter("PDF", &["pdf"]).pick_file()
                     {
-                        self.open_file(p, ctx);
+                        self.open_file(p, &ctx);
                     }
                 });
             }
         });
     }
 
-    fn show_top_bar(&mut self, ctx: &egui::Context) {
-        egui::TopBottomPanel::top("top_bar").show(ctx, |ui| {
+    fn show_top_bar(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
+        egui::Panel::top("top_bar").show_inside(ui, |ui| {
             ui.horizontal(|ui| {
                 if ui.button("Open PDF").clicked()
                     && let Some(p) = rfd::FileDialog::new().add_filter("PDF", &["pdf"]).pick_file()
                 {
-                    self.open_file(p, ctx);
+                    self.open_file(p, &ctx);
                 }
                 ui.separator();
                 if self.total_pages > 0 {
@@ -189,8 +191,8 @@ impl FerruginousApp {
 }
 
 impl eframe::App for FerruginousApp {
-    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        self.show_top_bar(ctx);
-        self.update_vello(ctx, frame);
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        self.show_top_bar(ui);
+        self.update_vello(ui, frame);
     }
 }

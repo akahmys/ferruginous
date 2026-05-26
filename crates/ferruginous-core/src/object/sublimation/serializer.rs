@@ -73,14 +73,9 @@ fn serialize_command(cmd: &Command, buf: &mut Vec<u8>) {
             crate::graphics::Color::Cmyk(c, m, y, k) => {
                 buf.extend_from_slice(format!("{:.6} {:.6} {:.6} {:.6} k\n", c, m, y, k).as_bytes());
             }
-            crate::graphics::Color::Lab(_l, _a, _b) => {
-                // Lab requires cs/scn, but for simplicity in base IR we might need to handle it.
-                // However, usually Lab is handled via SetFillColorSpace.
-                // If it's a raw Lab value in the IR, we'll fallback to RGB for now but mark it.
-                let rgb = color.to_rgb();
-                if let crate::graphics::Color::Rgb(r, g, b) = rgb {
-                    buf.extend_from_slice(format!("{:.6} {:.6} {:.6} rg\n", r, g, b).as_bytes());
-                }
+            crate::graphics::Color::Lab(l, a, b) => {
+                // Keep High-Fidelity color space (do not downgrade to RGB)
+                buf.extend_from_slice(format!("{:.6} {:.6} {:.6} scn\n", l, a, b).as_bytes());
             }
         },
         Command::SetStrokeColor(color) => match color {
@@ -93,11 +88,9 @@ fn serialize_command(cmd: &Command, buf: &mut Vec<u8>) {
             crate::graphics::Color::Cmyk(c, m, y, k) => {
                 buf.extend_from_slice(format!("{:.6} {:.6} {:.6} {:.6} K\n", c, m, y, k).as_bytes());
             }
-            crate::graphics::Color::Lab(_l, _a, _b) => {
-                let rgb = color.to_rgb();
-                if let crate::graphics::Color::Rgb(r, g, b) = rgb {
-                    buf.extend_from_slice(format!("{:.6} {:.6} {:.6} RG\n", r, g, b).as_bytes());
-                }
+            crate::graphics::Color::Lab(l, a, b) => {
+                // Keep High-Fidelity color space (do not downgrade to RGB)
+                buf.extend_from_slice(format!("{:.6} {:.6} {:.6} SCN\n", l, a, b).as_bytes());
             }
         },
         Command::ShowText(bytes) => {
@@ -167,6 +160,7 @@ fn serialize_command(cmd: &Command, buf: &mut Vec<u8>) {
                 crate::graphics::PixelFormat::Rgb8 => "/RGB",
                 crate::graphics::PixelFormat::Rgba8 => "/RGB", // PDF doesn't support RGBA inline images directly easily, usually uses SMask
                 crate::graphics::PixelFormat::Cmyk8 => "/CMYK",
+                crate::graphics::PixelFormat::MonoMask | crate::graphics::PixelFormat::MonoMaskInverted => "/G",
             };
             buf.extend_from_slice(format!("  /CS {}\n", cs).as_bytes());
             buf.extend_from_slice(b"  /BPC 8\n");
@@ -181,6 +175,31 @@ fn serialize_command(cmd: &Command, buf: &mut Vec<u8>) {
             }
             buf.extend_from_slice(name.as_bytes());
             buf.push(b'\n');
+        }
+        Command::SetFillColorSpace(name) => {
+            buf.extend_from_slice(format!("/{} cs\n", name).as_bytes());
+        }
+        Command::SetStrokeColorSpace(name) => {
+            buf.extend_from_slice(format!("/{} CS\n", name).as_bytes());
+        }
+        Command::BeginMarkedContent { tag, properties } => {
+            if let Some(props) = properties {
+                buf.extend_from_slice(format!("/{} ", tag.0).as_bytes());
+                write_ir_object(props, buf);
+                buf.extend_from_slice(b" BDC\n");
+            } else {
+                buf.extend_from_slice(format!("/{} BMC\n", tag.0).as_bytes());
+            }
+        }
+        Command::EndMarkedContent => {
+            buf.extend_from_slice(b"EMC\n");
+        }
+        Command::Type3SetMetrics { wx, wy, bbox } => {
+            if let Some(r) = bbox {
+                buf.extend_from_slice(format!("{:.6} {:.6} {:.6} {:.6} {:.6} {:.6} d1\n", wx, wy, r.x0, r.y0, r.x1, r.y1).as_bytes());
+            } else {
+                buf.extend_from_slice(format!("{:.6} {:.6} d0\n", wx, wy).as_bytes());
+            }
         }
         _ => {} // Other commands like SetWritingMode are internal and don't map to PDF operators
     }

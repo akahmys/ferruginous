@@ -340,7 +340,7 @@ impl FontReconstructor {
                 Self::transcode_type1_to_cff(data, resource)
             }
             FontFormat::Unknown => {
-                log::debug!(
+                log::warn!(
                     "[RECONSTRUCT] Unrecognized font format, using raw data as placeholder SFNT"
                 );
                 Ok(ReconstructedFont {
@@ -469,17 +469,17 @@ impl FontReconstructor {
     }
 
     fn push_cff_dict_number(out: &mut Vec<u8>, val: i32) {
-        if val >= -107 && val <= 107 {
+        if (-107..=107).contains(&val) {
             out.push((val + 139) as u8);
-        } else if val >= 108 && val <= 1131 {
+        } else if (108..=1131).contains(&val) {
             let v = val - 108;
             out.push((v / 256 + 247) as u8);
             out.push((v % 256) as u8);
-        } else if val >= -1131 && val <= -108 {
+        } else if (-1131..=-108).contains(&val) {
             let v = -val - 108;
             out.push((v / 256 + 251) as u8);
             out.push((v % 256) as u8);
-        } else if val >= -32768 && val <= 32767 {
+        } else if (-32768..=32767).contains(&val) {
             out.push(28);
             out.extend_from_slice(&(val as i16).to_be_bytes());
         } else {
@@ -520,9 +520,9 @@ impl FontReconstructor {
                 let chunk = &full_text[current_dup..std::cmp::min(current_dup + 50, full_text.len())];
                 let chunk_str = String::from_utf8_lossy(chunk);
                 let parts: Vec<&str> = chunk_str.split_whitespace().collect();
-                if parts.len() >= 3 && parts[0] == "dup" {
-                    if let Ok(index) = parts[1].parse::<usize>() {
-                        if let Some((data, next_pos)) = Self::extract_rd_data(&full_text, current_dup + 4 + parts[1].len()) {
+                if parts.len() >= 3 && parts[0] == "dup"
+                    && let Ok(index) = parts[1].parse::<usize>()
+                        && let Some((data, next_pos)) = Self::extract_rd_data(&full_text, current_dup + 4 + parts[1].len()) {
                             if index >= subrs.len() {
                                 subrs.resize(index + 1, Vec::new());
                             }
@@ -530,8 +530,6 @@ impl FontReconstructor {
                             search_pos = next_pos;
                             continue;
                         }
-                    }
-                }
                 search_pos = current_dup + 3;
                 if search_pos >= full_text.len() || &full_text[search_pos..std::cmp::min(search_pos+3, full_text.len())] == b"def" {
                     break;
@@ -683,8 +681,8 @@ impl FontReconstructor {
                         stack.clear();
                     }
                     10 => { // callsubr
-                        if let Some(idx) = stack.pop() {
-                            if idx >= 0 && (idx as usize) < subrs.len() {
+                        if let Some(idx) = stack.pop()
+                            && idx >= 0 && (idx as usize) < subrs.len() {
                                 let subr_data = &subrs[idx as usize];
                                 let decrypted = Self::decrypt_charstring(subr_data, len_iv);
                                 Self::convert_recursive(
@@ -697,7 +695,6 @@ impl FontReconstructor {
                                     depth + 1,
                                 );
                             }
-                        }
                     }
                     11 => { // return
                         return;
@@ -775,7 +772,7 @@ impl FontReconstructor {
                                     }
                                     stack.clear();
                                 }
-                                0 | 1 | 2 => { // dotsection, vstem3, hstem3
+                                0..=2 => { // dotsection, vstem3, hstem3
                                     // Map to nothing or standard stems
                                     stack.clear();
                                 }
@@ -800,19 +797,19 @@ impl FontReconstructor {
     }
 
     fn push_t2_number(out: &mut Vec<u8>, val: i32) {
-        if val >= -107 && val <= 107 {
+        if (-107..=107).contains(&val) {
             out.push((val + 139) as u8);
-        } else if val >= 108 && val <= 1131 {
+        } else if (108..=1131).contains(&val) {
             let v = val - 108;
             out.push((v / 256 + 247) as u8);
             out.push((v % 256) as u8);
-        } else if val >= -1131 && val <= -108 {
+        } else if (-1131..=-108).contains(&val) {
             let v = -val - 108;
             out.push((v / 256 + 251) as u8);
             out.push((v % 256) as u8);
         } else {
             out.push(255);
-            out.extend_from_slice(&(val as i32).to_be_bytes());
+            out.extend_from_slice(&val.to_be_bytes());
         }
     }
 
@@ -1033,6 +1030,7 @@ impl FontReconstructor {
         })
     }
 
+    #[allow(clippy::collapsible_if)]
     fn synthesize_bridged_cmap(
         resource: &FontResource,
         raw_data: &[u8],
@@ -1069,7 +1067,7 @@ impl FontReconstructor {
         // This is essential for Type 1 fonts that lack ToUnicode but have embedded CFF data.
         let default_map;
         let it: Box<dyn Iterator<Item = (String, u32)>> = if resource.unified_map.is_empty() && !resource.is_cid_keyed {
-            default_map = (0..=255u32).map(|c| (String::from_utf8_lossy(&[c as u8]).to_string(), c as u32)).collect::<Vec<_>>();
+            default_map = (0..=255u32).map(|c| (String::from_utf8_lossy(&[c as u8]).to_string(), c)).collect::<Vec<_>>();
             Box::new(default_map.into_iter())
         } else {
             Box::new(resource.unified_map.iter().map(|(s, &c)| (s.clone(), c)))
@@ -1096,10 +1094,10 @@ impl FontReconstructor {
                     resolved_via = "Name-to-GID";
                 } else {
                     // Bridge /cXX, /cXXX, or /uniXXXX to SID-based lookup if direct name match fails
-                    let sid_candidate = if name.starts_with('c') {
-                        u32::from_str_radix(&name[1..], 10).ok()
-                    } else if name.starts_with("uni") {
-                        u32::from_str_radix(&name[3..], 16).ok()
+                    let sid_candidate = if let Some(stripped) = name.strip_prefix('c') {
+                        stripped.parse::<u32>().ok()
+                    } else if let Some(stripped) = name.strip_prefix("uni") {
+                        u32::from_str_radix(stripped, 16).ok()
                     } else {
                         None
                     };
@@ -1602,6 +1600,7 @@ impl FontReconstructor {
         }
     }
 
+    #[allow(clippy::collapsible_if)]
     fn derive_name_map(
         data: &[u8],
         sid_map: &BTreeMap<u32, u32>,

@@ -1,8 +1,10 @@
 pub mod conformance;
 pub mod page;
+pub mod strategy;
 pub mod structure;
 
 use self::page::Page;
+pub use self::strategy::{PageTreeStrategy, PageTreeView};
 use crate::error::PdfError;
 use crate::font::{FallbackFontType, FontResource};
 use crate::{FromPdfObject, Handle, Object, PdfArena, PdfName, PdfResult};
@@ -46,6 +48,7 @@ pub struct Document {
     arena: PdfArena,
     root: Handle<Object>,
     info: Option<Handle<Object>>,
+    pub pages: Vec<Handle<Object>>,
     pub ingestion_issues: Vec<String>,
     /// System font cache (shared across pages).
     pub system_fonts: Arc<BTreeMap<FallbackFontType, Arc<Vec<u8>>>>,
@@ -61,6 +64,7 @@ impl Document {
             arena,
             root,
             info,
+            pages: Vec::new(),
             ingestion_issues: Vec::new(),
             system_fonts: Arc::new(BTreeMap::new()),
             font_cache: Arc::new(RwLock::new(BTreeMap::new())),
@@ -79,6 +83,7 @@ impl Document {
             arena,
             root,
             info,
+            pages: Vec::new(),
             ingestion_issues: issues,
             system_fonts: Arc::new(BTreeMap::new()),
             font_cache: Arc::new(RwLock::new(BTreeMap::new())),
@@ -117,6 +122,8 @@ impl Document {
         doc.load_system_fonts();
         doc.normalize_resources();
         doc.normalize_page_tree();
+        doc.pages = doc.find_all_pages();
+        doc.rebuild_page_tree_in_arena()?;
         Ok(doc)
     }
 
@@ -257,28 +264,214 @@ impl Document {
 
     /// Returns the total number of pages in the document.
     pub fn page_count(&self) -> PdfResult<usize> {
-        let pages_root_h = self.get_pages_root()?;
-        let pages_root_dh = self.resolve_to_dict(pages_root_h)?;
-        let dict = self
-            .arena
-            .get_dict(pages_root_dh)
-            .ok_or_else(|| PdfError::Other("Invalid Pages root dictionary".into()))?;
-
-        let count_key = self
-            .arena
-            .get_name_by_str("Count")
-            .ok_or_else(|| PdfError::Other("Missing Count name".into()))?;
-
-        dict.get(&count_key)
-            .and_then(|o| o.resolve(&self.arena).as_integer())
-            .map(|i| usize::try_from(i).unwrap_or(0))
-            .ok_or_else(|| PdfError::Other("Invalid or missing /Count in page tree".into()))
+        Ok(self.pages.len())
     }
 
     /// Retrieves a specific page by its 0-based index.
     pub fn get_page(&self, index: usize) -> PdfResult<Page<'_>> {
-        let root_handle = self.get_pages_root()?;
-        self.find_page_recursive(root_handle, index, Vec::new())
+        let page_handle = self.pages.get(index)
+            .ok_or_else(|| PdfError::Other("Page index out of bounds".into()))?;
+        let parent_chain = self.get_parent_chain(*page_handle);
+        Ok(Page::new(&self.arena, *page_handle, parent_chain))
+    }
+
+    /// Page order swap operation (O(1) logical swap with immediate B-tree arena synchronization)
+    pub fn swap_pages(&mut self, a: usize, b: usize) -> PdfResult<()> {
+        if a >= self.pages.len() || b >= self.pages.len() {
+            return Err(PdfError::Other("Index out of bounds".into()));
+        }
+        self.pages.swap(a, b);
+        self.rebuild_page_tree_in_arena()?;
+        Ok(())
+    }
+
+    /// Page removal operation (O(1) logical removal with immediate B-tree arena synchronization)
+    pub fn remove_page(&mut self, index: usize) -> PdfResult<()> {
+        if index >= self.pages.len() {
+            return Err(PdfError::Other("Index out of bounds".into()));
+        }
+        self.pages.remove(index);
+        self.rebuild_page_tree_in_arena()?;
+        Ok(())
+    }
+
+    /// Dynamically rebuilds a clean, balanced B-Tree (max_kids = 50) in the arena.
+    pub fn rebuild_page_tree_in_arena(&mut self) -> PdfResult<()> {
+        let max_kids = 50;
+        let mut current_layer: Vec<Object> = self.pages.iter().map(|&h| Object::Reference(h)).collect();
+
+        if current_layer.is_empty() {
+            // Create a minimal empty Pages root
+            let pages_root_key = self.arena.name("Pages");
+            let type_key = self.arena.name("Type");
+            let count_key = self.arena.name("Count");
+            let kids_key = self.arena.name("Kids");
+
+            let mut root_dict = BTreeMap::new();
+            root_dict.insert(type_key, Object::Name(pages_root_key));
+            root_dict.insert(count_key, Object::Integer(0));
+            root_dict.insert(kids_key, Object::Array(self.arena.alloc_array(Vec::new())));
+
+            let root_dh = self.arena.alloc_dict(root_dict);
+            let root_h = self.arena.alloc_object(Object::Dictionary(root_dh));
+
+            // Update Catalog
+            let catalog_dh = self.resolve_to_dict(self.root)?;
+            let mut catalog_dict = self.arena.get_dict(catalog_dh).unwrap_or_default();
+            catalog_dict.insert(pages_root_key, Object::Reference(root_h));
+            self.arena.set_dict(catalog_dh, catalog_dict);
+            return Ok(());
+        }
+
+        // --- FIXED: Guarantee at least one /Type /Pages node is created at the first layer ---
+        let mut next_layer = Vec::new();
+        for chunk in current_layer.chunks(max_kids) {
+            let mut total_count = 0;
+            let mut kids_refs = Vec::new();
+
+            for kid_obj in chunk {
+                kids_refs.push(kid_obj.clone());
+                if let Some(kh) = kid_obj.as_reference() {
+                    let kid_dh = self.resolve_to_dict(kh)?;
+                    let kid_dict = self.arena.get_dict(kid_dh).unwrap_or_default();
+                    total_count += self.get_node_count(&kid_dict);
+                }
+            }
+
+            let pages_root_key = self.arena.name("Pages");
+            let type_key = self.arena.name("Type");
+            let count_key = self.arena.name("Count");
+            let kids_key = self.arena.name("Kids");
+
+            let mut pages_dict = BTreeMap::new();
+            pages_dict.insert(type_key, Object::Name(pages_root_key));
+            pages_dict.insert(count_key, Object::Integer(total_count as i64));
+            pages_dict.insert(kids_key, Object::Array(self.arena.alloc_array(kids_refs)));
+
+            let pages_dh = self.arena.alloc_dict(pages_dict);
+            let pages_h = self.arena.alloc_object(Object::Dictionary(pages_dh));
+
+            for kid_obj in chunk {
+                if let Some(kh) = kid_obj.as_reference() {
+                    let kid_dh = self.resolve_to_dict(kh)?;
+                    let mut kid_dict = self.arena.get_dict(kid_dh).unwrap_or_default();
+                    kid_dict.insert(self.arena.name("Parent"), Object::Reference(pages_h));
+                    self.arena.set_dict(kid_dh, kid_dict);
+                }
+            }
+
+            next_layer.push(Object::Reference(pages_h));
+        }
+        current_layer = next_layer;
+
+        // Loop until we have a single root node in the current layer (subsequent layers)
+        while current_layer.len() > 1 {
+            let mut next_layer = Vec::new();
+
+            for chunk in current_layer.chunks(max_kids) {
+                // Compute total Count of leaves under this chunk
+                let mut total_count = 0;
+                let mut kids_refs = Vec::new();
+
+                for kid_obj in chunk {
+                    kids_refs.push(kid_obj.clone());
+                    if let Some(kh) = kid_obj.as_reference() {
+                        let kid_dh = self.resolve_to_dict(kh)?;
+                        let kid_dict = self.arena.get_dict(kid_dh).unwrap_or_default();
+                        total_count += self.get_node_count(&kid_dict);
+                    }
+                }
+
+                // Create intermediate Pages dictionary
+                let pages_root_key = self.arena.name("Pages");
+                let type_key = self.arena.name("Type");
+                let count_key = self.arena.name("Count");
+                let kids_key = self.arena.name("Kids");
+
+                let mut pages_dict = BTreeMap::new();
+                pages_dict.insert(type_key, Object::Name(pages_root_key));
+                pages_dict.insert(count_key, Object::Integer(total_count as i64));
+                pages_dict.insert(kids_key, Object::Array(self.arena.alloc_array(kids_refs)));
+
+                let pages_dh = self.arena.alloc_dict(pages_dict);
+                let pages_h = self.arena.alloc_object(Object::Dictionary(pages_dh));
+
+                // Update /Parent for all kids in this chunk
+                for kid_obj in chunk {
+                    if let Some(kh) = kid_obj.as_reference() {
+                        let kid_dh = self.resolve_to_dict(kh)?;
+                        let mut kid_dict = self.arena.get_dict(kid_dh).unwrap_or_default();
+                        kid_dict.insert(self.arena.name("Parent"), Object::Reference(pages_h));
+                        self.arena.set_dict(kid_dh, kid_dict);
+                    }
+                }
+
+                next_layer.push(Object::Reference(pages_h));
+            }
+
+            current_layer = next_layer;
+        }
+
+        // Now current_layer has exactly one node (the root)
+        if let Some(root_obj) = current_layer.first()
+            && let Some(new_root_h) = root_obj.as_reference()
+        {
+            // Update Catalog /Pages reference
+            let catalog_dh = self.resolve_to_dict(self.root)?;
+            let mut catalog_dict = self.arena.get_dict(catalog_dh).unwrap_or_default();
+            catalog_dict.insert(self.arena.name("Pages"), Object::Reference(new_root_h));
+            self.arena.set_dict(catalog_dh, catalog_dict);
+
+            // Root node in the page tree MUST NOT have a Parent key
+            let root_dh = self.resolve_to_dict(new_root_h)?;
+            let mut root_dict = self.arena.get_dict(root_dh).unwrap_or_default();
+            root_dict.remove(&self.arena.name("Parent"));
+            self.arena.set_dict(root_dh, root_dict);
+        }
+
+        Ok(())
+    }
+
+    /// Returns an on-demand, read-only virtual structured view of the pages tree.
+    pub fn get_page_tree_view(&self, strategy: PageTreeStrategy) -> PageTreeView<'_> {
+        match strategy {
+            PageTreeStrategy::Flat => PageTreeView::Flat(&self.pages),
+            PageTreeStrategy::Balanced { max_kids } => {
+                Self::build_virtual_balanced_view(&self.pages, max_kids)
+            }
+        }
+    }
+
+    fn build_virtual_balanced_view(pages: &[Handle<Object>], max_kids: usize) -> PageTreeView<'_> {
+        if pages.len() <= max_kids {
+            PageTreeView::Flat(pages)
+        } else {
+            let mut nodes = Vec::new();
+            for chunk in pages.chunks(max_kids) {
+                nodes.push(Self::build_virtual_balanced_view(chunk, max_kids));
+            }
+            PageTreeView::Balanced { max_kids, nodes }
+        }
+    }
+
+    /// Retrieves the parent Pages node chain from a leaf Page node up to the root.
+    pub fn get_parent_chain(&self, page_h: Handle<Object>) -> Vec<Handle<Object>> {
+        let mut chain = Vec::new();
+        let mut current = page_h;
+        while let Ok(dict_h) = self.resolve_to_dict(current) {
+            let Some(dict) = self.arena.get_dict(dict_h) else { break };
+            let parent_key = self.arena.name("Parent");
+            if let Some(parent_obj) = dict.get(&parent_key)
+                && let Some(parent_h) = parent_obj.resolve(&self.arena).as_reference()
+            {
+                chain.push(parent_h);
+                current = parent_h;
+            } else {
+                break;
+            }
+        }
+        chain.reverse();
+        chain
     }
 
     /// Returns a list of all page object handles in the document.
@@ -327,7 +520,7 @@ impl Document {
                 .ok_or_else(|| PdfError::Other("Invalid Kids array".into()))?;
             if let Some(kids) = self.arena.get_array(ah) {
                 for kid in kids {
-                    if let Some(h) = kid.resolve(&self.arena).as_reference() {
+                    if let Some(h) = kid.as_reference() {
                         let _ = self.walk_pages_recursive(h, out, depth + 1);
                     }
                 }
@@ -343,81 +536,6 @@ impl Document {
             .ok_or_else(|| PdfError::Other("Missing document catalog".into()))?;
         let catalog = PdfCatalog::from_pdf_object(catalog_obj, &self.arena)?;
         Ok(catalog.pages)
-    }
-
-    fn find_page_recursive(
-        &self,
-        root_node: Handle<Object>,
-        mut target_index: usize,
-        _unused_path: Vec<Handle<Object>>,
-    ) -> PdfResult<Page<'_>> {
-        let mut current_node = root_node;
-        let mut path = Vec::new();
-
-        loop {
-            // Hardening: Recursion depth limit for page tree
-            if path.len() > 32 {
-                return Err(PdfError::Other("Page tree depth limit exceeded".into()));
-            }
-
-            let dict_h = self.resolve_to_dict(current_node)?;
-            let dict = self
-                .arena
-                .get_dict(dict_h)
-                .ok_or_else(|| PdfError::Other("Invalid node in page tree".into()))?;
-
-            let type_key = self.arena.name("Type");
-            let node_type = dict
-                .get(&type_key)
-                .and_then(|o| o.resolve(&self.arena).as_name())
-                .and_then(|h| self.arena.get_name(h));
-
-            if let Some(name) = node_type
-                && name.as_str() == "Page"
-            {
-                return Ok(Page::new(&self.arena, current_node, path));
-            }
-
-            // It's a Pages node (intermediate)
-            let kids_key = self.arena.name("Kids");
-            let kids_array_handle = dict
-                .get(&kids_key)
-                .and_then(|o| o.resolve(&self.arena).as_array())
-                .ok_or_else(|| PdfError::Other("Missing Kids in Pages node".into()))?;
-
-            let kids = self
-                .arena
-                .get_array(kids_array_handle)
-                .ok_or_else(|| PdfError::Other("Invalid kids array handle".into()))?;
-
-            path.push(current_node);
-            let mut found = false;
-
-            for kid_obj in kids {
-                let kid_handle = kid_obj.as_reference().ok_or_else(|| {
-                    PdfError::Other("Invalid kid object (not a reference)".into())
-                })?;
-
-                let kid_dict_h = self.resolve_to_dict(kid_handle)?;
-                let kid_dict = self
-                    .arena
-                    .get_dict(kid_dict_h)
-                    .ok_or_else(|| PdfError::Other("Invalid kid dictionary".into()))?;
-
-                let count = self.get_node_count(&kid_dict);
-                if target_index < count {
-                    current_node = kid_handle;
-                    found = true;
-                    break;
-                } else {
-                    target_index -= count;
-                }
-            }
-
-            if !found {
-                return Err(PdfError::Other("Page index out of bounds".into()));
-            }
-        }
     }
 
     fn get_node_count(&self, dict: &BTreeMap<Handle<PdfName>, Object>) -> usize {
@@ -509,63 +627,20 @@ impl Document {
         self.resolve_missing_font_data();
     }
 
-    /// Normalizes the page tree by flattening it into a single-level structure (Phase 4).
-    /// Inherited attributes are pushed down to leaf Page nodes.
+    /// Normalizes the page tree by pushing down inherited attributes (Phase 4).
     pub fn normalize_page_tree(&mut self) {
-        let arena = self.arena.clone();
-        let mut pages = Vec::new();
-        
-        if let Ok(root_h) = self.get_pages_root() {
-            let mut inherited = BTreeMap::new();
-            let _ = self.flatten_pages_recursive(root_h, &mut pages, &mut inherited, 0);
-        }
+        let root_h = match self.get_pages_root() {
+            Ok(h) => h,
+            Err(_) => return,
+        };
 
-        if pages.is_empty() {
-            return;
-        }
-
-        let count = pages.len();
-        let page_handles: Vec<Object> = pages.iter().map(|&h| Object::Reference(h)).collect();
-
-        // 2. Create new flat Pages root
-        let pages_root_key = arena.name("Pages");
-        let type_key = arena.name("Type");
-        let kids_key = arena.name("Kids");
-        let count_key = arena.name("Count");
-
-        let mut pages_root_dict = BTreeMap::new();
-        pages_root_dict.insert(type_key, Object::Name(pages_root_key));
-        pages_root_dict.insert(count_key, Object::Integer(count as i64));
-        pages_root_dict.insert(kids_key, Object::Array(arena.alloc_array(page_handles.clone())));
-
-        let pages_root_dh = arena.alloc_dict(pages_root_dict);
-        let pages_root_h = arena.alloc_object(Object::Dictionary(pages_root_dh));
-
-        // 3. Update Parent for all pages
-        for page_ref in &page_handles {
-            if let Object::Reference(ph) = page_ref
-                && let Some(Object::Dictionary(dh)) = arena.get_object(*ph)
-            {
-                let mut dict = arena.get_dict(dh).unwrap_or_default();
-                dict.insert(arena.name("Parent"), Object::Reference(pages_root_h));
-                arena.set_dict(dh, dict);
-            }
-        }
-
-        // 4. Update Catalog
-        if let Some(cat_obj_h) = self.catalog_handle()
-            && let Ok(cat_dh) = self.resolve_to_dict(cat_obj_h)
-        {
-            let mut cat_dict = arena.get_dict(cat_dh).unwrap_or_default();
-            cat_dict.insert(pages_root_key, Object::Reference(pages_root_h));
-            arena.set_dict(cat_dh, cat_dict);
-        }
+        let mut inherited = BTreeMap::new();
+        let _ = self.push_down_attributes_recursive(root_h, &mut inherited, 0);
     }
 
-    fn flatten_pages_recursive(
+    fn push_down_attributes_recursive(
         &self,
         node_h: Handle<Object>,
-        out: &mut Vec<Handle<Object>>,
         inherited: &mut BTreeMap<Handle<PdfName>, Object>,
         depth: usize,
     ) -> PdfResult<()> {
@@ -574,10 +649,14 @@ impl Document {
         }
 
         let dict_h = self.resolve_to_dict(node_h)?;
-        let dict = self.arena.get_dict(dict_h).ok_or_else(|| PdfError::Other("Invalid node".into()))?;
+        let dict = self
+            .arena
+            .get_dict(dict_h)
+            .ok_or_else(|| PdfError::Other("Invalid node".into()))?;
 
         let type_key = self.arena.name("Type");
-        let node_type = dict.get(&type_key)
+        let node_type = dict
+            .get(&type_key)
             .and_then(|o| o.resolve(&self.arena).as_name())
             .and_then(|h| self.arena.get_name(h));
 
@@ -591,37 +670,54 @@ impl Document {
             }
         }
 
-        if let Some(name) = node_type && name.as_str() == "Page" {
-            // It's a leaf. Ensure all inherited attributes are present.
+        if let Some(name) = &node_type
+            && name.as_str() == "Page"
+        {
             let mut leaf_dict = dict.clone();
-            let mut changed = false;
             for (key, val) in local_inherited {
-                if !leaf_dict.contains_key(&key) {
-                    leaf_dict.insert(key, val);
-                    changed = true;
+                leaf_dict.entry(key).or_insert(val);
+            }
+
+            // Ensure CropBox and Rotate are explicitly set for Acrobat standardization
+            let mb_key = self.arena.name("MediaBox");
+            let cb_key = self.arena.name("CropBox");
+            let rot_key = self.arena.name("Rotate");
+
+            if !leaf_dict.contains_key(&cb_key) {
+                if let Some(mb_val) = leaf_dict.get(&mb_key) {
+                    leaf_dict.insert(cb_key, mb_val.clone());
                 }
             }
-            if changed {
-                self.arena.set_dict(dict_h, leaf_dict);
+            if !leaf_dict.contains_key(&rot_key) {
+                leaf_dict.insert(rot_key, Object::Integer(0));
             }
-            out.push(node_h);
+
+            self.arena.set_dict(dict_h, leaf_dict);
             return Ok(());
         }
 
-        // It's a Pages node
-        let kids_key = self.arena.name("Kids");
-        if let Some(kids_obj) = dict.get(&kids_key) {
-            let ah = kids_obj.resolve(&self.arena).as_array().ok_or_else(|| PdfError::Other("Invalid Kids".into()))?;
-            if let Some(kids) = self.arena.get_array(ah) {
-                for kid in kids {
-                    if let Some(kh) = kid.resolve(&self.arena).as_reference() {
-                        self.flatten_pages_recursive(kh, out, &mut local_inherited, depth + 1)?;
-                    }
+        if let Some(name) = &node_type
+            && name.as_str() == "Pages"
+        {
+            let kids_key = self.arena.name("Kids");
+            let kids_obj = dict.get(&kids_key).ok_or_else(|| PdfError::Other("Missing Kids in Pages node".into()))?;
+            let ah = kids_obj.resolve(&self.arena).as_array().ok_or_else(|| PdfError::Other("Invalid Kids array".into()))?;
+            let kids = self.arena.get_array(ah).ok_or_else(|| PdfError::Other("Invalid kids array handle".into()))?;
+            for kid in kids {
+                if let Some(kh) = kid.as_reference() {
+                    self.push_down_attributes_recursive(kh, &mut local_inherited, depth + 1)?;
                 }
             }
+
+            let mut pages_dict = dict.clone();
+            for attr in ["Resources", "MediaBox", "CropBox", "Rotate"] {
+                pages_dict.remove(&self.arena.name(attr));
+            }
+            self.arena.set_dict(dict_h, pages_dict);
+            return Ok(());
         }
 
-        Ok(())
+        Err(PdfError::Other("Invalid node type in page tree".into()))
     }
 
     fn resolve_missing_font_data(&mut self) {

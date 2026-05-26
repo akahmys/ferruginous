@@ -37,6 +37,7 @@ impl From<IngestionArgs> for ferruginous_core::ingest::IngestionOptions {
                 ferruginous_core::ingest::ColorPolicy::Strict
             },
             force_fallback: args.force_fallback,
+            password: None,
         }
     }
 }
@@ -103,6 +104,7 @@ impl From<OptimizationArgs> for ferruginous_sdk::SaveOptions {
                 "utf8" => ferruginous_sdk::StringEncoding::Utf8,
                 _ => ferruginous_sdk::StringEncoding::Utf16BE,
             },
+            creation_date: None,
             dry_run: args.dry_run,
         }
     }
@@ -725,7 +727,7 @@ fn handle_debug_dump(
                 println!("Type: Dictionary");
                 for (k, v) in dict.iter() {
                     let name = arena
-                        .get_name(k.clone())
+                        .get_name(*k)
                         .map(|n| n.as_str().to_string())
                         .unwrap_or_else(|| format!("Unknown_{:?}", k));
                     let val_str = match v {
@@ -746,7 +748,7 @@ fn handle_debug_dump(
                 println!("Type: Stream");
                 for (k, v) in dict.iter() {
                     let name = arena
-                        .get_name(k.clone())
+                        .get_name(*k)
                         .map(|n| n.as_str().to_string())
                         .unwrap_or_else(|| format!("Unknown_{:?}", k));
                     println!("  /{} -> {:?}", name, v);
@@ -1235,10 +1237,10 @@ fn handle_debug_trace_glyph(
 
     for summary in font_summaries {
         let name = summary.name.as_str();
-        if let Some(ref filter) = font_filter {
-            if !name.contains(filter) {
-                continue;
-            }
+        if let Some(ref filter) = font_filter
+            && !name.contains(filter)
+        {
+            continue;
         }
 
         let font = match doc.inner().get_font(summary.handle) {

@@ -23,7 +23,7 @@ pub fn normalize_font(
     if let Some(resource) = resource
         && resource.subtype.as_str() == "Type0"
     {
-        normalize_type0_font(&mut dict, Some(resource));
+        normalize_type0_font(&mut dict, resource);
     }
 
     if let Some(st_str) = subtype {
@@ -39,9 +39,8 @@ pub fn normalize_font(
 
 fn normalize_type0_font(
     dict: &mut BTreeMap<PdfName, RefinedObject>,
-    resource: Option<&FontResource>,
+    resource: &FontResource,
 ) {
-    let resource = resource.unwrap();
     let encoding_name = if resource.wmode == 1 { "Identity-V" } else { "Identity-H" };
     dict.insert(PdfName::new("Encoding"), RefinedObject::Name(PdfName::new(encoding_name)));
 

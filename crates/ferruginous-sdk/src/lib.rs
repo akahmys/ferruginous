@@ -36,6 +36,8 @@ pub use interpreter::Interpreter;
 pub mod remediation;
 /// The internal structure module for UA-2 logical tree handling.
 pub mod structure;
+/// The internal obj_stm module for high-density object packing.
+pub mod obj_stm;
 /// The internal writer module for generating PDF files.
 pub mod writer;
 
@@ -75,6 +77,8 @@ pub struct SaveOptions {
     pub author: Option<String>,
     /// Set copyright notice in XMP.
     pub copyright: Option<String>,
+    /// Override creation date.
+    pub creation_date: Option<String>,
     /// PDF permission flags (e.g., "print,copy").
     pub permissions: Option<String>,
     /// Preferred text string encoding for non-ASCII characters.
@@ -828,16 +832,17 @@ impl PdfDocument {
 
         let resolved_contents = match contents_obj {
             Object::Reference(h) => {
-                log::debug!("[SDK] Resolving Contents reference {:?}", h);
+                log::debug!("[SDK] Resolving Contents reference {h:?}");
                 self.inner.resolve(&h)?
             }
             _ => contents_obj,
         };
-        log::debug!("[SDK] Resolved contents type: {:?}", match &resolved_contents {
+        let resolved_type_str = match &resolved_contents {
             Object::Stream(_, _) => "Stream",
             Object::Array(_) => "Array",
             _ => "Other",
-        });
+        };
+        log::debug!("[SDK] Resolved contents type: {resolved_type_str}");
 
         match resolved_contents {
             Object::Stream(dh, ref data) => {

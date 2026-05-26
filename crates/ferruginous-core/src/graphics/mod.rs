@@ -135,6 +135,8 @@ pub enum PixelFormat {
     Rgb8,
     Cmyk8,
     Rgba8,
+    MonoMask,         // 1-bit stencil mask (0 means fill color, 1 means transparent)
+    MonoMaskInverted, // 1-bit stencil mask inverted (1 means fill color, 0 means transparent)
 }
 
 /// Standard PDF 2D Transformation Matrix (ISO 32000-2 Clause 8.3.3)

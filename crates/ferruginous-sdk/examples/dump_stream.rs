@@ -1,10 +1,10 @@
-use ferruginous_core::{Object, PdfName};
+#![allow(missing_docs)]
+use ferruginous_core::Object;
 use ferruginous_sdk::PdfDocument;
-use std::path::Path;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
-    let path_str = args.get(1).map(|s| s.as_str()).unwrap_or("samples/bokutokitan.pdf");
+    let path_str = args.get(1).map_or("samples/bokutokitan.pdf", |s| s.as_str());
 
     let data = std::fs::read(path_str)?;
     let doc = PdfDocument::open(data.into())?;
@@ -12,21 +12,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let page = doc.get_page(0)?;
     println!("Page 0 media box: {:?}", page.media_box());
     let rh = page.resources_handle();
-    println!("Page 0 resources: {:?}", rh);
+    println!("Page 0 resources: {rh:?}");
 
     let arena = doc.inner().arena();
     if let Some(res_dict) = arena.get_dict(rh) {
         for (k, v) in res_dict {
             if let Some(name) = arena.get_name(k) {
                 println!("Resource {}: {:?}", name.as_str(), v);
-                if name.as_str() == "XObject" {
-                    if let Some(xh) = v.resolve(arena).as_dict_handle() {
-                        if let Some(x_dict) = arena.get_dict(xh) {
+                if name.as_str() == "XObject"
+                    && let Some(xh) = v.resolve(arena).as_dict_handle()
+                        && let Some(x_dict) = arena.get_dict(xh) {
                             for (xk, xv) in x_dict {
                                 if let Some(xname) = arena.get_name(xk) {
                                     println!("  XObject {}: {:?}", xname.as_str(), xv);
                                     if xname.as_str() == "Im1" {
-                                        println!("    Im1 Entry in Resources: {:?}", xv);
+                                        println!("    Im1 Entry in Resources: {xv:?}");
                                         let resolved = xv.resolve(arena);
                                         if let Object::Stream(sh, data) = resolved {
                                             if let Some(s_dict) = arena.get_dict(sh) {
@@ -45,8 +45,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                             }
                         }
-                    }
-                }
             }
         }
     }

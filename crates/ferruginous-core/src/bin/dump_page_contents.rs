@@ -1,6 +1,7 @@
 use ferruginous_core::document::Document;
 use ferruginous_core::object::sublimation::Command;
 
+#[allow(clippy::collapsible_if, clippy::for_kv_map)]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     eprintln!("Dumping page contents...");
     let args: Vec<String> = std::env::args().collect();

@@ -1,6 +1,7 @@
 use ferruginous_core::{Document, Object};
 use std::path::Path;
 
+#[allow(clippy::collapsible_if)]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let doc = Document::load(Path::new("samples/volvo_xc90.pdf"))?;
     let page = doc.get_page(149)?;

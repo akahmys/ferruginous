@@ -34,3 +34,7 @@ Standard procedures for rapid troubleshooting and mathematical verification of r
 - **Mutool Audit**: Use `mutool info` and `mutool clean` to verify page tree integrity and resource reachability. A reported page count of 0 or missing fonts indicates a structural partitioning failure in Section 2 or Section 6.
 - **QPDF Compliance**: Use `qpdf --check` for authoritative linearization and Xref/Trailer linkage validation. "File is linearized" must be the result.
 - **Bitstream Verification**: Pay close attention to "overflow reading bit stream" warnings in `qpdf`; these indicate bit-level alignment errors in hint tables that can cause Fast Web View failures.
+
+## 9. Logging & Diagnostic Output Rules
+- **No Residual Debug Prints**: Never leave raw `println!` or `eprintln!` statement residues in production library or SDK code.
+- **Log Macro Discipline**: Always use the standard `log::debug!` (or `log::info!`, `log::warn!`, `log::error!`) macros for debugging and state output. This ensures that internal execution flows and diagnostic data do not pollute the user's stderr stream in production environments, while remaining easily configurable via standard log levels (e.g., `env_logger`).

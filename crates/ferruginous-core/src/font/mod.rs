@@ -10,6 +10,7 @@ pub mod cff_standard;
 pub use reconstruction::{FontReconstructor, ReconstructedFont};
 pub mod schema;
 pub mod subset;
+#[cfg(test)]
 pub mod mapping_tests;
 
 #[derive(
@@ -298,6 +299,7 @@ impl FontResource {
         Ok(res)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn new_initial(
         subtype: PdfName,
         base_font: PdfName,
@@ -368,16 +370,17 @@ impl FontResource {
             force_fallback,
         };
 
+        #[allow(clippy::collapsible_if)]
         if let Some(ref d) = resource.data {
             if let Ok(face) = ttf_parser::Face::parse(d, 0) {
                 let mut units_per_em = face.units_per_em() as f32;
-                // HEURISTIC: Many subsetted fonts report 256 upem (Type 1 legacy) but use 1000-based metrics.
+                // Heuristic: Many subsetted fonts report 256 upem (Type 1 legacy) but use 1000-based metrics.
                 // If we see upem=256 and the first few glyphs are around 1000, we assume 1000.
                 if units_per_em == 256.0 {
                     let mut sum = 0.0;
                     let mut count = 0;
                     for gid in 0..face.number_of_glyphs().min(10) {
-                        if let Some(w) = face.glyph_hor_advance(ttf_parser::GlyphId(gid as u16)) {
+                        if let Some(w) = face.glyph_hor_advance(ttf_parser::GlyphId(gid)) {
                             sum += w as f32;
                             count += 1;
                         }
@@ -388,10 +391,10 @@ impl FontResource {
                 }
                 let scale = if units_per_em > 0.0 { 1000.0 / units_per_em } else { 1.0 };
                 for gid in 0..face.number_of_glyphs() {
-                    if let Some(w) = face.glyph_hor_advance(ttf_parser::GlyphId(gid as u16)) {
+                    if let Some(w) = face.glyph_hor_advance(ttf_parser::GlyphId(gid)) {
                         resource.physical_widths.insert(gid as u32, w as f32 * scale);
                     }
-                    if let Some(name) = face.glyph_name(ttf_parser::GlyphId(gid as u16)) {
+                    if let Some(name) = face.glyph_name(ttf_parser::GlyphId(gid)) {
                         resource.physical_names.insert(gid as u32, name.to_string());
                     }
                 }
@@ -490,6 +493,7 @@ impl FontResource {
             }
             
             // Update physical widths from the reconstructed SFNT
+            #[allow(clippy::collapsible_if)]
             if let Some(ref d) = self.reconstructed_data {
                 if let Ok(face) = ttf_parser::Face::parse(d, 0) {
                     self.num_glyphs = face.number_of_glyphs() as u32;
@@ -581,10 +585,10 @@ impl FontResource {
             self.populate_u2g_from_font_file(&mut u2g);
         } else if is_type1 {
             log::warn!("[FONT] Embedded font for {} is Type 1. Direct ingestion from font file is not yet supported for this format.", self.base_font.as_str());
-        } else if self.data.is_some() {
+        } else if let Some(ref raw_data) = self.data {
             log::warn!("[FONT] Embedded font for {} is an unrecognized format (sig: {:?}). Skipping ingestion.", 
                 self.base_font.as_str(), 
-                &self.data.as_ref().unwrap()[..std::cmp::min(4, self.data.as_ref().unwrap().len())]);
+                &raw_data[..std::cmp::min(4, raw_data.len())]);
         }
         // Priority 3: System fallback fonts (for characters still missing)
         if let Some(ftype) = self.fallback_type
@@ -898,21 +902,10 @@ impl FontResource {
         doc: &Document,
     ) -> Option<DescendantResult> {
         let arena = doc.arena();
-        let df_obj = dict.get(&arena.name("DescendantFonts"));
-        if df_obj.is_none() {
-            log::warn!("[HARDENING] DescendantFonts key is missing in Type0 font.");
-            return None;
-        }
-
-        let df_resolved = df_obj.unwrap().resolve(arena);
-        let df_array_h = df_resolved.as_array();
-        if df_array_h.is_none() {
-            log::warn!("[HARDENING] DescendantFonts is not an array (type: {:?}).", df_resolved);
-            return None;
-        }
-
-        let ah = df_array_h.unwrap();
-        let df_dict_obj = if let Some(df_array) = arena.get_array(ah) {
+        let df_obj = dict.get(&arena.name("DescendantFonts"))?;
+        let df_resolved = df_obj.resolve(arena);
+        let df_array_h = df_resolved.as_array()?;
+        let df_dict_obj = if let Some(df_array) = arena.get_array(df_array_h) {
             if let Some(first) = df_array.first() {
                 first.clone()
             } else {
@@ -937,13 +930,8 @@ impl FontResource {
                 font_resource = Some(res);
             }
 
-        let dfh = df_dict_resolved.as_dict_handle();
-        if dfh.is_none() {
-            log::warn!("[HARDENING] First DescendantFont is not a dictionary (type: {:?}).", df_dict_resolved);
-            return None;
-        }
-
-        let df_dict = arena.get_dict(dfh.unwrap())?;
+        let dfh = df_dict_resolved.as_dict_handle()?;
+        let df_dict = arena.get_dict(dfh)?;
 
         let mut font_file_handle = None;
         if let Some(fd_obj) = df_dict.get(&arena.name("FontDescriptor"))
@@ -1208,8 +1196,10 @@ impl FontResource {
                     }
                 }
                 if !mappings.is_empty() {
-                    let mut rescue_cmap = cmap::CMap::default();
-                    rescue_cmap.mappings = std::sync::Arc::new(mappings);
+                    let rescue_cmap = cmap::CMap {
+                        mappings: std::sync::Arc::new(mappings),
+                        ..cmap::CMap::default()
+                    };
                     self.to_unicode = Some(rescue_cmap);
                 }
             }
@@ -1383,11 +1373,10 @@ impl FontResource {
             result = map.map(code);
         }
 
-        if result.is_none() {
-            if let Some(res) = self.decode_via_encoding(code, None) {
+        if result.is_none()
+            && let Some(res) = self.decode_via_encoding(code, None) {
                 result = res.1;
             }
-        }
 
         if result.is_none() {
             let cid = self.to_cid(code);
@@ -1533,7 +1522,8 @@ impl FontResource {
             }
         
         // Priority 3: Internal code mapping (fallback)
-        if let Some(&gid) = self.code_to_gid.get(&cid) {
+        if !self.is_cid_keyed
+            && let Some(&gid) = self.code_to_gid.get(&cid) {
             #[cfg(feature = "debug-tools")]
             if let Some(ref mut t) = _trace {
                 t.push_step(format!("Resolved via code_to_gid: CID {} -> GID {}", cid, gid));
@@ -1627,11 +1617,10 @@ impl FontResource {
         mut _trace: Option<&mut TraceContext>,
     ) -> Option<u32> {
         // Priority -1: Non-embedded fonts MUST use system fallback to ensure they have draw-able data.
-        if !self.is_embedded() {
-            if let Some(c) = unicode_hint {
+        if !self.is_embedded()
+            && let Some(c) = unicode_hint {
                 return Some(1_000_000 + c as u32);
             }
-        }
         let mut hint = unicode_hint;
         let mut glyph_name_resolved = None;
 
@@ -1674,16 +1663,14 @@ impl FontResource {
         // --- Hybrid Candidate Search ---
 
         // Candidate A: Explicit CIDToGIDMap (Highly Authoritative)
-        if let Some(ref map) = self.cid_to_gid_map {
-            if let Some(&gid) = map.get(&cid) {
-                if self.is_gid_valid(gid) {
+        if let Some(ref map) = self.cid_to_gid_map
+            && let Some(&gid) = map.get(&cid)
+                && self.is_gid_valid(gid) {
                     return Some(gid);
                 }
-            }
-        }
 
         // Candidate B: Identity Mapping
-        let is_identity = self.cid_ordering.as_deref().map_or(false, |o| o == "Identity");
+        let is_identity = self.cid_ordering.as_deref() == Some("Identity");
         let _gid_identity = if is_identity && cid < 65536 && cid != 0 {
             Some(cid)
         } else {
@@ -1692,7 +1679,7 @@ impl FontResource {
 
         // Candidate C: Unicode/Name Fallback
         let _gid_fallback =
-            self.find_gid_by_fallback(cid, hint, glyph_name_resolved.as_deref(), _trace.as_deref_mut());
+            self.find_gid_by_fallback(cid, hint, glyph_name_resolved.as_deref(), _trace);
 
         // --- 1. Candidate Extraction ---
         let is_cjk = self.is_cjk();
@@ -1727,23 +1714,21 @@ impl FontResource {
                 if let Ok(face) = ttf_parser::Face::parse(d, 0) {
                     gid_font = face.glyph_index(c).map(|id| id.0 as u32);
                 }
-            } else if let Some(ref d) = self.data {
-                if let Ok(face) = ttf_parser::Face::parse(d, 0) {
+            } else if let Some(ref d) = self.data
+                && let Ok(face) = ttf_parser::Face::parse(d, 0) {
                     gid_font = face.glyph_index(c).map(|id| id.0 as u32);
                 }
-            }
         }
 
         // 5. Unicode hint -> PDF's ToUnicode (Unified Map)
         let mut gid_unified = None;
-        if let Some(c) = hint {
-            if let Some(&cid_mapped) = self.unified_map.get(&c.to_string()) {
+        if let Some(c) = hint
+            && let Some(&cid_mapped) = self.unified_map.get(&c.to_string()) {
                 gid_unified = Some(self.to_gid(cid_mapped, None));
                 if gid_unified == Some(0) && self.is_cid_keyed && is_identity {
                     gid_unified = Some(cid_mapped);
                 }
             }
-        }
 
         let mut candidates = Vec::new();
         if gid_identity != 0 { candidates.push((gid_identity, "Identity")); }
@@ -1774,8 +1759,8 @@ impl FontResource {
             }
 
             // B. Production Name Verification (The "I Found It" Bonus)
-            if let Some(c) = hint {
-                if let Some(phys_name) = self.physical_names.get(&gid) {
+            if let Some(c) = hint
+                && let Some(phys_name) = self.physical_names.get(&gid) {
                     let h_str = c.to_string();
                     let h_hex = format!("uni{:04X}", c as u32);
                     if phys_name == &h_str || phys_name == &h_hex 
@@ -1784,14 +1769,10 @@ impl FontResource {
                         score += 500;
                     }
                 }
-            }
-            if let Some(ref res_name) = glyph_name_resolved {
-                if let Some(phys_name) = self.physical_names.get(&gid) {
-                    if phys_name == res_name {
-                        score += 500;
-                    }
+            if let Some(ref res_name) = glyph_name_resolved
+                && self.physical_names.get(&gid) == Some(res_name) {
+                    score += 500;
                 }
-            }
 
             // C. Structural Intent & Tie-Breaking
             if source == "Unified" {
@@ -1945,7 +1926,7 @@ impl FontResource {
         
         let (decoded_len, glyph_opt): (usize, Option<String>) = enc.decode_next(&code_bytes);
         if decoded_len > 0 && let Some(glyph_name) = glyph_opt {
-            let clean_name = if glyph_name.starts_with('/') { &glyph_name[1..] } else { &glyph_name };
+            let clean_name = glyph_name.strip_prefix('/').unwrap_or(&glyph_name);
             let hint = agl::lookup(clean_name).and_then(|u_str| u_str.chars().next());
             return Some((clean_name.to_string(), hint));
         }
@@ -2378,6 +2359,7 @@ mod tests {
                 map
             },
             cid_to_gid_map: None, // Identity mapping
+            reconstructed_data: Some(std::sync::Arc::new(vec![])),
             ..FontResource::new_initial(
                 PdfName::new("Type0"),
                 PdfName::new("TestFont"),

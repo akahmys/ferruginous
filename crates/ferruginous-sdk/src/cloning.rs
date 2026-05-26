@@ -123,7 +123,7 @@ impl<'a> ObjectCloner<'a> {
             let target_obj = self.target.get_object(target_h).unwrap_or(Object::Null);
             if matches!(target_obj, Object::Null) && !matches!(source_obj, Object::Null) {
                 return Err(ferruginous_core::PdfError::Other(
-                    format!("Cloning failed: Object {:?} remains Null in target", target_h).into()
+                    format!("Cloning failed: Object {target_h:?} remains Null in target").into()
                 ));
             }
         }

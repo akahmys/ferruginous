@@ -28,6 +28,7 @@ pub struct IngestionOptions {
     pub sublime_metadata: bool,
     pub color_policy: ColorPolicy,
     pub force_fallback: bool,
+    pub password: Option<String>,
 }
 
 impl Default for IngestionOptions {
@@ -37,6 +38,7 @@ impl Default for IngestionOptions {
             sublime_metadata: true,
             color_policy: ColorPolicy::Strict,
             force_fallback: false,
+            password: None,
         }
     }
 }
@@ -62,13 +64,13 @@ impl Ingestor {
     /// 4. **Pass 2 (Refinement)**: Parallel processing of page content and metadata.
     pub fn ingest(
         doc: &mut lopdf::Document,
-        _options: &IngestionOptions,
+        options: &IngestionOptions,
     ) -> crate::PdfResult<IngestedDocument> {
         let arena = PdfArena::new();
         let mut table = RemappingTable::new();
 
         // Pass 0: Manual Decryption if lopdf's built-in decryption is incomplete/unsupported
-        Self::perform_pass_0_decryption(doc)?;
+        Self::perform_pass_0_decryption(doc, options)?;
 
         // Pass 1: Inhale all objects into the Arena
         for &id in doc.objects.keys() {
@@ -163,7 +165,7 @@ impl Ingestor {
         */
 
         let mut all_issues = Vec::new();
-        if _options.active_refinement {
+        if options.active_refinement {
             // Pass 2: Active Refinement
             let refined_results = ParallelRefinery::refine_all(
                 doc,
@@ -200,8 +202,12 @@ impl Ingestor {
     /// if a document is saved with decrypted objects but still contains an `/Encrypt` trailer entry.
     /// After decryption, this method explicitly removes the `/Encrypt` dictionary to satisfy
     /// Adobe fidelity requirements.
-    fn perform_pass_0_decryption(doc: &mut lopdf::Document) -> crate::PdfResult<()> {
+    fn perform_pass_0_decryption(
+        doc: &mut lopdf::Document,
+        options: &IngestionOptions,
+    ) -> crate::PdfResult<()> {
         let mut security_handler = None;
+        let password = options.password.as_deref().unwrap_or("");
 
         if let Ok(encrypt_dict_obj) = doc.trailer.get(b"Encrypt") {
             let encrypt_obj = if let Ok(id) = encrypt_dict_obj.as_reference() {
@@ -227,7 +233,7 @@ impl Ingestor {
                     let encrypt_metadata =
                         dict.get(b"EncryptMetadata").and_then(|o| o.as_bool()).unwrap_or(true);
                     if let Ok(handler) =
-                        SecurityHandler::new_v4("", o_str, u_str, p_val, file_id, encrypt_metadata)
+                        SecurityHandler::new_v4(password, o_str, u_str, p_val, file_id, encrypt_metadata)
                     {
                         security_handler = Some(handler);
                     }
@@ -240,7 +246,7 @@ impl Ingestor {
                     {
                         file_id = s;
                     }
-                    if let Ok(handler) = SecurityHandler::new_v5("", "", file_id) {
+                    if let Ok(handler) = SecurityHandler::new_v5(password, "", file_id) {
                         security_handler = Some(handler);
                     }
                 }

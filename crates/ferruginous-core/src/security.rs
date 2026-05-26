@@ -1,5 +1,5 @@
 use crate::{PdfError, PdfResult};
-use aes::cipher::{BlockDecrypt, KeyInit};
+use aes::cipher::{BlockDecrypt, BlockEncrypt, KeyInit};
 use aes::{Aes128, Aes256, Block};
 use md5;
 use sha2::{Digest, Sha256};
@@ -140,13 +140,14 @@ impl SecurityHandler {
         hash.0.to_vec()
     }
 
-    pub fn encrypt_stream(&self, data: &[u8], _obj_id: u32, _gen_num: u16) -> PdfResult<Vec<u8>> {
-        // Pass 0 decrypted output means we don't want to re-encrypt
-        Ok(data.to_vec())
+    pub fn encrypt_stream(&self, data: &[u8], obj_id: u32, gen_num: u16) -> PdfResult<Vec<u8>> {
+        let key = self.derive_object_key(obj_id, gen_num);
+        self.encrypt_with_key(data, &key)
     }
 
-    pub fn encrypt_string(&self, data: &[u8], _obj_id: u32, _gen_num: u16) -> PdfResult<Vec<u8>> {
-        Ok(data.to_vec())
+    pub fn encrypt_string(&self, data: &[u8], obj_id: u32, gen_num: u16) -> PdfResult<Vec<u8>> {
+        let key = self.derive_object_key(obj_id, gen_num);
+        self.encrypt_with_key(data, &key)
     }
 
     pub fn decrypt_bytes_salted_no_salt(
@@ -212,13 +213,14 @@ impl SecurityHandler {
         self.decrypt_with_key(data, &key)
     }
 
+    #[allow(clippy::manual_is_multiple_of)]
     fn decrypt_with_key(&self, data: &[u8], key: &[u8]) -> PdfResult<Vec<u8>> {
         if data.len() < 16 {
             return Ok(data.to_vec());
         }
         let iv = &data[..16];
         let ciphertext = &data[16..];
-        if ciphertext.is_empty() || !ciphertext.len().is_multiple_of(16) {
+        if ciphertext.is_empty() || ciphertext.len() % 16 != 0 {
             return Ok(data.to_vec());
         }
 
@@ -270,6 +272,59 @@ impl SecurityHandler {
                 result.truncate(result.len() - pad_len);
             }
         }
+        Ok(result)
+    }
+
+    fn encrypt_with_key(&self, data: &[u8], key: &[u8]) -> PdfResult<Vec<u8>> {
+        use rand::RngCore;
+        let mut iv = [0u8; 16];
+        rand::thread_rng().fill_bytes(&mut iv);
+
+        let mut result = Vec::with_capacity(iv.len() + data.len() + 16);
+        result.extend_from_slice(&iv);
+
+        // PKCS#7 Padding
+        let pad_len = 16 - (data.len() % 16);
+        let mut padded_data = data.to_vec();
+        padded_data.extend(vec![pad_len as u8; pad_len]);
+
+        let (cipher128, cipher256) = if key.len() == 16 {
+            (
+                Some(
+                    Aes128::new_from_slice(key)
+                        .map_err(|_| PdfError::Other("AES-128 init fail".into()))?,
+                ),
+                None,
+            )
+        } else {
+            (
+                None,
+                Some(
+                    Aes256::new_from_slice(key)
+                        .map_err(|_| PdfError::Other("AES-256 init fail".into()))?,
+                ),
+            )
+        };
+
+        let mut prev_block = [0u8; 16];
+        prev_block.copy_from_slice(&iv);
+
+        for chunk in padded_data.chunks(16) {
+            let mut block = [0u8; 16];
+            block.copy_from_slice(chunk);
+            for i in 0..16 {
+                block[i] ^= prev_block[i];
+            }
+            let block_ref = Block::from_mut_slice(&mut block);
+            if let Some(c) = &cipher128 {
+                c.encrypt_block(block_ref);
+            } else if let Some(c) = &cipher256 {
+                c.encrypt_block(block_ref);
+            }
+            result.extend_from_slice(&block);
+            prev_block.copy_from_slice(&block);
+        }
+
         Ok(result)
     }
 }

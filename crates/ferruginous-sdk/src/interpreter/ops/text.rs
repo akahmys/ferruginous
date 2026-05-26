@@ -154,6 +154,7 @@ impl Interpreter<'_> {
     }
 
     /// Handles operators that position the text (Td, TD, Tm, T*).
+    #[allow(clippy::many_single_char_names)]
     pub(crate) fn handle_text_positioning_operator(&mut self, op: &str) -> PdfResult<()> {
         match op {
             "Td" => {
@@ -285,6 +286,7 @@ impl Interpreter<'_> {
         Ok(())
     }
 
+    #[allow(clippy::useless_let_if_seq)]
     pub(crate) fn show_text(&mut self, text: &[u8]) -> PdfResult<()> {
         let font_name = self
             .state

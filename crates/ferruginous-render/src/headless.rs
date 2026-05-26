@@ -22,12 +22,24 @@ pub async fn render_to_bytes(
     let mut renderer = Renderer::new(
         device,
         RendererOptions {
-            use_cpu: true,
+            use_cpu: false,
             num_init_threads: NonZeroUsize::new(1),
             antialiasing_support: AaSupport::area_only(),
             ..Default::default()
         },
     )
+    .or_else(|e| {
+        log::warn!("[RENDER] GPU renderer initialization failed ({:?}), falling back to CPU renderer...", e);
+        Renderer::new(
+            device,
+            RendererOptions {
+                use_cpu: true,
+                num_init_threads: NonZeroUsize::new(1),
+                antialiasing_support: AaSupport::area_only(),
+                ..Default::default()
+            },
+        )
+    })
     .map_err(|e| format!("Failed to create renderer: {}", e))?;
 
     let size = Extent3d { width, height, depth_or_array_layers: 1 };

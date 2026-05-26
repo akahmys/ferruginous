@@ -79,9 +79,9 @@ Ferruginous utilizes a multi-pass "Sublimation" pipeline to transform volatile p
 | Category | Command | Description |
 | :--- | :--- | :--- |
 | **Analyze** | `audit`, `info`, `text` | Structural diagnostics and metadata inspection. |
-| **Manipulate**| `merge`, `split`, `repair` | Logical document modification and recovery. |
-| **Produce** | `upgrade`, `sign`, `render` | PDF 2.0 re-production and GPU-accelerated output. |
-| **Debug** | `dump`, `structure` | Low-level object hierarchy and stream visualization. |
+| **Manipulate**| `merge`, `split`, `rotate`, `repair`, `retag` | Logical document modification, recovery, and semantic re-tagging. |
+| **Produce** | `upgrade`, `sign`, `render` | PDF 2.0 re-production, signatures, and GPU-accelerated output. |
+| **Debug** | `dump`, `structure`, `stats`, `extract-font`, `trace-glyph` | Low-level object, font, and glyph mapping tracing and diagnostics. |
 
 ---
 

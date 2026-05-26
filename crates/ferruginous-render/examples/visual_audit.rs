@@ -14,7 +14,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let page = doc.get_page(0)?;
 
     println!("--- Rendering Page 1 of fy05.pdf ---");
-    let mut scene = Scene::new();
     let mut backend = VelloBackend::new(system_fonts);
 
     // Page is ferruginous_core::document::page::Page

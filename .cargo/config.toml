@@ -1,2 +1,9 @@
 [alias]
 lint = "clippy --workspace --all-targets --all-features -- -D warnings"
+
+[build]
+rustc = "/Users/jun/.rustup/toolchains/stable-x86_64-apple-darwin/bin/rustc"
+
+[env]
+PATH = "/Users/jun/.rustup/toolchains/stable-x86_64-apple-darwin/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+

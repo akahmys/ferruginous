@@ -1,11 +1,9 @@
 use ferruginous_core::font::FontResource;
-use ferruginous_core::{Object, PdfName};
 use ferruginous_sdk::PdfDocument;
-use std::path::Path;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
-    let path_str = args.get(1).map(|s| s.as_str()).unwrap_or("samples/bokutokitan.pdf");
+    let path_str = args.get(1).map_or("samples/bokutokitan.pdf", |s| s.as_str());
 
     let data = std::fs::read(path_str)?;
     let doc = PdfDocument::open(data.into())?;
@@ -32,11 +30,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if let Some(ref map) = font_res.cid_to_gid_map {
             println!("  CIDToGIDMap length: {}", map.len());
             let mut count = 0;
-            for cid in 0..map.len() {
-                let gid = map[cid];
+            for (&cid, &gid) in map {
                 if gid != 0 {
                     if count < 10 {
-                        println!("    CID {} -> GID {}", cid, gid);
+                        println!("    CID {cid} -> GID {gid}");
                     }
                     count += 1;
                 }

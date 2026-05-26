@@ -48,6 +48,7 @@ impl Interpreter<'_> {
         Ok(())
     }
 
+    #[allow(clippy::many_single_char_names)]
     pub(crate) fn execute_form_commands(
         &mut self,
         dict: &BTreeMap<Handle<PdfName>, Object>,
@@ -112,7 +113,14 @@ impl Interpreter<'_> {
         if pushed {
             self.resource_stack.pop();
         }
+        let current_clips = self.state.clip_count;
         if let Some(old) = self.state_stack.pop() {
+            let target_clips = old.clip_count;
+            if current_clips > target_clips {
+                for _ in 0..(current_clips - target_clips) {
+                    self.backend.pop_clip();
+                }
+            }
             self.state = old;
             self.backend.pop_state();
         }
@@ -186,7 +194,14 @@ impl Interpreter<'_> {
         if pushed {
             self.resource_stack.pop();
         }
+        let current_clips = self.state.clip_count;
         if let Some(old) = self.state_stack.pop() {
+            let target_clips = old.clip_count;
+            if current_clips > target_clips {
+                for _ in 0..(current_clips - target_clips) {
+                    self.backend.pop_clip();
+                }
+            }
             self.state = old;
             self.backend.pop_state();
         }
@@ -229,7 +244,26 @@ impl Interpreter<'_> {
                     .unwrap_or(false);
 
                 let format = if is_mask {
-                    ferruginous_core::graphics::PixelFormat::Gray8 // Map stencil to Gray8 for now
+                    let decode_key = self.doc.arena().intern_name(PdfName::new("Decode"));
+                    let mut invert_mask = false;
+                    if let Some(decode_obj) = dict.get(&decode_key) {
+                        let decode_resolved = decode_obj.resolve(self.doc.arena());
+                        if let Some(arr_h) = decode_resolved.as_array() {
+                            if let Some(arr) = self.doc.arena().get_array(arr_h) {
+                                if arr.len() >= 2 {
+                                    let first = arr[0].resolve(self.doc.arena()).as_f64().unwrap_or(0.0);
+                                    if first > 0.5 {
+                                        invert_mask = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if invert_mask {
+                        ferruginous_core::graphics::PixelFormat::MonoMaskInverted
+                    } else {
+                        ferruginous_core::graphics::PixelFormat::MonoMask
+                    }
                 } else {
                     self.detect_pixel_format(dict)
                 };

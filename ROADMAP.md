@@ -52,4 +52,4 @@ The "Rebirth" project aims to establish the world's most robust and ISO-complian
 
 ---
 
-*Roadmap updated: 2026-05-11 (Phase 23 Stabilization Finalized)*
+*Roadmap updated: 2026-05-19 (Phase 23 Stabilization & SDK/fepdf Governance Hardened)*

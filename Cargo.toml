@@ -8,7 +8,7 @@ members = [
     "crates/ferruginous-wasm",
     "crates/ferruginous",
     "crates/fepdf",
-    "crates/ferruginous-macros", ".gemini/antigravity/brain/b434f12c-ffb8-4667-b60c-e7a9f21a4913/scratch/font_extractor",
+    "crates/ferruginous-macros",
 ]
 
 [workspace.dependencies]
@@ -42,12 +42,12 @@ flate2 = "1.0"
 pdf-writer = "0.12"
 
 # Font Processing
-skrifa = "0.22"
-read-fonts = "0.22"
+skrifa = "0.40.0"
+read-fonts = "0.37.0"
 ttf-parser = "0.21"
 
 # Graphics & Rendering
-vello = "0.7.0"
+vello = "0.9.0"
 kurbo = { version = "0.13", features = ["serde"] }
 
 # Color Management (Hardening)

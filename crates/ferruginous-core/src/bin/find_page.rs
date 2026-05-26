@@ -25,7 +25,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let d = doc.arena().get_dict(dh).unwrap();
                 println!("    Stream Dictionary:");
                 for (nk, val) in &d {
-                    let name = doc.arena().get_name(nk.clone()).unwrap();
+                    let name = doc.arena().get_name(*nk).unwrap();
                     println!("      /{} -> {:?}", name.as_str(), val);
                 }
                 match sh.as_ref() {
@@ -63,7 +63,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let d = doc.arena().get_dict(dh).unwrap();
                 println!("  Dictionary:");
                 for (nk, val) in d {
-                    let name = doc.arena().get_name(nk.clone()).unwrap();
+                    let name = doc.arena().get_name(nk).unwrap();
                     println!("    /{} -> {:?}", name.as_str(), val);
                 }
             }
@@ -78,25 +78,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    if page_idx_str.starts_with("obj:") {
-        let sub = &page_idx_str[4..];
+    if let Some(sub) = page_idx_str.strip_prefix("obj:") {
         let handle_val = sub.parse::<u32>()?;
         let handle = Handle::<Object>::new(handle_val);
         println!("Dumping Object Handle: {:?}", handle);
         dump_resolved(&doc, Object::Reference(handle));
         return Ok(());
-    } else if page_idx_str.starts_with("dict:") {
-        let id = page_idx_str[5..].parse::<u32>()?;
+    } else if let Some(sub) = page_idx_str.strip_prefix("dict:") {
+        let id = sub.parse::<u32>()?;
         println!("Dumping Dictionary {}:", id);
         dump_resolved(&doc, Object::Dictionary(Handle::new(id)));
         return Ok(());
-    } else if page_idx_str.starts_with("arr:") {
-        let id = page_idx_str[4..].parse::<u32>()?;
+    } else if let Some(sub) = page_idx_str.strip_prefix("arr:") {
+        let id = sub.parse::<u32>()?;
         println!("Dumping Array {}:", id);
         dump_resolved(&doc, Object::Array(Handle::new(id)));
         return Ok(());
-    } else if page_idx_str.starts_with("name:") {
-        let id = page_idx_str[5..].parse::<u32>()?;
+    } else if let Some(sub) = page_idx_str.strip_prefix("name:") {
+        let id = sub.parse::<u32>()?;
         println!("Dumping Name {}:", id);
         if let Some(name) = doc.arena().get_name(Handle::new(id)) {
             println!("  {}", name.as_str());
@@ -104,8 +103,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("  Name not found");
         }
         return Ok(());
-    } else if page_idx_str.starts_with("obj:") {
-        let id = page_idx_str[4..].parse::<u32>()?;
+    } else if let Some(sub) = page_idx_str.strip_prefix("raw_obj:") {
+        let id = sub.parse::<u32>()?;
         println!("Dumping Object {}:", id);
         let obj = doc.arena().get_object(Handle::new(id)).unwrap_or(Object::Null);
         println!("  {:?}", obj);
@@ -127,55 +126,52 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let res_h = page.resources_handle();
     let res_dict = doc.arena().get_dict(res_h).unwrap();
 
-    if let Some(egs_obj) = res_dict.get(&doc.arena().name("ExtGState")) {
-        if let Some(egs_dh) = egs_obj.resolve(doc.arena()).as_dict_handle() {
+    if let Some(egs_obj) = res_dict.get(&doc.arena().name("ExtGState"))
+        && let Some(egs_dh) = egs_obj.resolve(doc.arena()).as_dict_handle() {
             let egs_dict = doc.arena().get_dict(egs_dh).unwrap();
             println!("ExtGState entries:");
             for (nk, val) in egs_dict {
-                let name = doc.arena().get_name(nk.clone()).unwrap();
+                let name = doc.arena().get_name(nk).unwrap();
                 println!("  /{} -> {:?}", name.as_str(), val);
                 if let Some(h) = val.resolve(doc.arena()).as_dict_handle() {
                     let d = doc.arena().get_dict(h).unwrap();
                     println!("    Content:");
                     for (k2, v2) in d {
-                        let n2 = doc.arena().get_name(k2.clone()).unwrap();
+                        let n2 = doc.arena().get_name(k2).unwrap();
                         println!("      /{} -> {:?}", n2.as_str(), v2);
                     }
                 }
             }
         }
-    }
 
-    if let Some(xobj_obj) = res_dict.get(&doc.arena().name("XObject")) {
-        if let Some(xobj_dh) = xobj_obj.resolve(doc.arena()).as_dict_handle() {
+    if let Some(xobj_obj) = res_dict.get(&doc.arena().name("XObject"))
+        && let Some(xobj_dh) = xobj_obj.resolve(doc.arena()).as_dict_handle() {
             let xobj_dict = doc.arena().get_dict(xobj_dh).unwrap();
             println!("XObject entries:");
             for (nk, val) in xobj_dict {
-                let name = doc.arena().get_name(nk.clone()).unwrap();
+                let name = doc.arena().get_name(nk).unwrap();
                 println!("  /{} ->", name.as_str());
                 dump_resolved(&doc, val.resolve(doc.arena()));
             }
         }
-    }
 
-    if let Some(font_obj) = res_dict.get(&doc.arena().name("Font")) {
-        if let Some(font_dh) = font_obj.resolve(doc.arena()).as_dict_handle() {
+    if let Some(font_obj) = res_dict.get(&doc.arena().name("Font"))
+        && let Some(font_dh) = font_obj.resolve(doc.arena()).as_dict_handle() {
             let font_dict = doc.arena().get_dict(font_dh).unwrap();
             println!("Font entries:");
             for (nk, val) in font_dict {
-                let name = doc.arena().get_name(nk.clone()).unwrap();
+                let name = doc.arena().get_name(nk).unwrap();
                 println!("  /{} -> {:?}", name.as_str(), val);
                 if let Some(dh) = val.resolve(doc.arena()).as_dict_handle() {
                     let d = doc.arena().get_dict(dh).unwrap();
                     println!("    Dictionary:");
                     for (k2, v2) in d {
-                        let n2 = doc.arena().get_name(k2.clone()).unwrap();
+                        let n2 = doc.arena().get_name(k2).unwrap();
                         println!("      /{} -> {:?}", n2.as_str(), v2);
                     }
                 }
             }
         }
-    }
 
     Ok(())
 }

@@ -134,14 +134,17 @@ impl<'a> Sublimator<'a> {
             "BX" | "EX" => Vec::new(), // Strip compatibility operators
             "d0" | "d1" => self.handle_type3_op(op),
             _ => {
-                // Standardization Policy: Discard unknown proprietary operators instead of emitting RawOperator
-                // DO NOT drain the stack here as it corrupts subsequent operators.
-                log::warn!("[SUBLIMATE] Discarding proprietary operator {}", op);
-                Vec::new()
+                log::warn!("[SUBLIMATE] Preserving unknown proprietary operator {}", op);
+                let mut operands = Vec::new();
+                while let Some(obj) = self.stack.pop() {
+                    operands.insert(0, obj);
+                }
+                vec![Command::RawOperator { name: op.to_string(), operands }]
             }
         }
     }
 
+    #[allow(clippy::collapsible_if)]
     fn handle_graphics_op(&mut self, op: &str, prev_commands: &[Command]) -> Vec<Command> {
         match op {
             "q" => vec![Command::PushState],
@@ -330,6 +333,7 @@ impl<'a> Sublimator<'a> {
         }
     }
 
+    #[allow(clippy::collapsible_if)]
     fn handle_color_op(&mut self, op: &str) -> Vec<Command> {
         match op {
             "rg" => self.pop_rgb().map(Command::SetFillColor).into_iter().collect(),

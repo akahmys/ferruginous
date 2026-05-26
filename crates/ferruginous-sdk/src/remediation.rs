@@ -31,6 +31,12 @@ pub struct TextExtractionBackend {
     last_y: f64,
 }
 
+impl Default for TextExtractionBackend {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TextExtractionBackend {
     /// Creates a new empty text aggregator.
     pub fn new() -> Self {
@@ -194,6 +200,12 @@ impl CollectorBackend {
 
 /// Heuristic engine for inferring logical structure from flat PDF content.
 pub struct HeuristicEngine;
+
+impl Default for HeuristicEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl HeuristicEngine {
     /// Creates a new heuristic engine.

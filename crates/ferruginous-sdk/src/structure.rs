@@ -37,7 +37,7 @@ impl<'a> StructureVisitor<'a> {
         let obj = self.arena.get_object(current)?;
         if let Some(dh) = obj.as_dict_handle() {
             if let Some(dict) = self.arena.get_dict(dh) {
-                let kids_key = self.arena.get_name_by_str("K").unwrap(); // Name "K" always exists
+                let kids_key = self.arena.name("K");
 
                 if let Some(kids) = dict.get(&kids_key) {
                     match kids.resolve(self.arena) {

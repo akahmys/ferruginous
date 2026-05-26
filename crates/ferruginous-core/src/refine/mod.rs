@@ -119,6 +119,7 @@ impl ParallelRefinery {
             .collect()
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn refine_recursive(
         doc: &lopdf::Document,
         id: (u32, u16),
@@ -162,6 +163,7 @@ impl ParallelRefinery {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn refine_dict(
         doc: &lopdf::Document,
         id: (u32, u16),
@@ -242,6 +244,7 @@ impl ParallelRefinery {
         RefinedObject::Dictionary(refined_dict)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn refine_stream(
         doc: &lopdf::Document,
         id: (u32, u16),

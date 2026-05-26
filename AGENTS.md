@@ -19,3 +19,5 @@ Global project principles and the Hierarchy of Truth are defined in [.antigravit
 Procedural instructions for autonomous task execution are located in [.antigravity/skills/](file:///.antigravity/skills/).
 - **Production**: Guidelines for industrial-strength PDF output in [.antigravity/skills/pdf_production.md](file:///.antigravity/skills/pdf_production.md).
 - **Delegation**: Rules for sub-agent management and context handoff in [.antigravity/skills/delegation.md](file:///.antigravity/skills/delegation.md).
+- **Roles & Collaboration**: Multi-agent orchestration protocols for PM, Engineer, and Auditor in [.antigravity/skills/roles.md](file:///.antigravity/skills/roles.md).
+
