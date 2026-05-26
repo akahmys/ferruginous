@@ -25,6 +25,7 @@
 - **Rule**: Maintain a "Zero Tolerance" policy for static analysis warnings.
 - **Verification**: 100% pass rate for `clippy` and the internal `verify_compliance.sh` suite.
 - **Criterion**: The `main` branch must remain in a "Perfectly Green" state at all times.
+- **Workspace Lints**: Workspace-wide clippy lints defined in `Cargo.toml` must be explicitly inherited by all member crates using `lints.workspace = true` to guarantee consistent enforcement across the workspace and prevent compilation failures under `-D warnings`.
 
 ## 5. Binary Data Sanitization
 - **Rule**: Strictly isolate non-textual streams (Fonts, Images, ICCProfiles) from text-based processing.
@@ -35,6 +36,7 @@
 - **Rule**: All input documents MUST undergo "Pass 0 Physical Normalization" before semantic ingestion.
 - **Purpose**: Resolve physical-layer anomalies (decryption, XRef repairs, residual `/Encrypt` dictionaries) to provide a "Plaintext PDF 2.0" baseline for the `PdfArena`.
 - **Compliance**: Iterative (stack-based) walk of all raw objects is mandatory to ensure Acrobat compatibility.
+- **Decryption & Key Derivation**: Decryption and key derivation for PDF 2.0 V5 (AES-256) security handlers MUST fully implement the multi-stage hashing specified in Clause 7.6.4.3.3 (Algorithm 2.A/3.A) with deterministic validation and key salts to protect against physical structure corruption and guarantee bit-perfect determinism.
 
 ## 7. Secrets & PII Guard
 - **Rule**: Absolute prohibition of committing authentication tokens, keys, or PII.

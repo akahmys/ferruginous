@@ -37,3 +37,4 @@ Design and implementation conventions for the Ferruginous rendering engine (Core
 - **Model Preservation**: Maintain the original color model (DeviceGray, DeviceRGB, DeviceCMYK, Lab, ICCBased) throughout the sublimation and interpretation layers. 
 - **Downgrade Prohibition**: Converting non-RGB colors to RGB during the IR phase is prohibited. Accurate color management depends on preserving the source color space until the final rendering backend call.
 - **Default State**: Initial fill and stroke color states MUST be explicitly defined (defaulting to Gray 0.0) to prevent non-deterministic "Default-to-Black" inheritance issues.
+- **Precise Color Conversion (Gamma Companding)**: When converting perceptual color spaces (like `Lab`) to sRGB, linear XYZ-to-RGB matrix mapping is insufficient and leads to excessively dark renders. The conversion MUST apply standard sRGB non-linear gamma companding equations to ensure high-fidelity perceptual rendering.

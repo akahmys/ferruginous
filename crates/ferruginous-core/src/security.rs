@@ -117,14 +117,14 @@ impl SecurityHandler {
         // 50-round SHA-256 multi-stage key derivation (ISO 32000-2:2020 Clause 7.6.4.3.3)
         let mut hasher = Sha256::new();
         hasher.update(user_password.as_bytes());
-        hasher.update(&ue_salt);
+        hasher.update(ue_salt);
         let mut hash: [u8; 32] = hasher.finalize().into();
 
         for _ in 0..50 {
             let mut h = Sha256::new();
-            h.update(&hash);
+            h.update(hash);
             h.update(user_password.as_bytes());
-            h.update(&ue_salt);
+            h.update(ue_salt);
             hash = h.finalize().into();
         }
 
