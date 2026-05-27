@@ -1,0 +1,185 @@
+name: Multi-Platform Build & Release
+
+on:
+  push:
+    branches: [ "main" ]
+    tags: [ "v*" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macOS Targets (Apple Silicon & Intel)
+          - os: macos-14
+            target: aarch64-apple-darwin
+            artifact_name: fepdf-macos-arm64
+            binaries: "fepdf ferruginous"
+          - os: macos-14
+            target: x86_64-apple-darwin
+            artifact_name: fepdf-macos-x64
+            binaries: "fepdf ferruginous"
+          
+          # Windows Targets (64-bit & 32-bit)
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_name: fepdf-windows-x64
+            binaries: "fepdf.exe ferruginous.exe"
+          - os: windows-latest
+            target: i686-pc-windows-msvc
+            artifact_name: fepdf-windows-x86
+            binaries: "fepdf.exe ferruginous.exe"
+
+          # Linux Targets (Static CLI & Dynamic GUI)
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            artifact_name: fepdf-linux-static-x64
+            binaries: "fepdf" # CLI statically linked
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact_name: fepdf-linux-dynamic-x64
+            binaries: "ferruginous" # GUI dynamically linked for graphics support
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install System Dependencies (Linux Only)
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libx11-dev libxcb1-dev libxcursor-dev libxi-dev libxrandr-dev libudev-dev libasound2-dev libegl1-mesa-dev libwayland-dev
+        if [ "${{ matrix.target }}" = "x86_64-unknown-linux-musl" ]; then
+          sudo apt-get install -y musl-tools
+        fi
+
+    - name: Install Rust Toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: 1.94
+        targets: ${{ matrix.target }}
+
+    - name: Rust Cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        key: ${{ matrix.target }}
+
+    - name: Build Binaries (Release Mode)
+      shell: bash
+      run: |
+        for bin in ${{ matrix.binaries }}; do
+          # Strip extension for Cargo package matching
+          pkg=$(echo $bin | sed 's/\.exe//')
+          cargo build --release --target ${{ matrix.target }} -p $pkg
+        done
+
+    - name: Prepare Artifacts (Unix)
+      if: matrix.os != 'windows-latest'
+      shell: bash
+      run: |
+        mkdir -p dist
+        for bin in ${{ matrix.binaries }}; do
+          cp target/${{ matrix.target }}/release/$bin dist/
+        done
+        cd dist && tar -czf ../${{ matrix.artifact_name }}.tar.gz ${{ matrix.binaries }}
+
+    - name: Prepare Artifacts (Windows)
+      if: matrix.os == 'windows-latest'
+      shell: pwsh
+      run: |
+        New-Item -ItemType Directory -Force -Path dist
+        $binaries = "${{ matrix.binaries }}".Split(" ")
+        foreach ($bin in $binaries) {
+          Copy-Item "target\${{ matrix.target }}\release\$bin" -Destination "dist\"
+        }
+        Compress-Archive -Path dist\* -DestinationPath "${{ matrix.artifact_name }}.zip"
+
+    - name: Upload Build Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.artifact_name }}
+        path: |
+          ${{ matrix.artifact_name }}.tar.gz
+          ${{ matrix.artifact_name }}.zip
+
+  macos-universal:
+    name: Package macOS Universal Binary
+    needs: build
+    runs-on: macos-14
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Download macOS x64 Artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: fepdf-macos-x64
+        path: x64
+
+    - name: Download macOS ARM64 Artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: fepdf-macos-arm64
+        path: arm64
+
+    - name: Create Universal Binaries
+      run: |
+        mkdir -p dist/x64 dist/arm64 universal_dist
+        tar -xzf x64/fepdf-macos-x64.tar.gz -C dist/x64
+        tar -xzf arm64/fepdf-macos-arm64.tar.gz -C dist/arm64
+        
+        # Create Universal Binaries using lipo
+        lipo -create -output universal_dist/fepdf dist/x64/fepdf dist/arm64/fepdf
+        lipo -create -output universal_dist/ferruginous dist/x64/ferruginous dist/arm64/ferruginous
+        
+        # Package universal binary
+        cd universal_dist
+        zip -r ../fepdf-macos-universal.zip fepdf ferruginous
+
+    - name: Upload macOS Universal Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: fepdf-macos-universal
+        path: fepdf-macos-universal.zip
+
+  publish-release:
+    name: Publish Release
+    needs: [build, macos-universal]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Download All Artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: release_artifacts
+
+    - name: Rearrange Release Files
+      run: |
+        mkdir final_dist
+        cp release_artifacts/fepdf-linux-static-x64/fepdf-linux-static-x64.tar.gz final_dist/
+        cp release_artifacts/fepdf-linux-dynamic-x64/fepdf-linux-dynamic-x64.tar.gz final_dist/
+        cp release_artifacts/fepdf-windows-x64/fepdf-windows-x64.zip final_dist/
+        cp release_artifacts/fepdf-windows-x86/fepdf-windows-x86.zip final_dist/
+        cp release_artifacts/fepdf-macos-universal/fepdf-macos-universal.zip final_dist/
+        ls -la final_dist/
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        files: |
+          final_dist/fepdf-linux-static-x64.tar.gz
+          final_dist/fepdf-linux-dynamic-x64.tar.gz
+          final_dist/fepdf-windows-x64.zip
+          final_dist/fepdf-windows-x86.zip
+          final_dist/fepdf-macos-universal.zip
+        generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
