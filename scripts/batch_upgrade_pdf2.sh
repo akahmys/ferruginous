@@ -19,18 +19,6 @@ for pdf in "$SAMPLES_DIR"/*.pdf; do
     fi
     filename=$(basename "$pdf")
     
-    if [ "$filename" = "intel_sdm.pdf" ]; then
-        echo "--------------------------------------------------"
-        echo "Skipping mammoth file to save time: $filename"
-        continue
-    fi
-    
-    if [ -s "$OUT_DIR/$filename" ]; then
-        echo "--------------------------------------------------"
-        echo "Skipping already converted file: $filename"
-        continue
-    fi
-    
     echo "--------------------------------------------------"
     echo "Upgrading: $filename"
     
