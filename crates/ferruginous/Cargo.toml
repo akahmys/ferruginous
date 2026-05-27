@@ -22,6 +22,8 @@ egui = "0.34"
 eframe = { version = "0.34", features = ["wgpu"] }
 egui-wgpu = "0.34"
 rfd = "0.15"
+serde = { workspace = true }
+serde_json = { workspace = true }
 tokio = { workspace = true }
 pollster = "0.4"
 bytes = { workspace = true }

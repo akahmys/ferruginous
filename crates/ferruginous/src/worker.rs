@@ -1,21 +1,21 @@
 use bytes::Bytes;
 use ferruginous_render::{FallbackFontType, VelloBackend};
 use ferruginous_sdk::PdfDocument;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender};
 use vello::Scene;
 
 pub enum WorkerRequest {
-    Open(PathBuf),
+    Open { data: Bytes, name: Option<String> },
     RenderPage { index: usize, scale: f64 },
 }
 
 pub enum WorkerResponse {
     DocumentLoaded {
-        path: PathBuf,
+        name: Option<String>,
         num_pages: usize,
         page_sizes: Vec<(f64, f64)>, // (width, height)
+        page_texts: Vec<String>,
     },
     PageRendered {
         index: usize,
@@ -31,7 +31,7 @@ pub fn run_worker(rx: Receiver<WorkerRequest>, tx: Sender<WorkerResponse>) {
 
     for request in rx {
         match request {
-            WorkerRequest::Open(path) => current_doc = handle_open(path, &tx),
+            WorkerRequest::Open { data, name } => current_doc = handle_open(data, name, &tx),
             WorkerRequest::RenderPage { index, scale } => {
                 handle_render(&current_doc, index, scale, &tx, Arc::clone(&system_fonts))
             }
@@ -39,23 +39,17 @@ pub fn run_worker(rx: Receiver<WorkerRequest>, tx: Sender<WorkerResponse>) {
     }
 }
 
-fn handle_open(path: PathBuf, tx: &Sender<WorkerResponse>) -> Option<PdfDocument> {
-    let data = match std::fs::read(&path) {
-        Ok(d) => Bytes::from(d),
-        Err(e) => {
-            let _ = tx.send(WorkerResponse::Error(format!("Failed to read file: {}", e)));
-            return None;
-        }
-    };
-
+fn handle_open(data: Bytes, name: Option<String>, tx: &Sender<WorkerResponse>) -> Option<PdfDocument> {
     match PdfDocument::open(data) {
         Ok(doc) => {
             let num_pages = doc.page_count().unwrap_or(0);
             let mut page_sizes = Vec::with_capacity(num_pages);
+            let mut page_texts = Vec::with_capacity(num_pages);
             for i in 0..num_pages {
                 page_sizes.push(doc.get_page_size(i).unwrap_or((595.0, 842.0)));
+                page_texts.push(doc.extract_text(i).unwrap_or_default());
             }
-            let _ = tx.send(WorkerResponse::DocumentLoaded { path, num_pages, page_sizes });
+            let _ = tx.send(WorkerResponse::DocumentLoaded { name, num_pages, page_sizes, page_texts });
             Some(doc)
         }
         Err(e) => {

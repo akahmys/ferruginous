@@ -25,7 +25,7 @@
     3. Proof of visual validation (screenshots or recordings) if UI/Rendering was affected.
 
 ## 4. Mandatory CI Gate
-- **Rule**: The [RR-15 Compliance Audit](file:///.github/workflows/verify_compliance.yml) GitHub Action MUST return a "Success" status before a PR can be merged.
+- **Rule**: The [RR-15 Compliance Audit](../../.github/workflows/verify_compliance.yml) GitHub Action MUST return a "Success" status before a PR can be merged.
 - **Criteria**:
     - Zero `unwrap`/`expect` violations.
     - 100% test pass rate.

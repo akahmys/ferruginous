@@ -89,7 +89,7 @@ Ferruginous utilizes a multi-pass "Sublimation" pipeline to transform volatile p
 
 - **Toolchain**: Rust 1.94+ (Edition 2024).
 - **Verification**: Execute `make help` to see available tasks.
-- **Structure**: Refer to [WS-01: Workspace Structure](file:///.antigravity/rules/structure.md) for detailed directory organization.
+- **Structure**: Refer to [WS-01: Workspace Structure](.antigravity/rules/structure.md) for detailed directory organization.
 
 ---
 

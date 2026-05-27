@@ -1,4 +1,7 @@
 mod app;
+mod interaction;
+mod redaction;
+mod sidebar;
 mod vello_egui;
 mod view;
 mod worker;

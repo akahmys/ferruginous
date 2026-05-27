@@ -1,7 +1,7 @@
 # Ferruginous AI Charter
 
 > [!IMPORTANT]
-> This document defines the immutable constitutional principles of Ferruginous. For operational procedures, refer to [.antigravity/skills/planning.md](file:///.antigravity/skills/planning.md).
+> This document defines the immutable constitutional principles of Ferruginous. For operational procedures, refer to [skills/planning.md](skills/planning.md).
 
 ## 1. Core Philosophy
 
@@ -20,7 +20,7 @@ Project tracking documents must reflect only **"Cold Hard Facts"** based on obje
 
 - **Language Policy**: **All project files must be in English. Conversations with humans must be in Japanese.**
 - **Compliance Target**: ISO 32000-2:2020 (PDF 2.0).
-- **Hardening Standard**: Must comply with [RR-15 Hardening Rules](file:///.antigravity/rules/hardening.md).
+- **Hardening Standard**: Must comply with [RR-15 Hardening Rules](rules/hardening.md).
 - **MSRV**: 1.94 (Edition 2024).
 
 ---
@@ -31,11 +31,11 @@ To ensure the integrity of the project's External Long-Term Memory (ELM), all ru
 
 | Layer | Name | Role | Primary Files |
 | :--- | :--- | :--- | :--- |
-| **1** | **Constitution (憲法)** | Immutable principles and core philosophy. | `rules.md` |
-| **2** | **Governance (統治)** | Lifecycle, decision-making, and branching protocols. | `planning.md`, `merging.md`, `delegation.md` |
-| **3** | **Hardening (防壁)** | Absolute implementing-safety constraints (RR-15). | `hardening.md` |
-| **4** | **Domain Standards (規格)** | Technical specs and ISO 32000-2 compliance. | `pipeline.md`, `rendering.md`, `compliance.md` |
-| **5** | **Operational (術式)** | Procedural execution and automated workflows. | `skills/`, `workflows/` |
+| **1** | **Constitution (憲法)** | Immutable principles and core philosophy. | `[rules.md](rules.md)` |
+| **2** | **Governance (統治)** | Lifecycle, decision-making, and branching protocols. | `[planning.md](skills/planning.md)`, `[merging.md](skills/merging.md)`, `[delegation.md](skills/delegation.md)` |
+| **3** | **Hardening (防壁)** | Absolute implementing-safety constraints (RR-15). | `[hardening.md](rules/hardening.md)` |
+| **4** | **Domain Standards (規格)** | Technical specs and ISO 32000-2 compliance. | `[pipeline.md](rules/pipeline.md)`, `[rendering.md](rules/rendering.md)`, `[compliance.md](rules/compliance.md)` |
+| **5** | **Operational (術式)** | Procedural execution and automated workflows. | `[skills/](skills/)`, `[workflows/](workflows/)` |
 
 ---
 

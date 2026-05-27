@@ -17,11 +17,16 @@ impl PDFView {
         Self { zoom: 1.0, pan: egui::Vec2::ZERO, visible_pages: Vec::new() }
     }
 
-    pub fn show(
+
+
+    pub fn show_virtual(
         &mut self,
         ui: &mut egui::Ui,
         layouts: &[PageLayout],
-        textures: &BTreeMap<usize, egui::TextureId>,
+        draw_calls: &BTreeMap<usize, Vec<(egui::TextureId, egui::Rect)>>,
+        highlights: &BTreeMap<usize, Vec<egui::Rect>>,
+        redaction_highlights: &BTreeMap<usize, Vec<egui::Rect>>,
+        active_redaction_drag: &Option<(usize, egui::Rect)>,
     ) {
         let (rect, response) = ui.allocate_at_least(ui.available_size(), egui::Sense::drag());
         self.handle_input(ui, &response);
@@ -52,13 +57,15 @@ impl PDFView {
                 // Page Background (White)
                 ui.painter().rect_filled(page_rect, 0.0, egui::Color32::WHITE);
 
-                if let Some(tid) = textures.get(&layout.index) {
-                    ui.painter().image(
-                        *tid,
-                        page_rect,
-                        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                        egui::Color32::WHITE,
-                    );
+                if let Some(calls) = draw_calls.get(&layout.index) {
+                    for &(tid, draw_rect) in calls {
+                        ui.painter().image(
+                            tid,
+                            draw_rect,
+                            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                            egui::Color32::WHITE,
+                        );
+                    }
                 } else {
                     ui.painter().text(
                         page_rect.center(),
@@ -67,6 +74,45 @@ impl PDFView {
                         egui::FontId::proportional(20.0),
                         egui::Color32::GRAY,
                     );
+                }
+
+                // Render selection highlights
+                if let Some(hl_rects) = highlights.get(&layout.index) {
+                    for hl_rect in hl_rects {
+                        ui.painter().rect_filled(
+                            *hl_rect,
+                            0.0,
+                            egui::Color32::from_rgba_unmultiplied(0, 120, 215, 60), // Blue translucent highlight
+                        );
+                    }
+                }
+
+                // Render solid black redaction highlights
+                if let Some(redact_rects) = redaction_highlights.get(&layout.index) {
+                    for redact_rect in redact_rects {
+                        ui.painter().rect_filled(
+                            *redact_rect,
+                            0.0,
+                            egui::Color32::BLACK,
+                        );
+                    }
+                }
+
+                // Render active red translucent redaction drag box if it belongs to this page
+                if let Some((active_page, drag_rect)) = active_redaction_drag {
+                    if *active_page == layout.index {
+                        ui.painter().rect_filled(
+                            *drag_rect,
+                            0.0,
+                            egui::Color32::from_rgba_unmultiplied(255, 0, 0, 100), // Red translucent
+                        );
+                        ui.painter().rect_stroke(
+                            *drag_rect,
+                            0.0,
+                            egui::Stroke::new(1.5, egui::Color32::RED),
+                            egui::StrokeKind::Outside,
+                        );
+                    }
                 }
             }
         }
