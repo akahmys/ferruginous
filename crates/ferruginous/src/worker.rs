@@ -1,3 +1,5 @@
+#![allow(clippy::collapsible_if, clippy::match_result_ok, clippy::too_many_arguments, clippy::large_enum_variant)]
+
 use bytes::Bytes;
 use ferruginous_render::{FallbackFontType, VelloBackend};
 use ferruginous_sdk::PdfDocument;

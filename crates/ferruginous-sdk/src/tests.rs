@@ -143,5 +143,5 @@ fn test_r5_key_derivation_multistage() {
     
     // Verify it is a Revision 5 handler with AES enabled
     let h = handler.unwrap();
-    assert_eq!(h.should_decrypt_metadata(), true);
+    assert!(h.should_decrypt_metadata());
 }
