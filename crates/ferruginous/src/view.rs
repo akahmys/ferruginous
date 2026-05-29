@@ -27,6 +27,7 @@ impl PDFView {
         highlights: &BTreeMap<usize, Vec<egui::Rect>>,
         redaction_highlights: &BTreeMap<usize, Vec<egui::Rect>>,
         active_redaction_drag: &Option<(usize, egui::Rect)>,
+        structural_highlight: &Option<(usize, egui::Rect)>,
     ) {
         let (rect, response) = ui.allocate_at_least(ui.available_size(), egui::Sense::drag());
         self.handle_input(ui, &response);
@@ -111,6 +112,23 @@ impl PDFView {
                             0.0,
                             egui::Stroke::new(1.5, egui::Color32::RED),
                             egui::StrokeKind::Outside,
+                        );
+                    }
+                }
+
+                // Render structural highlight (orange outline with translucent fill) if selected in sidebar
+                if let Some((highlight_page, highlight_rect)) = structural_highlight {
+                    if *highlight_page == layout.index {
+                        ui.painter().rect_stroke(
+                            *highlight_rect,
+                            0.0,
+                            egui::Stroke::new(2.5, egui::Color32::from_rgb(255, 165, 0)), // Orange-Yellow outline
+                            egui::StrokeKind::Outside,
+                        );
+                        ui.painter().rect_filled(
+                            *highlight_rect,
+                            0.0,
+                            egui::Color32::from_rgba_unmultiplied(255, 165, 0, 30), // Translucent orange fill
                         );
                     }
                 }

@@ -7,6 +7,7 @@ pub struct USTNode {
     pub title: String,
     pub alt_text: Option<String>,
     pub rect: Option<[f32; 4]>, // [x1, y1, x2, y2] in PDF User Space
+    pub handle_id: Option<u32>, // raw object handle index in PdfArena
     pub children: Vec<USTNode>,
 }
 
@@ -49,6 +50,7 @@ impl USTRegistry {
             title: "PDF Document Catalog".to_string(),
             alt_text: None,
             rect: None,
+            handle_id: None,
             children: Vec::new(),
         };
 
@@ -61,6 +63,7 @@ impl USTRegistry {
                 title: format!("Page {} Section", i + 1),
                 alt_text: None,
                 rect: None,
+                handle_id: None,
                 children: vec![
                     USTNode {
                         id: next_id + 1,
@@ -68,6 +71,7 @@ impl USTRegistry {
                         title: format!("Heading of Page {}", i + 1),
                         alt_text: None,
                         rect: None,
+                        handle_id: None,
                         children: Vec::new(),
                     },
                     USTNode {
@@ -76,6 +80,7 @@ impl USTRegistry {
                         title: format!("Paragraph content for page {}", i + 1),
                         alt_text: None,
                         rect: None,
+                        handle_id: None,
                         children: Vec::new(),
                     },
                     USTNode {
@@ -84,6 +89,7 @@ impl USTRegistry {
                         title: format!("Illustration on page {}", i + 1),
                         alt_text: None,
                         rect: None,
+                        handle_id: None,
                         children: Vec::new(),
                     },
                 ],
@@ -94,6 +100,22 @@ impl USTRegistry {
 
         self.root = Some(doc_node);
         self.next_node_id = next_id;
+    }
+
+    pub fn find_rect_by_id(&self, id: usize) -> Option<[f32; 4]> {
+        self.root.as_ref().and_then(|r| Self::find_rect_recursive(r, id))
+    }
+
+    fn find_rect_recursive(node: &USTNode, id: usize) -> Option<[f32; 4]> {
+        if node.id == id {
+            return node.rect;
+        }
+        for child in &node.children {
+            if let Some(r) = Self::find_rect_recursive(child, id) {
+                return Some(r);
+            }
+        }
+        None
     }
 }
 
@@ -120,6 +142,7 @@ impl SidebarPanel {
         &mut self,
         ui: &mut egui::Ui,
         registry: &mut USTRegistry,
+        tx_worker: &std::sync::mpsc::Sender<crate::worker::WorkerRequest>,
     ) {
         ui.vertical(|ui| {
             // Tab Selection Headers
@@ -143,14 +166,19 @@ impl SidebarPanel {
 
             // Active Tab Content
             if self.active_tab == 0 {
-                self.show_tags_tab(ui, registry);
+                self.show_tags_tab(ui, registry, tx_worker);
             } else {
                 self.show_audit_tab(ui, registry);
             }
         });
     }
 
-    fn show_tags_tab(&mut self, ui: &mut egui::Ui, registry: &mut USTRegistry) {
+    fn show_tags_tab(
+        &mut self,
+        ui: &mut egui::Ui,
+        registry: &mut USTRegistry,
+        tx_worker: &std::sync::mpsc::Sender<crate::worker::WorkerRequest>,
+    ) {
         ui.label("Collapse/expand structural tags to explore accessibility relationships:");
         ui.add_space(5.0);
 
@@ -158,7 +186,7 @@ impl SidebarPanel {
 
         egui::ScrollArea::vertical().id_salt("tag_tree_scroll").show(ui, |ui| {
             if let Some(ref mut root) = registry.root {
-                Self::render_node_recursive(ui, root, &mut selected_node_id, &mut self.alt_text_edit_buffer);
+                Self::render_node_recursive(ui, root, &mut selected_node_id, &mut self.alt_text_edit_buffer, tx_worker);
             } else {
                 ui.centered_and_justified(|ui| {
                     ui.label("No structure tree loaded. Please load a valid PDF.");
@@ -174,6 +202,7 @@ impl SidebarPanel {
         node: &mut USTNode,
         selected_node_id: &mut Option<usize>,
         alt_edit_buf: &mut String,
+        tx_worker: &std::sync::mpsc::Sender<crate::worker::WorkerRequest>,
     ) {
         let is_selected = *selected_node_id == Some(node.id);
         let header_label = format!("<{}>  {}", node.tag, node.title);
@@ -198,7 +227,7 @@ impl SidebarPanel {
                         // Direct in-place mutation recursion
                         let child = &mut node.children[idx];
                         ui.indent(child.id, |ui| {
-                            Self::render_node_recursive(ui, child, selected_node_id, alt_edit_buf);
+                            Self::render_node_recursive(ui, child, selected_node_id, alt_edit_buf, tx_worker);
                         });
                     });
                 }
@@ -230,6 +259,13 @@ impl SidebarPanel {
                     "P" => "H1".to_string(),
                     _ => "P".to_string(),
                 };
+                if let Some(h_id) = node.handle_id {
+                    let _ = tx_worker.send(crate::worker::WorkerRequest::UpdateNode {
+                        handle_id: h_id,
+                        tag: node.tag.clone(),
+                        alt_text: node.alt_text.clone(),
+                    });
+                }
             }
         });
 
@@ -246,6 +282,13 @@ impl SidebarPanel {
                             } else {
                                 Some(alt_edit_buf.clone())
                             };
+                            if let Some(h_id) = node.handle_id {
+                                let _ = tx_worker.send(crate::worker::WorkerRequest::UpdateNode {
+                                    handle_id: h_id,
+                                    tag: node.tag.clone(),
+                                    alt_text: node.alt_text.clone(),
+                                });
+                            }
                             *selected_node_id = None; // close drawer
                         }
                     });

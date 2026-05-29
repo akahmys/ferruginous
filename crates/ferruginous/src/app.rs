@@ -139,6 +139,18 @@ impl FerruginousApp {
                     self.request_queue.remove(&index);
                     ctx.request_repaint();
                 }
+                WorkerResponse::AuditFindings { findings } => {
+                    self.ust_registry.audit_findings = findings;
+                    ctx.request_repaint();
+                }
+                WorkerResponse::DocumentSaved { path } => {
+                    self.error = Some(format!(
+                        "Successfully exported compliant PDF to {:?}",
+                        path.file_name().unwrap_or(&path.as_os_str())
+                    ));
+                    self.show_export_wizard = false;
+                    ctx.request_repaint();
+                }
                 WorkerResponse::Error(err) => {
                     self.error = Some(err);
                 }
@@ -292,6 +304,35 @@ impl FerruginousApp {
                     }
                 }
 
+                // Calculate selected structural node highlight rect if available
+                let mut structural_highlight = None;
+                if let Some(selected_id) = self.ust_registry.selected_node_id {
+                    if let Some(rect) = self.ust_registry.find_rect_by_id(selected_id) {
+                        let page_idx = 0; // Default to first page
+                        if let Some(layout) = self.page_layouts.get(page_idx) {
+                            let origin = egui::pos2(viewport_rect.center().x, viewport_rect.min.y + 20.0) + self.view.pan;
+                            let page_screen_rect = egui::Rect::from_min_size(
+                                origin + layout.rect.min.to_vec2() * zoom,
+                                layout.rect.size() * zoom,
+                            );
+                            let unscaled_h = layout.rect.height();
+                            let screen_min = SelectionManager::pdf_to_screen(
+                                page_screen_rect,
+                                zoom,
+                                unscaled_h,
+                                egui::pos2(rect[0], rect[3]),
+                            );
+                            let screen_max = SelectionManager::pdf_to_screen(
+                                page_screen_rect,
+                                zoom,
+                                unscaled_h,
+                                egui::pos2(rect[2], rect[1]),
+                            );
+                            structural_highlight = Some((page_idx, egui::Rect::from_min_max(screen_min, screen_max)));
+                        }
+                    }
+                }
+
                 self.view.show_virtual(
                     ui,
                     &self.page_layouts,
@@ -299,6 +340,7 @@ impl FerruginousApp {
                     &self.selection_manager.highlights,
                     &redaction_highlights,
                     &active_redaction_drag,
+                    &structural_highlight,
                 );
             } else if self.pdf_name.is_some() {
                 ui.centered_and_justified(|ui| {
@@ -442,24 +484,16 @@ impl FerruginousApp {
                                 self.redaction_manager.clear();
                             }
 
-                            // 2. Perform the export simulation / actual file save
-                            let mut dummy_content = b"%PDF-2.0\n%\xE2\xE3\xCF\xD3\n".to_vec();
-                            dummy_content.extend_from_slice(format!("%% Compiled with PDF 2.0: {}\n", self.export_upgrade_pdf20).as_bytes());
-                            dummy_content.extend_from_slice(format!("%% Linearized: {}\n", self.export_linearize).as_bytes());
-                            dummy_content.extend_from_slice(format!("%% Vacuum: {}\n", self.export_vacuum).as_bytes());
-                            dummy_content.extend_from_slice(format!("%% Compressed: {}\n", self.export_compress).as_bytes());
-                            dummy_content.extend_from_slice(format!("%% Tags Applied: {}\n", self.export_apply_tags).as_bytes());
-                            dummy_content.extend_from_slice(b"%% EOF\n");
-
-                            if std::fs::write(&p, dummy_content).is_ok() {
-                                self.error = Some(format!(
-                                    "Successfully exported sanitized PDF 2.0 to {:?}",
-                                    p.file_name().unwrap_or(&p.as_os_str())
-                                ));
-                                should_close = true;
-                            } else {
-                                self.error = Some("Failed to write exported PDF".to_string());
-                            }
+                            // 2. Dispatch save request to async worker
+                            let _ = self.tx_worker.send(WorkerRequest::Save {
+                                path: p,
+                                compress: self.export_compress,
+                                linearize: self.export_linearize,
+                                vacuum: self.export_vacuum,
+                                upgrade_pdf20: self.export_upgrade_pdf20,
+                                redaction_zones: self.redaction_manager.zones.clone(),
+                            });
+                            should_close = true;
                         }
                     }
                 });
@@ -478,7 +512,7 @@ impl eframe::App for FerruginousApp {
                 .default_size(320.0)
                 .size_range(200.0..=500.0)
                 .show_inside(ui, |ui| {
-                    self.sidebar_panel.show(ui, &mut self.ust_registry);
+                    self.sidebar_panel.show(ui, &mut self.ust_registry, &self.tx_worker);
                 });
         }
 

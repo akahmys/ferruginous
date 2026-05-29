@@ -16,6 +16,7 @@
 //! complexities of the core type system and document model.
 
 use crate::remediation::HeuristicEngine;
+pub use crate::remediation::apply_physical_redaction_to_page;
 use crate::structure::{AuditFinding, MatterhornAuditor};
 use bytes::Bytes;
 pub use ferruginous_core::font::{GlyphTrace, TraceContext};
