@@ -17,7 +17,7 @@ PATTERNS=(
 )
 
 # Files to skip
-SKIP_FILES="\.gitignore\|\.git\|scripts/verify_secrets\.sh\|\.pdf$"
+SKIP_FILES="\.gitignore\|\.git\|scripts/audit/verify_secrets\.sh\|\.pdf$"
 
 echo "Checking for secrets in staged and current files..."
 
@@ -45,9 +45,23 @@ for email in "${EMAIL_PATTERNS[@]}"; do
     fi
 done
 
+# Absolute Home Directory Path Leakage Check
+echo "Checking for absolute home directory paths (leakage prevention)..."
+if grep -rnE "/Users/[a-zA-Z0-9_-]+|/home/[a-zA-Z0-9_-]+" \
+    crates/ .cargo/ scripts/ .github/ Makefile Cargo.toml \
+    --exclude-dir=".git" --exclude-dir="target" --exclude-dir="external" --exclude-dir=".arlington-venv" \
+    --exclude="*.pdf" | grep -v "$SKIP_FILES" > /dev/null; then
+    echo "  FAIL: Potential absolute home directory path leakage found:"
+    grep -rnE "/Users/[a-zA-Z0-9_-]+|/home/[a-zA-Z0-9_-]+" \
+        crates/ .cargo/ scripts/ .github/ Makefile Cargo.toml \
+        --exclude-dir=".git" --exclude-dir="target" --exclude-dir="external" --exclude-dir=".arlington-venv" \
+        --exclude="*.pdf" | grep -v "$SKIP_FILES"
+    ERROR=1
+fi
+
 if [ $ERROR -eq 1 ]; then
     echo "=== SECRET SCANNING FAILED ==="
-    echo "CRITICAL: Secrets detected. Commit/Push aborted."
+    echo "CRITICAL: Secrets or absolute paths detected. Commit/Push aborted."
     exit 1
 else
     echo "=== SECRET SCANNING PASSED ==="

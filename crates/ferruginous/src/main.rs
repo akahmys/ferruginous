@@ -1,3 +1,12 @@
+#![allow(
+    clippy::collapsible_if,
+    clippy::match_result_ok,
+    clippy::too_many_arguments,
+    clippy::large_enum_variant,
+    clippy::unnecessary_unwrap,
+    clippy::needless_borrow
+)]
+
 mod app;
 mod interaction;
 mod redaction;

@@ -585,10 +585,10 @@ pub fn apply_physical_redaction_to_page(
                 let span_min_y = span.y;
                 let span_max_y = span.y + span.font_size; // approximate height with font_size
 
-                let r_min_x = rect[0] as f64;
-                let r_min_y = rect[1] as f64;
-                let r_max_x = rect[2] as f64;
-                let r_max_y = rect[3] as f64;
+                let r_min_x = f64::from(rect[0]);
+                let r_min_y = f64::from(rect[1]);
+                let r_max_x = f64::from(rect[2]);
+                let r_max_y = f64::from(rect[3]);
 
                 let intersects = span_min_x < r_max_x
                     && span_max_x > r_min_x
@@ -607,7 +607,7 @@ pub fn apply_physical_redaction_to_page(
 
         // 3. Rewrite content stream tokens to scrub redacted string values
         use ferruginous_core::lexer::{Lexer, Token};
-        let mut lexer = Lexer::new(bytes::Bytes::from(data));
+        let mut lexer = Lexer::new(data);
         let mut output = Vec::new();
         let mut op_index = 0;
 
