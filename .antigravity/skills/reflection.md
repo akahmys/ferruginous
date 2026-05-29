@@ -8,7 +8,7 @@
 ## 1. Structured Retrospective
 - **Rule**: Every development cycle (Phase, Epic, or major Feature) MUST conclude with a post-mortem analysis of failures and iterations.
 - **Purpose**: Bridge the gap between "momentary mistakes" and "systemic safeguards."
-- **Compliance Criterion**: A `retrospective` entry must be added to `.antigravity/reflections.md` citing specific tool/workflow failures.
+- **Compliance Criterion**: A `retrospective` entry must be added to `docs/conventions/reflections.md` citing specific tool/workflow failures.
 
 ## 2. Rule Distillation (R-P-C Format)
 - **Rule**: Identified friction points must be evaluated for "Rule Potential." If a friction point is structural, it MUST be converted into a rule using the **Rule, Purpose, Criterion** format.

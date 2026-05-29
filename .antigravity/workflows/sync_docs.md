@@ -14,7 +14,7 @@ Maintain the SSoT (Single Source of Truth) based on the actual implementation st
 // turbo
 3. **task Sync**: Check off completed items in [.antigravity/session/task.md](../session/task.md) and clearly document upcoming tasks.
 // turbo
-4. **Session State Sync**: Update [.antigravity/session/handoff.md](../session/handoff.md) and [.antigravity/session/regression_log.md](../session/regression_log.md) based on the lessons learned from this session.
+4. **Session State Sync**: Update [.antigravity/session/handoff.md](../session/handoff.md) and [.antigravity/session/lessons_learned.md](../session/lessons_learned.md) based on the lessons learned from this session.
 // turbo
 5. **Spec Update**: Reflect changes in parsing/rendering logic and progress in UI integration in the respective design documents under [specs/](../../docs/specs/).
 // turbo

@@ -13,7 +13,7 @@
 ## 2. Timing of Merge (Merge Triggers)
 - **Rule**: A merge from a feature/fix branch to `main` must occur ONLY when all the following conditions are met:
     1. **Task Finalization**: All items in the session-specific `task.md` are marked as `[x]`.
-    2. **Zero-Warning Audit**: The `verify_compliance.sh` script returns a `PASS` status with 0 warnings. This includes the mandatory **Secret & PII Scan**.
+    2. **Zero-Warning Audit**: The `scripts/audit/verify_compliance.sh` script returns a `PASS` status with 0 warnings. This includes the mandatory **Secret & PII Scan**.
     3. **User Approval**: The user has reviewed the `walkthrough.md` and provided explicit approval for the merge.
     4. **Linear Pre-Check**: The feature branch has been rebased onto the latest `main` to ensure a clean, linear integration.
 

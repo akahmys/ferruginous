@@ -13,12 +13,12 @@ This workflow serves as the **Standard Procedure for Codebase Audit and Refactor
 2. **AI Logic Audit (RR-15)**: Follow the [verify_rr15](../skills/verify_rr15.md) skill to self-check for logical violations of the [Hardening Rules](../rules/hardening.md).
 3. **Automated Mechanical Audit**: Execute the following and confirm that all items PASS.
 // turbo
-   - `./scripts/verify_compliance.sh` (Convention compliance)
+   - `./scripts/audit/verify_compliance.sh` (Convention compliance)
 // turbo
    - `cargo clippy --pedantic` (Zero warnings)
 // turbo
-   - `./scripts/msrv_check.sh` (Maintenance of compatibility)
-3. **Artifact Recording**: Record audit results, discovered issues, and fix details in `walkthrough.md`.
+   - `./scripts/audit/msrv_check.sh` (Maintenance of compatibility)
+4. **Artifact Recording**: Record audit results, discovered issues, and fix details in `walkthrough.md`.
 
 ## Completion Requirements
 - Not a single warning or inconsistency remains.

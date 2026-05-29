@@ -5,7 +5,7 @@
 
 ## 1. Development Protocol
 
-This project strictly adheres to **[RR-15](../.agent/protocols/RELIABLE_RUST_15.md)** (Safety) and **[HDD](../.agent/protocols/HDD_PROTOCOL.md)** (Process) as its core development charter.
+This project strictly adheres to **[RR-15](../../.antigravity/rules/hardening.md)** (Safety) and **[HDD](../../.antigravity/rules/pipeline.md)** (Process) as its core development charter.
 
 ## 2. 4-Layer Architecture
 

@@ -1,3 +1,7 @@
+> [!WARNING]
+> **Superseded**: The canonical workspace structure definition is [.antigravity/rules/structure.md](../../.antigravity/rules/structure.md) (WS-01).
+> This document is retained for historical reference only. Do not update this file — update the SSoT instead.
+
 # Ferruginous Workspace Directory Layout
 
 (ISO 32000-2 Compliance)

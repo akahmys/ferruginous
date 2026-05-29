@@ -11,6 +11,7 @@ This document defines the canonical directory structure of Ferruginous. Adherenc
 | `crates/` | Modular Rust Logic Layer | Engineering |
 | `docs/` | Technical Specs & Architectural History | Architecture |
 | `external/` | Submodules & Third-party Compliance Data | Engineering |
+| `examples/` | Rust Usage Examples & Demonstrations | Engineering |
 | `out/` | Ephemeral & Persistent Outputs (Ignored by Git) | Pipeline |
 | `out/artifacts/`| Test results, renders, and temporary PDFs | CI/CD |
 | `out/exports/` | Extracted document assets (Fonts, Images) | Refinery |

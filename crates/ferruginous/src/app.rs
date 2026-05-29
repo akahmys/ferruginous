@@ -108,7 +108,14 @@ impl FerruginousApp {
     fn process_worker_messages(&mut self, ctx: &egui::Context) {
         while let Ok(msg) = self.rx_worker.try_recv() {
             match msg {
-                WorkerResponse::DocumentLoaded { name, num_pages, page_sizes, page_texts } => {
+                WorkerResponse::DocumentLoaded {
+                    name,
+                    num_pages,
+                    page_sizes,
+                    page_texts,
+                    ust_root,
+                    audit_findings,
+                } => {
                     self.pdf_name = name;
                     self.total_pages = num_pages;
                     self.compute_layouts(&page_sizes);
@@ -121,12 +128,9 @@ impl FerruginousApp {
                         self.raw_texts.insert(i, text.clone());
                     }
 
-                    // Initialize mock accessibility tag tree & Matterhorn audit findings
-                    self.ust_registry.initialize_mock_tree(num_pages);
-                    self.ust_registry.audit_findings = vec![
-                        ("13-001".to_string(), "Error".to_string(), "Figure element missing /Alt description".to_string()),
-                        ("14-001".to_string(), "Warning".to_string(), "Heading level hierarchy skipped (H2 follows H0)".to_string()),
-                    ];
+                    // Load parsed accessibility tag tree & real Matterhorn audit findings
+                    self.ust_registry.root = ust_root;
+                    self.ust_registry.audit_findings = audit_findings;
 
                     ctx.request_repaint();
                 }

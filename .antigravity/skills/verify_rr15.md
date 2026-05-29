@@ -1,16 +1,16 @@
 # Skill: RR-15 Compliance Audit (verify_rr15)
 
-Audit the codebase from multiple perspectives to ensure compliance with [RELIABLE_RUST_15](../rules/hardening.md) and identify any non-compliant areas.
+Audit the codebase from multiple perspectives to ensure compliance with [RR-15](../rules/hardening.md) and identify any non-compliant areas.
 
 ## 1. Static & Mechanical Audit
 
 Execute the following actions to extract mechanical non-compliances:
 
-- **Action**: Run `./scripts/verify_compliance.sh`.
+- **Action**: Run `./scripts/audit/verify_compliance.sh`.
 - **Purpose**: Immediately detect function length, unwrap/expect, unsafe blocks, static mut, and the use of non-deterministic collections like HashMap.
 - **Note**: If the script yields an error, fixing it must be the top priority.
 
-## 1.5. Semantic & Structural Audit (via ccc)
+## 2. Semantic & Structural Audit (via ccc)
 
 Leverage the semantic indexing of `ccc` (CocoIndex-Code) to detect design inconsistencies and refactoring gaps across components.
 
@@ -19,7 +19,7 @@ Leverage the semantic indexing of `ccc` (CocoIndex-Code) to detect design incons
   - Example: `ccc search "Consistent use of Object::Text vs Object::String for UI elements"`
 - **Purpose**: Identify "Implementation Gaps" where architectural changes have been applied to core components but missed in edge crates or integration layers.
 
-## 2. Logical & Architectural Audit
+## 3. Logical & Architectural Audit
 
 Leverage the AI's contextual understanding to identify violations that are difficult for scripts to detect:
 
@@ -28,14 +28,14 @@ Leverage the AI's contextual understanding to identify violations that are diffi
 - **Rule 8 (Invalid State)**: Can the logic be expressed using type-safe Enums (State machine) instead of `Option` or `Result`?
 - **Rule 15 (Cloning)**: Is that `.clone()` truly necessary? Can it be resolved through sharing with `Arc` or by redesigning to use ownership transfer?
 
-### 2.5. Compliance Guard Audit (ISO 32000-2)
+### 3.1. Compliance Guard Audit (ISO 32000-2)
 
 Verify adherence to the domain-specific guards migrated to `compliance.md`:
 
 - **Rule 6 (Normalization)**: Does the ingestion pipeline call `perform_pass_0_normalization` before any structural work? Is the normalization iterative and non-destructive?
 - **Rule 5 (Binary Integrity)**: Are binary streams correctly excluded from the text-based refinery pipeline?
 
-## 3. Reporting Audit Results
+## 4. Reporting Audit Results
 
 If violations are found during the audit, report them in the following format:
 
@@ -43,7 +43,7 @@ If violations are found during the audit, report them in the following format:
 2.  **Violated Rule**: RR-15 rule number.
 3.  **Recommended Fix**: A fix including concrete code snippets.
 
-## 4. Completion Criterion
+## 5. Completion Criterion
 
 - [ ] `verify_compliance.sh` PASSES.
 - [ ] `cargo clippy --pedantic` yields no warnings.

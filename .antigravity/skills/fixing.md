@@ -23,12 +23,12 @@
 ## 4. Regression Verification
 - **Rule**: A fix is not complete until a reproduction test passes and all existing tests in the workspace pass.
 - **Purpose**: Prove the effectiveness of the fix and the stability of the entire system.
-- **Compliance Criterion**: `cargo test --all-workspace` must return success, and `walkthrough.md` must link to the passing reproduction test.
+- **Compliance Criterion**: `cargo test --workspace` must return success, and `walkthrough.md` must link to the passing reproduction test.
 
 ## 5. Knowledge Conversion
-- **Rule**: Record lessons learned and diagnostic patterns in `regression_log.md`.
+- **Rule**: Record lessons learned and diagnostic patterns in `lessons_learned.md`.
 - **Purpose**: Promote institutional memory and prevent AI contexts from forgetting common pitfalls.
-- **Compliance Criterion**: `regression_log.md` must be updated with the terminal state of the fix.
+- **Compliance Criterion**: `lessons_learned.md` must be updated with the terminal state of the fix.
 
 ## 6. Mandatory User Confirmation
 - **Rule**: Prior to implementing any fix, present the diagnosis and the proposed solution (Implementation Plan) to the user and obtain explicit confirmation.

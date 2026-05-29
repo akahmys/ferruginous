@@ -27,8 +27,8 @@ jobs:
 
     - name: Run Secret Scanning Script
       run: |
-        chmod +x ./scripts/verify_secrets.sh
-        ./scripts/verify_secrets.sh
+        chmod +x ./scripts/audit/verify_secrets.sh
+        ./scripts/audit/verify_secrets.sh
 
     - name: Run Gitleaks (Industry Standard)
       uses: gitleaks/gitleaks-action@v2
@@ -37,5 +37,5 @@ jobs:
 
     - name: Run RR-15 Compliance Audit
       run: |
-        chmod +x ./scripts/verify_compliance.sh
-        ./scripts/verify_compliance.sh
+        chmod +x ./scripts/audit/verify_compliance.sh
+        ./scripts/audit/verify_compliance.sh

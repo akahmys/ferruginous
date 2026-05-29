@@ -5,7 +5,7 @@
 
 ## 1. Design Philosophy
 
-This project extends and applies **[RR-15](../.agent/protocols/RELIABLE_RUST_15.md)** and **[HDD](../.agent/protocols/HDD_PROTOCOL.md)** to the application layer. Rendering utilizes hardware acceleration via `vello` and adopts a Pull-type Architecture where the Engine generates a `DisplayList` and the Renderer consumes it asynchronously.
+This project extends and applies **[RR-15](../../.antigravity/rules/hardening.md)** and **[HDD](../../.antigravity/rules/pipeline.md)** to the application layer. Rendering utilizes hardware acceleration via `vello` and adopts a Pull-type Architecture where the Engine generates a `DisplayList` and the Renderer consumes it asynchronously.
 
 ### 1.1 The 4 Pillars of Excellence
 

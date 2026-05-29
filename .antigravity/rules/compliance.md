@@ -23,7 +23,7 @@
 
 ## 4. Zero-Warning Quality Gate
 - **Rule**: Maintain a "Zero Tolerance" policy for static analysis warnings.
-- **Verification**: 100% pass rate for `clippy` and the internal `verify_compliance.sh` suite.
+- **Verification**: 100% pass rate for `clippy` and the internal `scripts/audit/verify_compliance.sh` suite.
 - **Criterion**: The `main` branch must remain in a "Perfectly Green" state at all times.
 - **Workspace Lints**: Workspace-wide clippy lints defined in `Cargo.toml` must be explicitly inherited by all member crates using `lints.workspace = true` to guarantee consistent enforcement across the workspace and prevent compilation failures under `-D warnings`.
 
@@ -40,5 +40,5 @@
 
 ## 7. Secrets & PII Guard
 - **Rule**: Absolute prohibition of committing authentication tokens, keys, or PII.
-- **Verification**: Mandatory execution of `verify_secrets.sh` in the compliance suite.
+- **Verification**: Mandatory execution of `scripts/audit/verify_secrets.sh` in the compliance suite.
 - **Compliance**: Any secret leak is a catastrophic failure requiring history rewriting.

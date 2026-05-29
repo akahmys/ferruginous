@@ -4,7 +4,7 @@ description: Harness-driven development workflow for new features.
 
 # [Workflow] Harness-Driven Development (New Feature via Harness)
 
-Complete the implementation with a verification-led approach based on [HDD](harness.md) and [RR-15](../rules/hardening.md).
+Complete the implementation with a verification-led approach based on [HDD](../skills/harness.md) and [RR-15](../rules/hardening.md).
 
 ## Procedure
 
@@ -17,7 +17,7 @@ Complete the implementation with a verification-led approach based on [HDD](harn
 // turbo
 4. **Document Reflection**: Execute [sync_docs](sync_docs.md) to synchronize the ROADMAP and task with the latest actual state.
 // turbo
-5. **Phase Retrospective**: Perform a post-mortem on development friction, update `.antigravity/reflections.md`, and execute [refine_rules](refine_rules.md) if needed.
+5. **Phase Retrospective**: Perform a post-mortem on development friction, update [docs/conventions/reflections.md](../../docs/conventions/reflections.md), and execute [refine_rules](refine_rules.md) if needed.
 
 ## Completion Requirements
 

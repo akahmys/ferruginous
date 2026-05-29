@@ -95,5 +95,5 @@ Ferruginous utilizes a multi-pass "Sublimation" pipeline to transform volatile p
 
 ## 📜 License
 
-- **MIT License** / **Apache-2.0**
+- **MIT License**
 - Designed for technically sound compliance with the ISO 32000-2:2020 standard.

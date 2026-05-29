@@ -8,7 +8,7 @@ Define the passing conditions (HDD) prior to implementation.
 
 ## Procedure
 
-1. **Specification Identification**: Identify the relevant object and Clause from the [HDD_PROTOCOL](harness.md) and ISO 32000-2.
+1. **Specification Identification**: Identify the relevant object and Clause from the [HDD_PROTOCOL](../skills/harness.md) and ISO 32000-2.
 2. **Model Reference**: Check expected field definitions, types, and constraints from the Arlington PDF Model.
 // turbo
 3. **Harness Construction**: Execute the `scaffold_harness` skill to create a failing test under `tests/`.

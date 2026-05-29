@@ -6,6 +6,7 @@ pub struct USTNode {
     pub tag: String,
     pub title: String,
     pub alt_text: Option<String>,
+    pub rect: Option<[f32; 4]>, // [x1, y1, x2, y2] in PDF User Space
     pub children: Vec<USTNode>,
 }
 
@@ -40,13 +41,14 @@ impl USTRegistry {
         self.audit_findings.clear();
     }
 
-    /// Generates a realistic mock UST logical tree from page layouts.
+    #[allow(dead_code)]
     pub fn initialize_mock_tree(&mut self, total_pages: usize) {
         let mut doc_node = USTNode {
             id: 0,
             tag: "Document".to_string(),
             title: "PDF Document Catalog".to_string(),
             alt_text: None,
+            rect: None,
             children: Vec::new(),
         };
 
@@ -58,12 +60,14 @@ impl USTRegistry {
                 tag: "Part".to_string(),
                 title: format!("Page {} Section", i + 1),
                 alt_text: None,
+                rect: None,
                 children: vec![
                     USTNode {
                         id: next_id + 1,
                         tag: "H1".to_string(),
                         title: format!("Heading of Page {}", i + 1),
                         alt_text: None,
+                        rect: None,
                         children: Vec::new(),
                     },
                     USTNode {
@@ -71,6 +75,7 @@ impl USTRegistry {
                         tag: "P".to_string(),
                         title: format!("Paragraph content for page {}", i + 1),
                         alt_text: None,
+                        rect: None,
                         children: Vec::new(),
                     },
                     USTNode {
@@ -78,6 +83,7 @@ impl USTRegistry {
                         tag: "Figure".to_string(),
                         title: format!("Illustration on page {}", i + 1),
                         alt_text: None,
+                        rect: None,
                         children: Vec::new(),
                     },
                 ],

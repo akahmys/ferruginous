@@ -14,6 +14,9 @@ Global project principles and the Hierarchy of Truth are defined in [.antigravit
 - **Rendering**: Graphics and typography standards in [.antigravity/rules/rendering.md](.antigravity/rules/rendering.md).
 - **Naming**: Identifier and API conventions in [.antigravity/rules/naming.md](.antigravity/rules/naming.md).
 - **Debugging**: Troubleshooting protocols in [.antigravity/rules/debugging.md](.antigravity/rules/debugging.md).
+- **Compliance**: ISO 32000-2 compliance strategy in [.antigravity/rules/compliance.md](.antigravity/rules/compliance.md).
+- **Discovery**: Codebase discovery protocol in [.antigravity/rules/discovery.md](.antigravity/rules/discovery.md).
+- **UI Design**: User interface design protocol in [.antigravity/rules/ui.md](.antigravity/rules/ui.md).
 
 ## 🛠️ Specialized Skills & Workflows
 Procedural instructions for autonomous task execution are located in [.antigravity/skills/](.antigravity/skills/).

@@ -39,7 +39,7 @@ Request machine-readable or clearly formatted output to minimize parsing effort.
 ## 3. Integration of Results (Post-Delegation)
 
 - **Validation**: Never take subagent output as "Truth." It must be verified by the primary agent through tests or inspection.
-- **ELM Persistence**: Record significant subagent findings in `.antigravity/session/task.md` or `regression_log.md`.
+- **ELM Persistence**: Record significant subagent findings in `.antigravity/session/task.md` or `lessons_learned.md`.
 - **Traceability**: If a subagent decision is used, note it in the `walkthrough.md` (e.g., "Hypothesis #2 provided by subagent-gemini was verified and implemented").
 
 ## 4. Forbidden Actions for Subagents

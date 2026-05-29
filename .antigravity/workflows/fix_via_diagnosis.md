@@ -8,11 +8,11 @@ Fixing is not development. Identify the root cause of the bug and resolve it wit
 
 ## Procedure
 
-1. **Session Initialization** [Project Manager]: Follow the startup instructions in [.antigravity/rules.md](../../.antigravity/rules.md), loading handoff and regression_log.
+1. **Session Initialization** [Project Manager]: Follow the startup instructions in [.antigravity/rules.md](../../.antigravity/rules.md), loading handoff and lessons_learned.
 // turbo
 2. **Describe the Phenomenon** [Project Manager]: Observe the phenomenon and accurately record the current status in [.antigravity/session/task.md](../session/task.md).
 // turbo
-3. **Verify Past History** [Project Manager]: Read [.antigravity/session/regression_log.md](../session/regression_log.md) and list past failure patterns.
+3. **Verify Past History** [Project Manager]: Read [.antigravity/session/lessons_learned.md](../session/lessons_learned.md) and list past failure patterns.
 // turbo
 4. **Enumerate Hypotheses** [Project Manager]: List **at least three** hypotheses in task.md explaining why the issue is occurring.
 // turbo
@@ -22,11 +22,11 @@ Fixing is not development. Identify the root cause of the bug and resolve it wit
 // turbo
 7. **Verify Effect** [Engineer]: Perform self-verification to ensure the reproduction test passes.
 // turbo
-8. **Regression Check** [Compliance Auditor]: Run `scripts/verify_compliance.sh`, cargo tests, and external audits to prove that no new breakage has occurred.
+8. **Regression Check** [Compliance Auditor]: Run `scripts/audit/verify_compliance.sh`, cargo tests, and external audits to prove that no new breakage has occurred.
 // turbo
-9. **Root-Cause Reflection** [Compliance Auditor & Project Manager]: Analyze the bug's cause into a lesson in `.antigravity/reflections.md` and `lessons_learned.md`. Determine if a new protocol entry is required to prevent recurrence.
+9. **Root-Cause Reflection** [Compliance Auditor & Project Manager]: Analyze the bug's cause into a lesson in [docs/conventions/reflections.md](../../docs/conventions/reflections.md) and `lessons_learned.md`. Determine if a new protocol entry is required to prevent recurrence.
 // turbo
-10. **Record & Finish** [Project Manager]: Record final results in task.md, regression_log.md, and handoff.md, then end the session.
+10. **Record & Finish** [Project Manager]: Record final results in task.md, lessons_learned.md, and handoff.md, then end the session.
 
 ## Completion Requirements
 
