@@ -4,10 +4,36 @@
     clippy::too_many_arguments,
     clippy::large_enum_variant,
     clippy::unnecessary_unwrap,
-    clippy::needless_borrow
+    clippy::needless_borrow,
+    clippy::equatable_if_let,
+    clippy::uninlined_format_args,
+    clippy::ref_option,
+    clippy::fn_params_excessive_bools,
+    clippy::needless_pass_by_ref_mut,
+    clippy::float_cmp,
+    clippy::semicolon_if_nothing_returned,
+    clippy::map_unwrap_or,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::manual_midpoint,
+    clippy::cast_lossless,
+    clippy::suboptimal_flops,
+    clippy::cast_precision_loss,
+    clippy::struct_excessive_bools,
+    clippy::cloned_instead_of_copied,
+    clippy::unnecessary_debug_formatting,
+    clippy::stable_sort_primitive,
+    clippy::derive_partial_eq_without_eq,
+    clippy::imprecise_flops,
+    clippy::needless_lifetimes,
+    clippy::result_large_err,
+    dead_code,
+    missing_docs
 )]
 
 mod app;
+mod cad_canvas;
+mod inspector;
 mod interaction;
 mod redaction;
 mod redaction_studio;

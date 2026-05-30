@@ -191,7 +191,7 @@ impl USTRegistry {
         false
     }
 
-    fn find_node_by_id_recursive<'a>(current: &'a USTNode, id: usize) -> Option<&'a USTNode> {
+    pub fn find_node_by_id_recursive<'a>(current: &'a USTNode, id: usize) -> Option<&'a USTNode> {
         if current.id == id {
             return Some(current);
         }

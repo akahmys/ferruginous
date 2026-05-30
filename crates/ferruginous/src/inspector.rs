@@ -1,0 +1,157 @@
+#[derive(Clone, Debug)]
+pub struct InspectorEntry {
+    pub key: String,
+    pub val_type: String,
+    pub raw_value: String,
+    pub compliance_rule: &'static str,
+    pub warning: Option<&'static str>,
+}
+
+pub struct ArlingtonInspectorPanel {
+    pub active_object_name: String,
+    pub search_query: String,
+}
+
+impl ArlingtonInspectorPanel {
+    pub fn new() -> Self {
+        Self {
+            active_object_name: "Catalog (Root)".to_string(),
+            search_query: String::new(),
+        }
+    }
+
+    /// Simulates PDF dictionary structures for the selected tag/node.
+    fn get_mock_dictionary_for_node(&self, tag: &str) -> Vec<InspectorEntry> {
+        match tag {
+            "Catalog" | "Document" => vec![
+                InspectorEntry {
+                    key: "Type".to_string(),
+                    val_type: "Name".to_string(),
+                    raw_value: "/Catalog".to_string(),
+                    compliance_rule: "ISO 32000-2: Required. Must be /Catalog.",
+                    warning: None,
+                },
+                InspectorEntry {
+                    key: "Version".to_string(),
+                    val_type: "Name".to_string(),
+                    raw_value: "/2.0".to_string(),
+                    compliance_rule: "ISO 32000-2: Specifies PDF 2.0 version.",
+                    warning: None,
+                },
+                InspectorEntry {
+                    key: "MarkInfo".to_string(),
+                    val_type: "Dictionary".to_string(),
+                    raw_value: "<< /Marked true >>".to_string(),
+                    compliance_rule: "PDF/UA-2: Required. Must specify /Marked true.",
+                    warning: None,
+                },
+                InspectorEntry {
+                    key: "Lang".to_string(),
+                    val_type: "String".to_string(),
+                    raw_value: "()".to_string(),
+                    compliance_rule: "PDF/UA-2: Primary natural language. Must not be empty.",
+                    warning: Some("🚨 Empty language catalog. Natural language string must be defined for text synthesis!"),
+                },
+            ],
+            "Figure" => vec![
+                InspectorEntry {
+                    key: "Type".to_string(),
+                    val_type: "Name".to_string(),
+                    raw_value: "/StructElem".to_string(),
+                    compliance_rule: "Required type for structure elements.",
+                    warning: None,
+                },
+                InspectorEntry {
+                    key: "S".to_string(),
+                    val_type: "Name".to_string(),
+                    raw_value: "/Figure".to_string(),
+                    compliance_rule: "Tag identifier representing visual figures.",
+                    warning: None,
+                },
+                InspectorEntry {
+                    key: "Alt".to_string(),
+                    val_type: "String".to_string(),
+                    raw_value: "None".to_string(),
+                    compliance_rule: "PDF/UA-2 Checkpoint 3.1: Alternative descriptions required for non-text objects.",
+                    warning: Some("🚨 Matterhorn violation: Alternative description (Alt) missing for /Figure structural element!"),
+                },
+            ],
+            _ => vec![
+                InspectorEntry {
+                    key: "Type".to_string(),
+                    val_type: "Name".to_string(),
+                    raw_value: "/StructElem".to_string(),
+                    compliance_rule: "Required type.",
+                    warning: None,
+                },
+                InspectorEntry {
+                    key: "S".to_string(),
+                    val_type: "Name".to_string(),
+                    raw_value: format!("/{}", tag),
+                    compliance_rule: "Semantic tag designation.",
+                    warning: None,
+                },
+                InspectorEntry {
+                    key: "Pg".to_string(),
+                    val_type: "IndirectRef".to_string(),
+                    raw_value: "3 0 R".to_string(),
+                    compliance_rule: "Page object dictionary mapping reference.",
+                    warning: None,
+                },
+            ],
+        }
+    }
+
+    pub fn show(&mut self, ui: &mut egui::Ui, selected_tag: Option<&str>) {
+        let tag = selected_tag.unwrap_or("Catalog");
+        self.active_object_name = format!("Dictionary: <{}>", tag);
+
+        ui.vertical(|ui| {
+            ui.heading("🔍 Arlington Dictionary Inspector");
+            ui.add_space(5.0);
+
+            // Filter search input
+            ui.horizontal(|ui| {
+                ui.label("Filter:");
+                ui.text_edit_singleline(&mut self.search_query);
+                if ui.button("Clear").clicked() {
+                    self.search_query.clear();
+                }
+            });
+
+            ui.separator();
+            ui.colored_label(egui::Color32::LIGHT_BLUE, &self.active_object_name);
+            ui.add_space(5.0);
+
+            let entries = self.get_mock_dictionary_for_node(tag);
+
+            egui::ScrollArea::vertical().id_salt("inspector_scroll").show(ui, |ui| {
+                for entry in entries {
+                    if !self.search_query.is_empty() 
+                        && !entry.key.to_lowercase().contains(&self.search_query.to_lowercase()) 
+                    {
+                        continue;
+                    }
+
+                    ui.group(|ui| {
+                        ui.horizontal(|ui| {
+                            ui.colored_label(egui::Color32::from_rgb(255, 128, 0), &entry.key);
+                            ui.label(":");
+                            ui.colored_label(egui::Color32::LIGHT_GRAY, format!("{}  =>  ", entry.val_type));
+                            ui.monospace(&entry.raw_value);
+                        });
+
+                        ui.add_space(2.0);
+                        ui.small(entry.compliance_rule);
+
+                        if let Some(warn) = entry.warning {
+                            ui.add_space(3.0);
+                            ui.colored_label(egui::Color32::from_rgb(255, 80, 80), warn);
+                        }
+                    });
+                    ui.add_space(5.0);
+                }
+            });
+        });
+    }
+}

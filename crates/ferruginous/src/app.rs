@@ -47,6 +47,12 @@ pub struct FerruginousApp {
     pub cert_password: String,
     pub signature_position: Option<(usize, egui::Rect)>, // (page_index, rect in PDF user space)
     pub is_placing_signature: bool,
+
+    // CAD snappers & Inspector
+    pub cad_snap_engine: crate::cad_canvas::CadSnapEngine,
+    pub caliper_tool: crate::cad_canvas::CaliperTool,
+    pub arlington_inspector: crate::inspector::ArlingtonInspectorPanel,
+    pub show_inspector: bool,
 }
 
 impl FerruginousApp {
@@ -91,6 +97,12 @@ impl FerruginousApp {
             cert_password: String::new(),
             signature_position: None,
             is_placing_signature: false,
+
+            // CAD & Inspector Defaults
+            cad_snap_engine: crate::cad_canvas::CadSnapEngine::new(),
+            caliper_tool: crate::cad_canvas::CaliperTool::new(),
+            arlington_inspector: crate::inspector::ArlingtonInspectorPanel::new(),
+            show_inspector: false,
         }
     }
 
@@ -287,6 +299,19 @@ impl FerruginousApp {
 
                 if self.is_placing_signature {
                     self.handle_signature_placement_interaction(ui, visible_index, page_screen_rect, unscaled_h, zoom);
+                } else if self.caliper_tool.is_active {
+                    if let Some(spans) = self.page_spans.get(&visible_index) {
+                        self.caliper_tool.handle_interaction(
+                            ui,
+                            visible_index,
+                            page_screen_rect,
+                            unscaled_h,
+                            zoom,
+                            &mut self.cad_snap_engine,
+                            spans,
+                        );
+                        self.caliper_tool.draw_overlay(ui, page_screen_rect, unscaled_h, zoom);
+                    }
                 } else if self.redaction_manager.is_active {
                     self.redaction_manager.handle_interaction(
                         ui,
@@ -545,6 +570,7 @@ impl FerruginousApp {
                     if self.redaction_manager.is_active && !active_before {
                         self.selection_manager.clear();
                         self.selection_manager.is_tagging_brush_active = false;
+                        self.caliper_tool.is_active = false;
                     }
 
                     ui.separator();
@@ -555,7 +581,24 @@ impl FerruginousApp {
                     if self.selection_manager.is_tagging_brush_active && !tagging_before {
                         self.selection_manager.clear();
                         self.redaction_manager.is_active = false;
+                        self.caliper_tool.is_active = false;
                     }
+
+                    ui.separator();
+
+                    // Caliper Brush toggle
+                    let caliper_before = self.caliper_tool.is_active;
+                    ui.toggle_value(&mut self.caliper_tool.is_active, "📏 Caliper Brush");
+                    if self.caliper_tool.is_active && !caliper_before {
+                        self.selection_manager.clear();
+                        self.redaction_manager.is_active = false;
+                        self.selection_manager.is_tagging_brush_active = false;
+                    }
+
+                    ui.separator();
+
+                    // Arlington Inspector toggle
+                    ui.toggle_value(&mut self.show_inspector, "🔍 Inspector");
 
                     ui.separator();
                     if ui.button("💾 Export PDF").clicked() {
@@ -751,6 +794,20 @@ impl eframe::App for FerruginousApp {
                         &mut self.redaction_manager,
                     );
                 });
+
+            if self.show_inspector {
+                let selected_tag = self.ust_registry.selected_node_id
+                    .and_then(|id| self.ust_registry.root.as_ref()
+                        .and_then(|r| crate::sidebar::USTRegistry::find_node_by_id_recursive(r, id))
+                        .map(|n| n.tag.as_str())
+                    );
+                egui::Panel::bottom("inspector_panel")
+                    .resizable(true)
+                    .default_size(220.0)
+                    .show_inside(ui, |ui| {
+                        self.arlington_inspector.show(ui, selected_tag);
+                    });
+            }
         }
 
         self.update_vello(ui, frame);
