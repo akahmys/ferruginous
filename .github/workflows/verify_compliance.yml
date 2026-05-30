@@ -27,6 +27,11 @@ jobs:
     - name: Rust Cache
       uses: Swatinem/rust-cache@v2
 
+    - name: Install System Dependencies (Linux GUI Build Requirements)
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libx11-dev libxcb1-dev libxcursor-dev libxi-dev libxrandr-dev libudev-dev libasound2-dev libegl1-mesa-dev libwayland-dev
+
     - name: Run Secret Scanning Script
       run: |
         chmod +x ./scripts/audit/verify_secrets.sh
@@ -41,3 +46,9 @@ jobs:
       run: |
         chmod +x ./scripts/audit/verify_compliance.sh
         ./scripts/audit/verify_compliance.sh
+
+    - name: Build and Test GUI Application
+      run: |
+        cargo build --verbose -p ferruginous
+        cargo test --verbose --workspace
+

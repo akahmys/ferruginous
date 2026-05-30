@@ -126,29 +126,42 @@ If a task or bug fix fails the validation check (Auditor reject or test failure)
 
 ## 4. Execution Guidance for Subagent Spawning
 
-When spawning subagents using `invoke_subagent` or CLI commands, use these role-based prompts:
+All subagents must be declared and invoked using the native Antigravity 2.0 APIs. Below are the standard configuration schemas and role prompts.
 
 ### 4.1. PM Spawning an Engineer Subagent
-```
-Act as the Lead Engineer for Ferruginous. 
-Your task is to implement the following approved plan: <INSERT_PLAN_SECTION>.
-Ensure strict adherence to MSRV 1.94, and write unit tests for the changes.
-Do not modify the file outside the approved scope.
-Format your output with code diffs and explanation of changes.
-```
+*   **Definition (`define_subagent`)**:
+    *   `enable_write_tools = true`
+    *   `enable_mcp_tools = true` (code search/index)
+*   **Invocation (`invoke_subagent`)**:
+    *   `Workspace = "branch"` (highly recommended to isolate file modifications)
+*   **System/Task Prompt**:
+    ```
+    Act as the Lead Engineer for Ferruginous.
+    Your task is to implement the following approved plan: <INSERT_PLAN_SECTION>.
+    Ensure strict adherence to MSRV 1.94, and write unit tests for the changes.
+    Do not modify files outside the approved scope.
+    Format your output with detailed explanations of changes and compile status.
+    ```
 
 ### 4.2. PM Spawning an Auditor Subagent
-```
-Act as the Compliance Auditor for Ferruginous.
-Your task is to audit the proposed changes in the following files: <INSERT_FILE_PATHS>.
-Verify compliance with:
-1. ISO 32000-2 (Clause X.Y)
-2. .antigravity/rules/hardening.md (RR-15 ruleset)
-Execute the cargo test command and verify that all tests pass.
-Provide a clear "APPROVED" or "REJECTED" decision with reasons.
-```
+*   **Definition (`define_subagent`)**:
+    *   `enable_write_tools = false` (strict read-only enforcement)
+    *   `enable_mcp_tools = true` (to lookup PDF specifications)
+*   **Invocation (`invoke_subagent`)**:
+    *   `Workspace = "inherit"` (allows reading active files/changes)
+*   **System/Task Prompt**:
+    ```
+    Act as the Compliance Auditor for Ferruginous.
+    Your task is to audit the proposed changes in the following files: <INSERT_FILE_PATHS>.
+    Verify compliance with:
+    1. ISO 32000-2 (Clause X.Y)
+    2. .antigravity/rules/hardening.md (RR-15 ruleset)
+    Execute validation commands or inspect codebase state.
+    Provide a clear "APPROVED" or "REJECTED" decision with objective evidence.
+    ```
 
 ---
+
 
 ## 5. Advanced Multi-Agent Design Protocols (Best Practices)
 

@@ -54,7 +54,16 @@ impl<'a> StructureVisitor<'a> {
                         Object::Reference(h) => {
                             self.stack.push_back(h);
                         }
-                        _ => {} // MCR or OBJR are leaves, handled by the Auditor
+                        Object::Boolean(_)
+                        | Object::Integer(_)
+                        | Object::Real(_)
+                        | Object::String(_)
+                        | Object::Name(_)
+                        | Object::Dictionary(_)
+                        | Object::Stream(_, _)
+                        | Object::Hex(_)
+                        | Object::Text(_)
+                        | Object::Null => {}
                     }
                 }
             }
@@ -79,6 +88,8 @@ pub struct AuditFinding {
     pub severity: String,
     /// A human-readable message describing the issue.
     pub message: String,
+    /// The object handle ID associated with this finding, if any.
+    pub handle_id: Option<u32>,
 }
 
 impl<'a> MatterhornAuditor<'a> {
@@ -121,6 +132,7 @@ impl<'a> MatterhornAuditor<'a> {
                         message: format!(
                             "Heading level skipped: {tag_str} follows {last_heading_level}"
                         ),
+                        handle_id: Some(element_handle.index()),
                     });
                 }
                 last_heading_level = level;
@@ -132,6 +144,7 @@ impl<'a> MatterhornAuditor<'a> {
                     checkpoint: "13-001".into(),
                     severity: "Error".into(),
                     message: "Figure element missing /Alt text".into(),
+                    handle_id: Some(element_handle.index()),
                 });
             }
         }

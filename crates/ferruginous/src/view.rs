@@ -19,6 +19,24 @@ impl PDFView {
 
 
 
+    pub fn center_on_rect(&mut self, viewport_rect: egui::Rect, page_layout: &PageLayout, rect: [f32; 4]) {
+        let pdf_center_x = (rect[0] + rect[2]) / 2.0;
+        let pdf_center_y = (rect[1] + rect[3]) / 2.0;
+        
+        let unscaled_h = page_layout.rect.height();
+        
+        // Convert to egui page-local coordinate system (Y=0 is top)
+        let local_x = pdf_center_x;
+        let local_y = unscaled_h - pdf_center_y;
+        
+        // In virtual space (relative to layout center/top):
+        let page_local_pos = page_layout.rect.min + egui::vec2(local_x, local_y);
+        
+        // We want origin + page_local_pos * zoom = viewport_rect.center()
+        let origin_no_pan = egui::pos2(viewport_rect.center().x, viewport_rect.min.y + 20.0);
+        self.pan = viewport_rect.center().to_vec2() - origin_no_pan.to_vec2() - page_local_pos.to_vec2() * self.zoom;
+    }
+
     pub fn show_virtual(
         &mut self,
         ui: &mut egui::Ui,
@@ -28,6 +46,7 @@ impl PDFView {
         redaction_highlights: &BTreeMap<usize, Vec<egui::Rect>>,
         active_redaction_drag: &Option<(usize, egui::Rect)>,
         structural_highlight: &Option<(usize, egui::Rect)>,
+        signature_highlight: &Option<(usize, egui::Rect)>,
     ) {
         let (rect, response) = ui.allocate_at_least(ui.available_size(), egui::Sense::drag());
         self.handle_input(ui, &response);
@@ -96,6 +115,17 @@ impl PDFView {
                             0.0,
                             egui::Color32::BLACK,
                         );
+                        
+                        // Render visually accurate high-contrast redacted text overlay for preview mode
+                        if redact_rect.width() > 60.0 && redact_rect.height() > 12.0 {
+                            ui.painter().text(
+                                redact_rect.center(),
+                                egui::Align2::CENTER_CENTER,
+                                "[REDACTED]",
+                                egui::FontId::monospace(9.0),
+                                egui::Color32::from_rgb(255, 75, 75), // Coral high-visibility red
+                            );
+                        }
                     }
                 }
 
@@ -119,16 +149,62 @@ impl PDFView {
                 // Render structural highlight (orange outline with translucent fill) if selected in sidebar
                 if let Some((highlight_page, highlight_rect)) = structural_highlight {
                     if *highlight_page == layout.index {
+                        let time = ui.ctx().input(|i| i.time);
+                        let pulse = (time * 6.0).sin().abs() as f32; // Pulse between 0.0 and 1.0
+                        let outline_color = egui::Color32::from_rgb(255, 165, 0);
+                        let fill_opacity = 20 + (pulse * 35.0) as u8;
+                        let stroke_w = 2.0 + pulse * 2.0;
+
                         ui.painter().rect_stroke(
                             *highlight_rect,
                             0.0,
-                            egui::Stroke::new(2.5, egui::Color32::from_rgb(255, 165, 0)), // Orange-Yellow outline
+                            egui::Stroke::new(stroke_w, outline_color),
                             egui::StrokeKind::Outside,
                         );
                         ui.painter().rect_filled(
                             *highlight_rect,
                             0.0,
-                            egui::Color32::from_rgba_unmultiplied(255, 165, 0, 30), // Translucent orange fill
+                            egui::Color32::from_rgba_unmultiplied(255, 165, 0, fill_opacity),
+                        );
+                        
+                        // Request continuous repaint for smooth pulsing micro-animation!
+                        ui.ctx().request_repaint();
+                    }
+                }
+
+                // Render visual digital signature placement field beautifully if set
+                if let Some((sig_page, sig_rect)) = signature_highlight {
+                    if *sig_page == layout.index {
+                        // Draw beautiful semi-transparent gold/amber background with double borders
+                        ui.painter().rect_filled(
+                            *sig_rect,
+                            4.0,
+                            egui::Color32::from_rgba_unmultiplied(226, 135, 67, 30), // Gold/Amber semi-translucent fill
+                        );
+                        ui.painter().rect_stroke(
+                            *sig_rect,
+                            4.0,
+                            egui::Stroke::new(2.0, egui::Color32::from_rgb(226, 135, 67)), // Solid Gold border
+                            egui::StrokeKind::Outside,
+                        );
+
+                        // Draw diagonal crossing lines
+                        ui.painter().line_segment(
+                            [sig_rect.left_top(), sig_rect.right_bottom()],
+                            egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(226, 135, 67, 100)),
+                        );
+                        ui.painter().line_segment(
+                            [sig_rect.right_top(), sig_rect.left_bottom()],
+                            egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(226, 135, 67, 100)),
+                        );
+
+                        // Render text description
+                        ui.painter().text(
+                            sig_rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            "🔏 [ DIGITAL SIGNATURE FIELD ]",
+                            egui::FontId::monospace(12.0),
+                            egui::Color32::from_rgb(226, 135, 67),
                         );
                     }
                 }

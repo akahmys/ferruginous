@@ -18,6 +18,9 @@ pub enum WorkerRequest {
         vacuum: bool,
         upgrade_pdf20: bool,
         redaction_zones: Vec<crate::redaction::RedactionZone>,
+        cert_path: Option<std::path::PathBuf>,
+        cert_password: String,
+        signature_position: Option<(usize, [f32; 4])>,
     },
 }
 
@@ -28,7 +31,7 @@ pub enum WorkerResponse {
         page_sizes: Vec<(f64, f64)>, // (width, height)
         page_texts: Vec<String>,
         ust_root: Option<crate::sidebar::USTNode>,
-        audit_findings: Vec<(String, String, String)>, // (checkpoint, severity, message)
+        audit_findings: Vec<(String, String, String, Option<u32>)>, // (checkpoint, severity, message, handle_id)
     },
     PageRendered {
         index: usize,
@@ -36,7 +39,7 @@ pub enum WorkerResponse {
         scene: Arc<Scene>,
     },
     AuditFindings {
-        findings: Vec<(String, String, String)>,
+        findings: Vec<(String, String, String, Option<u32>)>,
     },
     DocumentSaved {
         path: std::path::PathBuf,
@@ -57,14 +60,14 @@ pub fn run_worker(rx: Receiver<WorkerRequest>, tx: Sender<WorkerResponse>) {
             WorkerRequest::UpdateNode { handle_id, tag, alt_text } => {
                 handle_update_node(&mut current_doc, handle_id, tag, alt_text, &tx);
             }
-            WorkerRequest::Save { path, compress, linearize, vacuum, upgrade_pdf20, redaction_zones } => {
-                handle_save(&current_doc, path, compress, linearize, vacuum, upgrade_pdf20, redaction_zones, &tx);
+            WorkerRequest::Save { path, compress, linearize, vacuum, upgrade_pdf20, redaction_zones, cert_path, cert_password, signature_position } => {
+                handle_save(&current_doc, path, compress, linearize, vacuum, upgrade_pdf20, redaction_zones, cert_path, cert_password, signature_position, &tx);
             }
         }
     }
 }
 
-use ferruginous_core::{Handle, Object, PdfArena};
+use ferruginous_core::{Handle, Object, PdfArena, PdfName};
 
 fn handle_open(data: Bytes, name: Option<String>, tx: &Sender<WorkerResponse>) -> Option<PdfDocument> {
     match PdfDocument::open(data) {
@@ -94,7 +97,7 @@ fn handle_open(data: Bytes, name: Option<String>, tx: &Sender<WorkerResponse>) -
                                 let auditor = ferruginous_sdk::structure::MatterhornAuditor::new(arena);
                                 if let Ok(findings) = auditor.audit(str_root_ref) {
                                     for f in findings {
-                                        audit_findings.push((f.checkpoint, f.severity, f.message));
+                                        audit_findings.push((f.checkpoint, f.severity, f.message, f.handle_id));
                                     }
                                 }
                             }
@@ -133,24 +136,68 @@ fn handle_open(data: Bytes, name: Option<String>, tx: &Sender<WorkerResponse>) -
     }
 }
 
-fn parse_struct_node(arena: &PdfArena, handle: Handle<Object>, next_id: &mut usize) -> Option<crate::sidebar::USTNode> {
-    let obj = arena.get_object(handle)?;
-    let dh = obj.as_dict_handle()?;
-    let dict = arena.get_dict(dh)?;
+fn parse_bbox_helper(arena: &PdfArena, bbox_obj: &Object) -> Option<[f32; 4]> {
+    let array_h = bbox_obj.resolve(arena).as_array()?;
+    let arr = arena.get_array(array_h)?;
+    if arr.len() != 4 {
+        return None;
+    }
+    let x1 = arr[0].resolve(arena).as_f64().unwrap_or(0.0) as f32;
+    let y1 = arr[1].resolve(arena).as_f64().unwrap_or(0.0) as f32;
+    let x2 = arr[2].resolve(arena).as_f64().unwrap_or(0.0) as f32;
+    let y2 = arr[3].resolve(arena).as_f64().unwrap_or(0.0) as f32;
+    Some([x1, y1, x2, y2])
+}
 
+fn parse_kids_helper(
+    arena: &PdfArena,
+    kids_obj: &Object,
+    next_id: &mut usize,
+    children: &mut Vec<crate::sidebar::USTNode>,
+) {
+    match kids_obj.resolve(arena) {
+        Object::Array(ah) => {
+            if let Some(array) = arena.get_array(ah) {
+                for kid in array {
+                    if let Some(kid_ref) = kid.resolve(arena).as_reference() {
+                        if let Some(child_node) = parse_struct_node(arena, kid_ref, next_id) {
+                            children.push(child_node);
+                        }
+                    }
+                }
+            }
+        }
+        Object::Reference(kid_ref) => {
+            if let Some(child_node) = parse_struct_node(arena, kid_ref, next_id) {
+                children.push(child_node);
+            }
+        }
+        Object::Boolean(_)
+        | Object::Integer(_)
+        | Object::Real(_)
+        | Object::String(_)
+        | Object::Name(_)
+        | Object::Dictionary(_)
+        | Object::Stream(_, _)
+        | Object::Hex(_)
+        | Object::Text(_)
+        | Object::Null => {}
+    }
+}
+
+fn parse_tag_helper(arena: &PdfArena, dict: &std::collections::BTreeMap<Handle<PdfName>, Object>) -> String {
     let type_key = arena.name("Type");
     let s_key = arena.name("S");
-    let alt_key = arena.name("Alt");
-    let kids_key = arena.name("K");
 
-    let tag = if let Some(s_obj) = dict.get(&s_key) {
-        if let Some(name_h) = s_obj.resolve(arena).as_name() {
+    if let Some(s_obj) = dict.get(&s_key) {
+        let resolved: Object = s_obj.resolve(arena);
+        if let Some(name_h) = resolved.as_name() {
             arena.get_name(name_h).map(|n| n.as_str().to_string()).unwrap_or_else(|| "P".to_string())
         } else {
             "P".to_string()
         }
     } else {
-        let type_val = dict.get(&type_key).and_then(|t| t.resolve(arena).as_name());
+        let type_val = dict.get(&type_key).and_then(|t: &Object| t.resolve(arena).as_name());
         if let Some(tv) = type_val {
             if arena.get_name(tv).map(|n| n.as_str() == "StructTreeRoot").unwrap_or(false) {
                 "Document".to_string()
@@ -160,65 +207,34 @@ fn parse_struct_node(arena: &PdfArena, handle: Handle<Object>, next_id: &mut usi
         } else {
             "P".to_string()
         }
-    };
+    }
+}
 
-        let title = tag.clone();
-    let alt_text = if let Some(alt_obj) = dict.get(&alt_key) {
-        if let Some(bytes) = alt_obj.resolve(arena).as_string() {
-            String::from_utf8(bytes.to_vec()).ok()
-        } else {
-            None
-        }
-    } else {
-        None
-    };
+fn parse_alt_text_helper(arena: &PdfArena, dict: &std::collections::BTreeMap<Handle<PdfName>, Object>) -> Option<String> {
+    let alt_key = arena.name("Alt");
+    let alt_obj = dict.get(&alt_key)?;
+    let resolved = alt_obj.resolve(arena);
+    let bytes = resolved.as_string()?;
+    String::from_utf8(bytes.to_vec()).ok()
+}
 
-    let rect = if let Some(bbox_obj) = dict.get(&arena.name("BBox")) {
-        if let Some(array_h) = bbox_obj.resolve(arena).as_array() {
-            if let Some(arr) = arena.get_array(array_h) {
-                if arr.len() == 4 {
-                    let x1 = arr[0].resolve(arena).as_f64().unwrap_or(0.0) as f32;
-                    let y1 = arr[1].resolve(arena).as_f64().unwrap_or(0.0) as f32;
-                    let x2 = arr[2].resolve(arena).as_f64().unwrap_or(0.0) as f32;
-                    let y2 = arr[3].resolve(arena).as_f64().unwrap_or(0.0) as f32;
-                    Some([x1, y1, x2, y2])
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    } else {
-        None
-    };
+fn parse_struct_node(arena: &PdfArena, handle: Handle<Object>, next_id: &mut usize) -> Option<crate::sidebar::USTNode> {
+    let obj = arena.get_object(handle)?;
+    let dh = obj.as_dict_handle()?;
+    let dict = arena.get_dict(dh)?;
+
+    let tag = parse_tag_helper(arena, &dict);
+    let title = tag.clone();
+    let alt_text = parse_alt_text_helper(arena, &dict);
+
+    let rect = dict.get(&arena.name("BBox")).and_then(|b| parse_bbox_helper(arena, b));
 
     let id = *next_id;
     *next_id += 1;
 
     let mut children = Vec::new();
-    if let Some(kids) = dict.get(&kids_key) {
-        match kids.resolve(arena) {
-            Object::Array(ah) => {
-                if let Some(array) = arena.get_array(ah) {
-                    for kid in array {
-                        if let Some(kid_ref) = kid.resolve(arena).as_reference() {
-                            if let Some(child_node) = parse_struct_node(arena, kid_ref, next_id) {
-                                children.push(child_node);
-                            }
-                        }
-                    }
-                }
-            }
-            Object::Reference(kid_ref) => {
-                if let Some(child_node) = parse_struct_node(arena, kid_ref, next_id) {
-                    children.push(child_node);
-                }
-            }
-            _ => {} // Ignore leaves like MCR or OBJR for structure tree visualization
-        }
+    if let Some(kids) = dict.get(&arena.name("K")) {
+        parse_kids_helper(arena, kids, next_id, &mut children);
     }
 
     Some(crate::sidebar::USTNode {
@@ -291,7 +307,7 @@ fn handle_update_node(
                         let auditor = ferruginous_sdk::structure::MatterhornAuditor::new(arena);
                         if let Ok(audit_res) = auditor.audit(str_root_ref) {
                             for f in audit_res {
-                                findings.push((f.checkpoint, f.severity, f.message));
+                                findings.push((f.checkpoint, f.severity, f.message, f.handle_id));
                             }
                         }
                     }
@@ -310,6 +326,9 @@ fn handle_save(
     vacuum: bool,
     upgrade_pdf20: bool,
     redaction_zones: Vec<crate::redaction::RedactionZone>,
+    cert_path: Option<std::path::PathBuf>,
+    _cert_password: String,
+    signature_position: Option<(usize, [f32; 4])>,
     tx: &Sender<WorkerResponse>,
 ) {
     let Some(doc) = doc_opt else {
@@ -340,7 +359,21 @@ fn handle_save(
         ..ferruginous_sdk::SaveOptions::default()
     };
 
-    let res = if linearize {
+    let res = if let Some(cp) = cert_path {
+        // Read certificate file bytes
+        let cert_bytes = std::fs::read(&cp).unwrap_or_default();
+        let sign_opts = ferruginous_sdk::SignOptions {
+            reason: Some("Signed via Ferruginous Production Studio".to_string()),
+            location: Some("Tokyo, Japan".to_string()),
+            contact_info: Some("support@ferruginous.com".to_string()),
+            name: Some("Ferruginous Digital Signer".to_string()),
+            certificate: Some(cert_bytes.clone()),
+            private_key: Some(cert_bytes),
+            page_index: signature_position.map(|(idx, _)| idx).unwrap_or(0),
+            rect: signature_position.map(|(_, rect)| rect).unwrap_or([50.0, 50.0, 200.0, 100.0]),
+        };
+        doc.save_signed(&path, version, &options, &sign_opts)
+    } else if linearize {
         doc.save_linearized(&path, version, &options)
     } else {
         doc.save_with_options(&path, version, &options)

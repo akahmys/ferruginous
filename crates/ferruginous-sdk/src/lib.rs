@@ -1018,6 +1018,7 @@ impl PdfDocument {
                 checkpoint: "00-001".into(),
                 severity: "Warning".into(),
                 message: "Document missing Structural Tree Root. Not a tagged PDF.".into(),
+                handle_id: None,
             }])
         }
     }

@@ -10,6 +10,7 @@
 mod app;
 mod interaction;
 mod redaction;
+mod redaction_studio;
 mod sidebar;
 mod vello_egui;
 mod view;

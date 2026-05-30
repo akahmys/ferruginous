@@ -6,12 +6,21 @@ pub struct TextSpan {
     pub rect: egui::Rect, // PDF User Space coordinates (0, 0 at bottom-left)
 }
 
+#[derive(Clone, Debug)]
+pub struct PendingTagRequest {
+    pub page_index: usize,
+    pub combined_rect: egui::Rect, // PDF User Space coordinates
+    pub text: String,
+}
+
 pub struct SelectionManager {
     pub active_page: Option<usize>,
     pub drag_start: Option<egui::Pos2>, // PDF User Space coordinates
     pub drag_current: Option<egui::Pos2>, // PDF User Space coordinates
     pub selected_text: String,
     pub highlights: BTreeMap<usize, Vec<egui::Rect>>, // Page -> Screen-space highlights
+    pub is_tagging_brush_active: bool,
+    pub pending_tag_request: Option<PendingTagRequest>,
 }
 
 impl Default for SelectionManager {
@@ -28,6 +37,8 @@ impl SelectionManager {
             drag_current: None,
             selected_text: String::new(),
             highlights: BTreeMap::new(),
+            is_tagging_brush_active: false,
+            pending_tag_request: None,
         }
     }
 
@@ -37,6 +48,7 @@ impl SelectionManager {
         self.drag_current = None;
         self.selected_text.clear();
         self.highlights.clear();
+        self.pending_tag_request = None;
     }
 
     /// Maps screen coordinate to PDF space.
@@ -204,6 +216,106 @@ impl SelectionManager {
         }
 
         self.selected_text = text;
+        self.highlights.insert(page_index, page_highlights);
+    }
+
+    pub fn handle_tagging_brush_interaction(
+        &mut self,
+        ui: &mut egui::Ui,
+        page_index: usize,
+        page_rect: egui::Rect,
+        page_unscaled_h: f32,
+        spans: &[TextSpan],
+        zoom: f32,
+    ) {
+        if !self.is_tagging_brush_active {
+            return;
+        }
+
+        let (_rect, response) = ui.allocate_at_least(page_rect.size(), egui::Sense::drag());
+        let screen_pos = ui.input(|i| i.pointer.hover_pos());
+
+        if response.drag_started() && let Some(pos) = screen_pos {
+            self.clear();
+            self.drag_start = Some(Self::screen_to_pdf(page_rect, zoom, page_unscaled_h, pos));
+        }
+
+        if response.dragged() && let Some(pos) = screen_pos {
+            self.drag_current = Some(Self::screen_to_pdf(page_rect, zoom, page_unscaled_h, pos));
+            self.recalculate_brush_highlights(page_index, page_rect, page_unscaled_h, spans, zoom);
+        }
+
+        if response.drag_stopped() {
+            if let (Some(start), Some(current)) = (self.drag_start, self.drag_current) {
+                let select_rect = egui::Rect::from_two_pos(start, current);
+                if select_rect.width() > 2.0 && select_rect.height() > 2.0 {
+                    let mut intersecting_spans = Vec::new();
+                    let mut combined_rect = egui::Rect::NOTHING;
+
+                    for span in spans {
+                        if select_rect.intersects(span.rect) {
+                            intersecting_spans.push(span.clone());
+                            combined_rect = combined_rect.union(span.rect);
+                        }
+                    }
+
+                    if !intersecting_spans.is_empty() {
+                        let combined_text = intersecting_spans
+                            .iter()
+                            .map(|s| s.text.clone())
+                            .collect::<Vec<String>>()
+                            .join(" ");
+
+                        self.pending_tag_request = Some(PendingTagRequest {
+                            page_index,
+                            combined_rect,
+                            text: combined_text,
+                        });
+                    }
+                }
+            }
+            self.drag_start = None;
+            self.drag_current = None;
+        }
+
+        if response.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
+        }
+    }
+
+    fn recalculate_brush_highlights(
+        &mut self,
+        page_index: usize,
+        page_rect: egui::Rect,
+        page_unscaled_h: f32,
+        spans: &[TextSpan],
+        zoom: f32,
+    ) {
+        let (Some(start), Some(current)) = (self.drag_start, self.drag_current) else {
+            return;
+        };
+
+        let select_rect = egui::Rect::from_two_pos(start, current);
+        let mut page_highlights = Vec::new();
+
+        for span in spans {
+            if select_rect.intersects(span.rect) {
+                let screen_min = Self::pdf_to_screen(
+                    page_rect,
+                    zoom,
+                    page_unscaled_h,
+                    egui::pos2(span.rect.min.x, span.rect.max.y),
+                );
+                let screen_max = Self::pdf_to_screen(
+                    page_rect,
+                    zoom,
+                    page_unscaled_h,
+                    egui::pos2(span.rect.max.x, span.rect.min.y),
+                );
+                page_highlights.push(egui::Rect::from_min_max(screen_min, screen_max));
+            }
+        }
+
         self.highlights.insert(page_index, page_highlights);
     }
 }
