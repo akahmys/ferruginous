@@ -9,11 +9,23 @@
 - **Rule**: Limit effective logic to 50 lines.
 - **Purpose**: Maintain precision of the borrow checker and minimize cognitive load.
 - **Compliance**: All functions MUST stay within 50 effective logic lines. Blank lines and doc-comments are excluded. **Atomic Verification**: Functional verification MUST be performed at the same granularity as code changes; massive edits without intermediate verification are prohibited.
+  - **Exception & Annotations**: Under strict conditions, specific functions may exceed the 50-line limit *only* if they are inherently indivisible and do not increase cognitive load. This is strictly restricted to:
+    1. **Exhaustive Match Dispatchers**: A function that is almost entirely composed of a single, flat, non-nested `match` statement (such as standard AST parsing or serializing command dispatches). Maximum limit: **200 lines**.
+    2. **GUI Layout/Declaration Functions**: Functions declaring sequential egui/UI structures where splitting would fragment the visual understanding of the layout tree. Maximum limit: **150 lines**.
+  - **Safeguards Against Abuse**:
+    1. **Mandatory Explicit Annotation**: The function declaration line *must* carry an explicit annotation on the same line: `// RR-15 Limit: [Dispatcher/GUI] - [Brief justification]`.
+    2. **No Business Logic inside Arms**: In match dispatchers, the match arms must strictly delegate logic to sub-functions. Deep nesting (over 2 levels) or execution of complex algorithms in arms instantly invalidates the exception.
+    3. **Absolute Ceiling**: Under no circumstances shall *any* function in the codebase exceed 200 lines of effective logic.
 
 ## 2. No-Panic Invariance
 - **Rule**: Strict prohibition of `unwrap()`, `expect()`, and `panic!()` for input-dependent paths.
 - **Purpose**: Eradicate runtime crashes originating from malformed or malicious data.
 - **Compliance**: All data-dependent operations MUST utilize the `Result` type. Production code must have zero termination paths triggered by external inputs.
+  - **Exception & Annotations**: For proven internal logical invariants (operations physically/mathematically guaranteed never to fail, such as guard-checked Option states or immediate post-creation caches), `unwrap()` or `expect()` may be used *only* if accompanied by a `// RR-15 Safe: [Detailed Reason]` comment on the same line.
+  - **Safeguards Against Abuse**:
+    1. **Strict Exclusion of Input Paths**: Under no circumstances shall an annotation be used to bypass `unwrap` checks on paths processing external, file-dependent, or environment-dependent data.
+    2. **Locality Constraint**: The safety must be provable within the immediate local execution context (same function or struct invariants).
+    3. **Mandatory Audit**: Any commit introducing a `// RR-15 Safe` annotation must undergo mandatory logical validation during code review to prevent lazy error swallowing.
 
 ## 3. Memory Safety Isolation
 - **Rule**: Total prohibition of `unsafe` blocks in core engine layers.

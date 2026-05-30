@@ -115,24 +115,26 @@ impl RedactionManager {
         }
 
         // 2. Draw current active drag box
-        let active_drag = if self.is_active && self.drag_start.is_some() && self.drag_current.is_some() {
-            let start = self.drag_start.unwrap();
-            let current = self.drag_current.unwrap();
-            let drag_rect = egui::Rect::from_two_pos(start, current);
+        let active_drag = if self.is_active {
+            if let (Some(start), Some(current)) = (self.drag_start, self.drag_current) {
+                let drag_rect = egui::Rect::from_two_pos(start, current);
 
-            let screen_min = SelectionManager::pdf_to_screen(
-                page_rect,
-                zoom,
-                page_unscaled_h,
-                egui::pos2(drag_rect.min.x, drag_rect.max.y),
-            );
-            let screen_max = SelectionManager::pdf_to_screen(
-                page_rect,
-                zoom,
-                page_unscaled_h,
-                egui::pos2(drag_rect.max.x, drag_rect.min.y),
-            );
-            Some(egui::Rect::from_min_max(screen_min, screen_max))
+                let screen_min = SelectionManager::pdf_to_screen(
+                    page_rect,
+                    zoom,
+                    page_unscaled_h,
+                    egui::pos2(drag_rect.min.x, drag_rect.max.y),
+                );
+                let screen_max = SelectionManager::pdf_to_screen(
+                    page_rect,
+                    zoom,
+                    page_unscaled_h,
+                    egui::pos2(drag_rect.max.x, drag_rect.min.y),
+                );
+                Some(egui::Rect::from_min_max(screen_min, screen_max))
+            } else {
+                None
+            }
         } else {
             None
         };

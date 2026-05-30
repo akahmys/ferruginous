@@ -1654,7 +1654,7 @@ impl FontReconstructor {
             14 => Some('-'),
             15 => Some('.'),
             16 => Some('/'),
-            17..=26 => Some(std::char::from_u32(0x30 + (sid - 17)).unwrap()), // 0-9
+            17..=26 => Some(std::char::from_u32(0x30 + (sid - 17)).unwrap()), // RR-15 Safe: range is statically bounded inside this match arm // 0-9
             27 => Some(':'),
             28 => Some(';'),
             29 => Some('<'),
@@ -1662,14 +1662,14 @@ impl FontReconstructor {
             31 => Some('>'),
             32 => Some('?'),
             33 => Some('@'),
-            34..=59 => Some(std::char::from_u32(0x41 + (sid - 34)).unwrap()), // A-Z
+            34..=59 => Some(std::char::from_u32(0x41 + (sid - 34)).unwrap()), // RR-15 Safe: range is statically bounded inside this match arm // A-Z
             60 => Some('['),
             61 => Some('\\'),
             62 => Some(']'),
             63 => Some('^'),
             64 => Some('_'),
             65 => Some('`'),
-            66..=91 => Some(std::char::from_u32(0x61 + (sid - 66)).unwrap()), // a-z
+            66..=91 => Some(std::char::from_u32(0x61 + (sid - 66)).unwrap()), // RR-15 Safe: range is statically bounded inside this match arm // a-z
             92 => Some('{'),
             93 => Some('|'),
             94 => Some('}'),

@@ -10,8 +10,9 @@ use ferruginous_sdk::{PdfDocument, PdfStandard, TraceContext};
 use inquire::Confirm;
 use std::path::PathBuf;
 
+/// Common options for PDF ingestion/reading
 #[derive(clap::Args, Debug, Clone)]
-struct IngestionArgs {
+struct IngestArgs {
     /// Disable active 2-pass refinement (UTF-8 normalization)
     #[arg(long)]
     no_refinement: bool,
@@ -26,8 +27,8 @@ struct IngestionArgs {
     force_fallback: bool,
 }
 
-impl From<IngestionArgs> for ferruginous_core::ingest::IngestionOptions {
-    fn from(args: IngestionArgs) -> Self {
+impl From<IngestArgs> for ferruginous_core::ingest::IngestionOptions {
+    fn from(args: IngestArgs) -> Self {
         Self {
             active_refinement: !args.no_refinement,
             sublime_metadata: !args.no_metadata_recovery,
@@ -42,8 +43,9 @@ impl From<IngestionArgs> for ferruginous_core::ingest::IngestionOptions {
     }
 }
 
+/// Common options for PDF writing/optimization
 #[derive(clap::Args, Debug, Clone)]
-struct OptimizationArgs {
+struct SaveArgs {
     /// Opt-in for stream compression (FlateDecode)
     #[arg(long)]
     compress: bool,
@@ -85,8 +87,8 @@ struct OptimizationArgs {
     dry_run: bool,
 }
 
-impl From<OptimizationArgs> for ferruginous_sdk::SaveOptions {
-    fn from(args: OptimizationArgs) -> Self {
+impl From<SaveArgs> for ferruginous_sdk::SaveOptions {
+    fn from(args: SaveArgs) -> Self {
         Self {
             compress: args.compress,
             compression_level: 9,
@@ -109,6 +111,7 @@ impl From<OptimizationArgs> for ferruginous_sdk::SaveOptions {
         }
     }
 }
+
 #[derive(Parser, Debug)]
 #[command(name = "fepdf")]
 #[command(author = "Ferruginous Developers")]
@@ -121,20 +124,20 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    /// Analyze document structure and compliance
-    Analyze {
+    /// Inspect document characteristics (Read-Only)
+    Inspect {
         #[command(subcommand)]
-        sub: AnalyzeSubcommands,
+        sub: InspectSubcommands,
     },
-    /// Manipulate document pages and structure
-    Manipulate {
+    /// Edit document pages and structure (Interactive & Structural Edit)
+    Edit {
         #[command(subcommand)]
-        sub: ManipulateSubcommands,
+        sub: EditSubcommands,
     },
-    /// Produce new document versions or formats
-    Produce {
+    /// Publish final compliance-certified outputs
+    Publish {
         #[command(subcommand)]
-        sub: ProduceSubcommands,
+        sub: PublishSubcommands,
     },
     /// Low-level debugging and inspection tools
     Debug {
@@ -146,7 +149,7 @@ enum Commands {
 }
 
 #[derive(Subcommand, Debug)]
-enum AnalyzeSubcommands {
+enum InspectSubcommands {
     /// Display document information and font summary
     Info {
         /// Input PDF file
@@ -156,7 +159,7 @@ enum AnalyzeSubcommands {
         format: String,
         /// Ingestion control options
         #[command(flatten)]
-        ingest: IngestionArgs,
+        ingest: IngestArgs,
     },
     /// Perform detailed compliance audit (UA-2, ISO 32000-2)
     Audit {
@@ -167,7 +170,7 @@ enum AnalyzeSubcommands {
         format: String,
         /// Ingestion control options
         #[command(flatten)]
-        ingest: IngestionArgs,
+        ingest: IngestArgs,
     },
     /// Extract text content
     Text {
@@ -178,12 +181,20 @@ enum AnalyzeSubcommands {
         pages: Option<String>,
         /// Ingestion control options
         #[command(flatten)]
-        ingest: IngestionArgs,
+        ingest: IngestArgs,
+    },
+    /// Dump hierarchical logical structure tree
+    Tree {
+        /// Input PDF file
+        input: PathBuf,
+        /// Ingestion control options
+        #[command(flatten)]
+        ingest: IngestArgs,
     },
 }
 
 #[derive(Subcommand, Debug)]
-enum ManipulateSubcommands {
+enum EditSubcommands {
     /// Merge multiple PDF files into one
     Merge {
         /// Input PDF files
@@ -193,10 +204,10 @@ enum ManipulateSubcommands {
         output: PathBuf,
         /// Ingestion control options
         #[command(flatten)]
-        ingest: IngestionArgs,
-        /// Optimization options
+        ingest: IngestArgs,
+        /// Output optimization options
         #[command(flatten)]
-        opt: OptimizationArgs,
+        save: SaveArgs,
     },
     /// Split or extract pages from a PDF
     Split {
@@ -210,10 +221,10 @@ enum ManipulateSubcommands {
         pages: Option<String>,
         /// Ingestion control options
         #[command(flatten)]
-        ingest: IngestionArgs,
-        /// Optimization options
+        ingest: IngestArgs,
+        /// Output optimization options
         #[command(flatten)]
-        opt: OptimizationArgs,
+        save: SaveArgs,
     },
     /// Rotate specific pages in the document
     Rotate {
@@ -230,10 +241,10 @@ enum ManipulateSubcommands {
         angle: i32,
         /// Ingestion control options
         #[command(flatten)]
-        ingest: IngestionArgs,
-        /// Optimization options
+        ingest: IngestArgs,
+        /// Output optimization options
         #[command(flatten)]
-        opt: OptimizationArgs,
+        save: SaveArgs,
     },
     /// Attempt to repair a corrupted PDF document
     Repair {
@@ -243,13 +254,13 @@ enum ManipulateSubcommands {
         output: PathBuf,
         /// Ingestion control options
         #[command(flatten)]
-        ingest: IngestionArgs,
-        /// Optimization options
+        ingest: IngestArgs,
+        /// Output optimization options
         #[command(flatten)]
-        opt: OptimizationArgs,
+        save: SaveArgs,
     },
     /// Heuristically re-tag the document logical structure for UA-2
-    Retag {
+    Tag {
         /// Input PDF file
         input: PathBuf,
         /// Output repaired PDF file (Explicitly required)
@@ -260,15 +271,15 @@ enum ManipulateSubcommands {
         wizard: bool,
         /// Ingestion control options
         #[command(flatten)]
-        ingest: IngestionArgs,
-        /// Optimization options
+        ingest: IngestArgs,
+        /// Output optimization options
         #[command(flatten)]
-        opt: OptimizationArgs,
+        save: SaveArgs,
     },
 }
 
 #[derive(Subcommand, Debug)]
-enum ProduceSubcommands {
+enum PublishSubcommands {
     /// Upgrade document to PDF 2.0 and modern standards (A-4, X-6, UA-2)
     Upgrade {
         /// Input PDF file
@@ -289,10 +300,10 @@ enum ProduceSubcommands {
         diff: bool,
         /// Ingestion control options
         #[command(flatten)]
-        ingest: IngestionArgs,
-        /// Optimization options
+        ingest: IngestArgs,
+        /// Output optimization options
         #[command(flatten)]
-        opt: OptimizationArgs,
+        save: SaveArgs,
     },
     /// Render a PDF page to an image (PNG, JPEG)
     Render {
@@ -305,7 +316,7 @@ enum ProduceSubcommands {
         page: usize,
         /// Ingestion control options
         #[command(flatten)]
-        ingest: IngestionArgs,
+        ingest: IngestArgs,
     },
     /// Digitally sign the PDF document
     Sign {
@@ -330,10 +341,10 @@ enum ProduceSubcommands {
         rect: Option<Vec<f32>>,
         /// Ingestion control options
         #[command(flatten)]
-        ingest: IngestionArgs,
-        /// Optimization options
+        ingest: IngestArgs,
+        /// Output optimization options
         #[command(flatten)]
-        opt: OptimizationArgs,
+        save: SaveArgs,
     },
 }
 
@@ -351,15 +362,7 @@ enum DebugSubcommands {
         gen_num: u16,
         /// Ingestion control options
         #[command(flatten)]
-        ingest: IngestionArgs,
-    },
-    /// Dump hierarchical object structure tree
-    Structure {
-        /// Input PDF file
-        input: PathBuf,
-        /// Ingestion control options
-        #[command(flatten)]
-        ingest: IngestionArgs,
+        ingest: IngestArgs,
     },
     /// Display arena memory and object statistics
     Stats {
@@ -367,10 +370,10 @@ enum DebugSubcommands {
         input: PathBuf,
         /// Ingestion control options
         #[command(flatten)]
-        ingest: IngestionArgs,
+        ingest: IngestArgs,
     },
     /// Extract raw font data
-    ExtractFont {
+    FontExtract {
         /// Input PDF file
         input: PathBuf,
         /// Object ID of the font
@@ -379,7 +382,7 @@ enum DebugSubcommands {
         output: PathBuf,
         /// Ingestion control options
         #[command(flatten)]
-        ingest: IngestionArgs,
+        ingest: IngestArgs,
     },
     /// Trace glyph mapping for a specific character
     TraceGlyph {
@@ -393,7 +396,7 @@ enum DebugSubcommands {
         font: Option<String>,
         /// Ingestion control options
         #[command(flatten)]
-        ingest: IngestionArgs,
+        ingest: IngestArgs,
     },
 }
 
@@ -403,36 +406,39 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Analyze { sub } => match sub {
-            AnalyzeSubcommands::Info { input, format, ingest } => {
+        Commands::Inspect { sub } => match sub {
+            InspectSubcommands::Info { input, format, ingest } => {
                 handle_info(input, format, ingest)?;
             }
-            AnalyzeSubcommands::Audit { input, format, ingest } => {
+            InspectSubcommands::Audit { input, format, ingest } => {
                 handle_audit(input, format, ingest)?;
             }
-            AnalyzeSubcommands::Text { input, pages, ingest } => {
+            InspectSubcommands::Text { input, pages, ingest } => {
                 handle_text(input, pages, ingest)?;
             }
-        },
-        Commands::Manipulate { sub } => match sub {
-            ManipulateSubcommands::Merge { inputs, output, ingest, opt } => {
-                handle_merge(inputs, output, ingest, opt)?;
-            }
-            ManipulateSubcommands::Split { input, output, pages, ingest, opt } => {
-                handle_split(input, output, pages, ingest, opt)?;
-            }
-            ManipulateSubcommands::Rotate { input, output, pages, angle, ingest, opt } => {
-                handle_rotate(input, output, pages, angle, ingest, opt)?;
-            }
-            ManipulateSubcommands::Repair { input, output, ingest, opt } => {
-                handle_repair(input, output, ingest, opt)?;
-            }
-            ManipulateSubcommands::Retag { input, output, wizard, ingest, opt } => {
-                handle_retag(input, output, wizard, ingest, opt)?;
+            InspectSubcommands::Tree { input, ingest } => {
+                handle_debug_structure(input, ingest)?;
             }
         },
-        Commands::Produce { sub } => match sub {
-            ProduceSubcommands::Upgrade {
+        Commands::Edit { sub } => match sub {
+            EditSubcommands::Merge { inputs, output, ingest, save } => {
+                handle_merge(inputs, output, ingest, save)?;
+            }
+            EditSubcommands::Split { input, output, pages, ingest, save } => {
+                handle_split(input, output, pages, ingest, save)?;
+            }
+            EditSubcommands::Rotate { input, output, pages, angle, ingest, save } => {
+                handle_rotate(input, output, pages, angle, ingest, save)?;
+            }
+            EditSubcommands::Repair { input, output, ingest, save } => {
+                handle_repair(input, output, ingest, save)?;
+            }
+            EditSubcommands::Tag { input, output, wizard, ingest, save } => {
+                handle_retag(input, output, wizard, ingest, save)?;
+            }
+        },
+        Commands::Publish { sub } => match sub {
+            PublishSubcommands::Upgrade {
                 input,
                 output,
                 standard,
@@ -440,14 +446,14 @@ async fn main() -> Result<()> {
                 linearize,
                 diff,
                 ingest,
-                opt,
+                save,
             } => {
-                handle_upgrade(input, output, standard, icc_profile, linearize, diff, ingest, opt)?;
+                handle_upgrade(input, output, standard, icc_profile, linearize, diff, ingest, save)?;
             }
-            ProduceSubcommands::Render { input, output, page, ingest } => {
+            PublishSubcommands::Render { input, output, page, ingest } => {
                 handle_render(input, output, page, ingest)?;
             }
-            ProduceSubcommands::Sign {
+            PublishSubcommands::Sign {
                 input,
                 output,
                 reason,
@@ -456,22 +462,19 @@ async fn main() -> Result<()> {
                 page,
                 rect,
                 ingest,
-                opt,
+                save,
             } => {
-                handle_sign(input, output, reason, location, name, page, rect, ingest, opt)?;
+                handle_sign(input, output, reason, location, name, page, rect, ingest, save)?;
             }
         },
         Commands::Debug { sub } => match sub {
             DebugSubcommands::Dump { input, obj, gen_num, ingest } => {
                 handle_debug_dump(input, obj, gen_num, ingest)?;
             }
-            DebugSubcommands::Structure { input, ingest } => {
-                handle_debug_structure(input, ingest)?;
-            }
             DebugSubcommands::Stats { input, ingest } => {
                 handle_debug_stats(input, ingest)?;
             }
-            DebugSubcommands::ExtractFont { input, obj_num, output, ingest } => {
+            DebugSubcommands::FontExtract { input, obj_num, output, ingest } => {
                 handle_extract_font(input, obj_num, output, ingest)?;
             }
             DebugSubcommands::TraceGlyph { input, unicode, font, ingest } => {
@@ -489,8 +492,8 @@ async fn main() -> Result<()> {
 fn handle_merge(
     inputs: Vec<PathBuf>,
     output: PathBuf,
-    ingest: IngestionArgs,
-    opt: OptimizationArgs,
+    ingest: IngestArgs,
+    save: SaveArgs,
 ) -> Result<()> {
     println!("fepdf merge: Combining {} files into {:?}", inputs.len(), output);
     let mut sources = Vec::new();
@@ -503,7 +506,7 @@ fn handle_merge(
     }
 
     let merged = PdfDocument::merge(sources).map_err(|e| anyhow::anyhow!("{:?}", e))?;
-    let save_options: ferruginous_sdk::SaveOptions = opt.into();
+    let save_options: ferruginous_sdk::SaveOptions = save.into();
     merged
         .save_with_options(&output, "2.0", &save_options)
         .map_err(|e| anyhow::anyhow!("{:?}", e))?;
@@ -515,8 +518,8 @@ fn handle_split(
     input: PathBuf,
     output: PathBuf,
     pages: Option<String>,
-    ingest: IngestionArgs,
-    opt: OptimizationArgs,
+    ingest: IngestArgs,
+    save: SaveArgs,
 ) -> Result<()> {
     println!("fepdf split: Extracting pages from {:?}", input);
     let data = std::fs::read(&input).with_context(|| "Failed to read input")?;
@@ -530,7 +533,7 @@ fn handle_split(
 
     let extracted = doc.extract_pages(target_indices).map_err(|e| anyhow::anyhow!("{:?}", e))?;
 
-    let save_options: ferruginous_sdk::SaveOptions = opt.into();
+    let save_options: ferruginous_sdk::SaveOptions = save.into();
     extracted
         .save_with_options(&output, "2.0", &save_options)
         .map_err(|e| anyhow::anyhow!("{:?}", e))?;
@@ -668,7 +671,7 @@ fn render_summary_text(
     Ok(())
 }
 
-fn handle_info(input: PathBuf, format: String, ingest: IngestionArgs) -> Result<()> {
+fn handle_info(input: PathBuf, format: String, ingest: IngestArgs) -> Result<()> {
     if format == "text" {
         println!("fepdf info: Analyzing {:?}", input);
     }
@@ -686,7 +689,7 @@ fn handle_info(input: PathBuf, format: String, ingest: IngestionArgs) -> Result<
     Ok(())
 }
 
-fn handle_audit(input: PathBuf, format: String, ingest: IngestionArgs) -> Result<()> {
+fn handle_audit(input: PathBuf, format: String, ingest: IngestArgs) -> Result<()> {
     if format == "text" {
         println!("fepdf audit: Performing compliance check on {:?}", input);
     }
@@ -708,7 +711,7 @@ fn handle_debug_dump(
     input: PathBuf,
     obj_id: u32,
     _gen_num: u16,
-    ingest: IngestionArgs,
+    ingest: IngestArgs,
 ) -> Result<()> {
     println!("fepdf debug dump: Object {} from {:?}", obj_id, input);
     let data = std::fs::read(&input).with_context(|| "Failed to read input")?;
@@ -781,7 +784,7 @@ fn handle_debug_dump(
     Ok(())
 }
 
-fn handle_debug_structure(input: PathBuf, ingest: IngestionArgs) -> Result<()> {
+fn handle_debug_structure(input: PathBuf, ingest: IngestArgs) -> Result<()> {
     println!("fepdf debug structure: Hierarchical tree for {:?}", input);
     let data = std::fs::read(&input).with_context(|| "Failed to read input")?;
     let ingest_options: ferruginous_core::ingest::IngestionOptions = ingest.into();
@@ -793,7 +796,7 @@ fn handle_debug_structure(input: PathBuf, ingest: IngestionArgs) -> Result<()> {
     Ok(())
 }
 
-fn handle_debug_stats(input: PathBuf, ingest: IngestionArgs) -> Result<()> {
+fn handle_debug_stats(input: PathBuf, ingest: IngestArgs) -> Result<()> {
     println!("fepdf debug stats: Analyzing memory usage for {:?}", input);
     let data = std::fs::read(&input).with_context(|| "Failed to read input")?;
     let ingest_options: ferruginous_core::ingest::IngestionOptions = ingest.into();
@@ -823,11 +826,11 @@ fn handle_upgrade(
     icc_profile: Option<PathBuf>,
     linearize: bool,
     diff: bool,
-    ingest: IngestionArgs,
-    opt: OptimizationArgs,
+    ingest: IngestArgs,
+    save: SaveArgs,
 ) -> Result<()> {
     println!("fepdf upgrade: {:?} -> {:?}", input, output);
-    if opt.dry_run {
+    if save.dry_run {
         println!("DRY RUN: Simulation mode enabled. No file will be written.");
     }
 
@@ -854,7 +857,7 @@ fn handle_upgrade(
         doc.upgrade_to_standard(std).map_err(|e| anyhow::anyhow!("{:?}", e))?;
     }
 
-    let save_options: ferruginous_sdk::SaveOptions = opt.into();
+    let save_options: ferruginous_sdk::SaveOptions = save.into();
 
     if linearize {
         doc.save_linearized(&output, "2.0", &save_options)
@@ -870,8 +873,8 @@ fn handle_upgrade(
 fn handle_repair(
     input: PathBuf,
     output: PathBuf,
-    ingest: IngestionArgs,
-    opt: OptimizationArgs,
+    ingest: IngestArgs,
+    save: SaveArgs,
 ) -> Result<()> {
     println!("fepdf repair: Attempting to salvage corrupted document {:?}", input);
     let data = std::fs::read(&input).with_context(|| "Failed to read input")?;
@@ -879,7 +882,7 @@ fn handle_repair(
     let doc = PdfDocument::open_and_repair_with_options(data.into(), &ingest_options)
         .map_err(|e| anyhow::anyhow!("{:?}", e))?;
 
-    let save_options: ferruginous_sdk::SaveOptions = opt.into();
+    let save_options: ferruginous_sdk::SaveOptions = save.into();
     doc.save_with_options(&output, "2.0", &save_options).map_err(|e| anyhow::anyhow!("{:?}", e))?;
     println!("SUCCESS: Repaired output saved to {:?}", output);
     Ok(())
@@ -890,8 +893,8 @@ fn handle_rotate(
     output: PathBuf,
     pages: Option<String>,
     angle: i32,
-    ingest: IngestionArgs,
-    opt: OptimizationArgs,
+    ingest: IngestArgs,
+    save: SaveArgs,
 ) -> Result<()> {
     println!("fepdf rotate: Rotating pages in {:?} by {} degrees...", input, angle);
     let data = std::fs::read(&input).with_context(|| "Failed to read input")?;
@@ -907,7 +910,7 @@ fn handle_rotate(
         doc.set_page_rotation(idx, angle).map_err(|e| anyhow::anyhow!("{:?}", e))?;
     }
 
-    let save_options: ferruginous_sdk::SaveOptions = opt.into();
+    let save_options: ferruginous_sdk::SaveOptions = save.into();
     doc.save_with_options(&output, "2.0", &save_options).map_err(|e| anyhow::anyhow!("{:?}", e))?;
     println!("SUCCESS: Rotated output saved to {:?}", output);
     Ok(())
@@ -917,7 +920,7 @@ fn handle_render(
     input: PathBuf,
     output: PathBuf,
     page_num: usize,
-    ingest: IngestionArgs,
+    ingest: IngestArgs,
 ) -> Result<()> {
     println!("fepdf render: Rendering page {} of {:?} to {:?}...", page_num, input, output);
     let data = std::fs::read(&input).with_context(|| "Failed to read input")?;
@@ -925,7 +928,7 @@ fn handle_render(
     let mut doc = PdfDocument::open_with_options(data.into(), &ingest_options)
         .map_err(|e| anyhow::anyhow!("{:?}", e))?;
 
-    // Phase 4: Host-level font discovery
+    // Host-level font discovery
     let mut system_fonts = std::collections::BTreeMap::new();
     let mincho_paths = [
         "/System/Library/Fonts/ヒラギノ明朝 ProN.ttc",
@@ -968,8 +971,8 @@ fn handle_retag(
     input: PathBuf,
     output: PathBuf,
     wizard: bool,
-    ingest: IngestionArgs,
-    opt: OptimizationArgs,
+    ingest: IngestArgs,
+    save: SaveArgs,
 ) -> Result<()> {
     println!("fepdf retag: {} -> {:?}", if wizard { "Wizard Mode" } else { "Automatic" }, output);
     let data = std::fs::read(&input).with_context(|| "Failed to read input")?;
@@ -998,13 +1001,13 @@ fn handle_retag(
         doc.retag_document().map_err(|e| anyhow::anyhow!("{:?}", e))?;
     }
 
-    let save_options: ferruginous_sdk::SaveOptions = opt.into();
+    let save_options: ferruginous_sdk::SaveOptions = save.into();
     doc.save_with_options(&output, "2.0", &save_options).map_err(|e| anyhow::anyhow!("{:?}", e))?;
     println!("SUCCESS: Re-tagged document saved to {:?}", output);
     Ok(())
 }
 
-fn handle_text(input: PathBuf, pages: Option<String>, ingest: IngestionArgs) -> Result<()> {
+fn handle_text(input: PathBuf, pages: Option<String>, ingest: IngestArgs) -> Result<()> {
     println!("fepdf text: Extracting text from {:?}", input);
     let data = std::fs::read(&input).with_context(|| "Failed to read input")?;
     let ingest_options: ferruginous_core::ingest::IngestionOptions = ingest.into();
@@ -1031,8 +1034,8 @@ fn handle_sign(
     name: Option<String>,
     page: usize,
     rect: Option<Vec<f32>>,
-    ingest: IngestionArgs,
-    opt: OptimizationArgs,
+    ingest: IngestArgs,
+    save: SaveArgs,
 ) -> Result<()> {
     println!("fepdf sign: {:?} -> {:?}", input, output);
     let data = std::fs::read(&input).with_context(|| "Failed to read input")?;
@@ -1056,7 +1059,7 @@ fn handle_sign(
         sign_options.rect = [50.0, 50.0, 200.0, 100.0]; // Default widget rect
     }
 
-    let save_options: ferruginous_sdk::SaveOptions = opt.into();
+    let save_options: ferruginous_sdk::SaveOptions = save.into();
     doc.save_signed(&output, "2.0", &save_options, &sign_options)
         .map_err(|e| anyhow::anyhow!("{:?}", e))?;
 
@@ -1176,11 +1179,12 @@ fn render_audit_text(summary: &ferruginous_sdk::DocumentSummary) {
         println!("Validated Clauses: {}", summary.compliance.iso_clauses.join(", "));
     }
 }
+
 fn handle_extract_font(
     input: PathBuf,
     obj_num: u32,
     _output: PathBuf,
-    ingest: IngestionArgs,
+    ingest: IngestArgs,
 ) -> Result<()> {
     let data = std::fs::read(&input).with_context(|| "Failed to read input")?;
     let ingest_options: ferruginous_core::ingest::IngestionOptions = ingest.into();
@@ -1222,7 +1226,7 @@ fn handle_debug_trace_glyph(
     input: PathBuf,
     unicode_str: String,
     font_filter: Option<String>,
-    ingest: IngestionArgs,
+    ingest: IngestArgs,
 ) -> Result<()> {
     println!("fepdf debug trace-glyph: Analyzing mapping for '{}' in {:?}", unicode_str, input);
 
@@ -1256,9 +1260,6 @@ fn handle_debug_trace_glyph(
         println!("Handle: {:?}", summary.handle);
 
         let mut ctx = TraceContext::new();
-        // Priority 1 in resolve_gid uses the Unicode hint.
-        // We find the CID match only for informational purposes here,
-        // as resolve_gid will prioritize the Unicode hint anyway.
         let cid_match = font.unicode_to_gid.get(&target_char).copied();
         if let Some(cid) = cid_match {
             println!("Note: Unicode character maps to CID {} in this font's CMap", cid);

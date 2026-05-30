@@ -9,6 +9,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   build:
@@ -29,11 +30,11 @@ jobs:
             binaries: "fepdf ferruginous"
           
           # Windows Targets (64-bit & 32-bit)
-          - os: windows-latest
+          - os: windows-2022
             target: x86_64-pc-windows-msvc
             artifact_name: fepdf-windows-x64
             binaries: "fepdf.exe ferruginous.exe"
-          - os: windows-latest
+          - os: windows-2022
             target: i686-pc-windows-msvc
             artifact_name: fepdf-windows-x86
             binaries: "fepdf.exe ferruginous.exe"

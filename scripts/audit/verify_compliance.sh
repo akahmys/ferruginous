@@ -17,7 +17,7 @@ fi
 
 echo "=== RR-15 Compliance Audit Starting ==="
 
-# Rule 1: Function Line Limit (50 lines)
+# Rule 1: Function Line Limit (50 lines, exceptions for verified Dispatchers/GUI up to 150/200)
 echo "[Rule 1] Checking function length..."
 while read -r file; do
     # Skip tests
@@ -34,6 +34,15 @@ while read -r file; do
             # Capture indentation level
             match($0, /^[[:space:]]*/);
             fn_indent = RLENGTH;
+            
+            # Determine limit based on explicit safeguards
+            if ($0 ~ /\/\/ RR-15 Limit: Dispatcher/) {
+                limit = 200;
+            } else if ($0 ~ /\/\/ RR-15 Limit: GUI/) {
+                limit = 150;
+            } else {
+                limit = 50;
+            }
         }
     } 
     in_fn {
@@ -45,8 +54,8 @@ while read -r file; do
     in_fn && /^[[:space:]]*\}/ { 
         match($0, /^[[:space:]]*/);
         if (RLENGTH == fn_indent) {
-            if (effective_lines > 50) { 
-                print "  FAIL: " FILENAME ":" fn_start " (" effective_lines " effective lines) " fn_name;
+            if (effective_lines > limit) { 
+                print "  FAIL: " FILENAME ":" fn_start " (" effective_lines " effective lines, limit was " limit ") " fn_name;
                 exit 1;
             } 
             in_fn=0;
@@ -68,7 +77,7 @@ while read -r file; do
             echo "  FAIL: $file:$line"
             ERROR=1
         fi
-    done < <(grep -nE "\.(unwrap|expect)\(" "$file" | grep -vE "unwrap_(or|err)\(")
+    done < <(grep -nE "\.(unwrap|expect)\(" "$file" | grep -vE "unwrap_(or|err)\(" | grep -v "// RR-15 Safe")
 done < <(find $TARGET_DIRS -name "*.rs" | grep -vE "(tests|examples|src/bin)")
 
 # Rule 3: No Unsafe

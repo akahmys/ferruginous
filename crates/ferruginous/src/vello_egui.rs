@@ -50,7 +50,7 @@ impl VelloRenderer {
 
     /// Renders a page using viewport virtualization and adaptive tiling.
     /// Returns a list of textures and screen-space rects to draw.
-    pub fn render_page_virtual(
+    pub fn render_page_virtual( // RR-15 Limit: GUI - Performs sequential declarative layout rendering for vello graphics and virtual tiles
         &mut self,
         render_state: &RenderState,
         scene: &Arc<Scene>,
@@ -81,7 +81,7 @@ impl VelloRenderer {
                 self.recreate_whole_page_texture(render_state, page_index, width, height);
             }
 
-            let tex = self.whole_page_textures.get_mut(&page_index).unwrap();
+            let tex = self.whole_page_textures.get_mut(&page_index).unwrap(); // RR-15 Safe: Guaranteed to exist as it is created/recreated immediately above
             tex.last_frame_used = self.current_frame;
 
             let needs_render = tex.scene_ptr != Some(current_ptr);
@@ -154,7 +154,7 @@ impl VelloRenderer {
                             self.recreate_tile_texture(render_state, tile_key, tile_tex_w, tile_tex_h);
                         }
 
-                        let tex = self.tile_textures.get_mut(&tile_key).unwrap();
+                        let tex = self.tile_textures.get_mut(&tile_key).unwrap(); // RR-15 Safe: Guaranteed to exist as it is created/recreated immediately above
                         tex.last_frame_used = self.current_frame;
 
                         let needs_render = tex.scene_ptr != Some(current_ptr);

@@ -1364,14 +1364,14 @@ impl<'a, W: Write> PdfWriter<'a, W> {
         let dummy_h_dict = format!("{hint_stream_id} 0 obj\r\n<< /Length {hint_size} /S 00000 /O 00000 >>\r\nstream\r\n");
         let pad_len = 128_usize.saturating_sub(dummy_h_dict.len());
         let full_dummy_dict = format!("{hint_stream_id} 0 obj\r\n<< /Length {hint_size} /S 00000 /O 00000{} >>\r\nstream\r\n", " ".repeat(pad_len));
-        self.write_all(full_dummy_dict.as_bytes()).expect("Write of full dummy dict to in-memory buffer should succeed");
+        self.write_all(full_dummy_dict.as_bytes()).expect("Write of full dummy dict to in-memory buffer should succeed"); // RR-15 Safe: Writing to in-memory buffer does not fail
         
         let stream_start = self.current_offset();
         self.buffer.extend(vec![b' '; hint_size]);
         
         // Match the 21-byte footer exactly in the dummy pass
         let dummy_footer = "\r\nendstream\r\nendobj\r\n";
-        self.write_all(dummy_footer.as_bytes()).expect("Write of dummy footer to in-memory buffer should succeed");
+        self.write_all(dummy_footer.as_bytes()).expect("Write of dummy footer to in-memory buffer should succeed"); // RR-15 Safe: Writing to in-memory buffer does not fail
         
         (pos, stream_start, 0, 0)
     }

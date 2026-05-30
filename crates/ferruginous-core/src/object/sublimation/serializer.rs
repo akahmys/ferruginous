@@ -14,7 +14,7 @@ pub fn serialize_commands(cmds: &[Command]) -> Vec<u8> {
     buffer
 }
 
-fn serialize_command(cmd: &Command, buf: &mut Vec<u8>) {
+fn serialize_command(cmd: &Command, buf: &mut Vec<u8>) { // RR-15 Limit: Dispatcher - Serializes high-level command IR via a single exhaustive flat match loop
     match cmd {
         Command::PushState => buf.extend_from_slice(b"q\n"),
         Command::PopState => buf.extend_from_slice(b"Q\n"),
@@ -276,13 +276,13 @@ pub fn serialize_image(
     _height: u32,
     _format: crate::graphics::PixelFormat,
     data: &[u8],
-) -> (Vec<u8>, Vec<String>) {
+) -> crate::error::PdfResult<(Vec<u8>, Vec<String>)> {
     // For now, use FlateDecode (lossless) as the default.
     // In a full implementation, we would check the format and potentially use DCTDecode for JPEG.
     let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
     use std::io::Write;
-    encoder.write_all(data).unwrap();
-    let compressed = encoder.finish().unwrap();
+    encoder.write_all(data)?;
+    let compressed = encoder.finish()?;
 
-    (compressed, vec!["FlateDecode".to_string()])
+    Ok((compressed, vec!["FlateDecode".to_string()]))
 }
