@@ -73,15 +73,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    if let Some(diff_img) = diff_image {
-        if let Some(diff_path) = &args.diff {
-            // Create directories if they don't exist
-            if let Some(parent) = diff_path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            diff_img.save(diff_path)?;
-            println!("Visual diff saved to: {}", diff_path.display());
+    if let (Some(diff_img), Some(diff_path)) = (diff_image, &args.diff) {
+        // Create directories if they don't exist
+        if let Some(parent) = diff_path.parent() {
+            std::fs::create_dir_all(parent)?;
         }
+        diff_img.save(diff_path)?;
+        println!("Visual diff saved to: {}", diff_path.display());
     }
 
     let diff_ratio = diff_pixels as f64 / total_pixels as f64;

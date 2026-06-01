@@ -102,124 +102,148 @@ impl PDFView {
                     );
                 }
 
-                // Render selection highlights
-                if let Some(hl_rects) = highlights.get(&layout.index) {
-                    for hl_rect in hl_rects {
-                        ui.painter().rect_filled(
-                            *hl_rect,
-                            0.0,
-                            egui::Color32::from_rgba_unmultiplied(0, 120, 215, 60), // Blue translucent highlight
-                        );
-                    }
-                }
-
-                // Render solid black redaction highlights
-                if let Some(redact_rects) = redaction_highlights.get(&layout.index) {
-                    for redact_rect in redact_rects {
-                        ui.painter().rect_filled(
-                            *redact_rect,
-                            0.0,
-                            egui::Color32::BLACK,
-                        );
-                        
-                        // Render visually accurate high-contrast redacted text overlay for preview mode
-                        if redact_rect.width() > 60.0 && redact_rect.height() > 12.0 {
-                            ui.painter().text(
-                                redact_rect.center(),
-                                egui::Align2::CENTER_CENTER,
-                                "[REDACTED]",
-                                egui::FontId::monospace(9.0),
-                                egui::Color32::from_rgb(255, 75, 75), // Coral high-visibility red
-                            );
-                        }
-                    }
-                }
-
-                // Render active red translucent redaction drag box if it belongs to this page
-                if let Some((active_page, drag_rect)) = active_redaction_drag {
-                    if *active_page == layout.index {
-                        ui.painter().rect_filled(
-                            *drag_rect,
-                            0.0,
-                            egui::Color32::from_rgba_unmultiplied(255, 0, 0, 100), // Red translucent
-                        );
-                        ui.painter().rect_stroke(
-                            *drag_rect,
-                            0.0,
-                            egui::Stroke::new(1.5, egui::Color32::RED),
-                            egui::StrokeKind::Outside,
-                        );
-                    }
-                }
-
-                // Render structural highlight (orange outline with translucent fill) if selected in sidebar
-                if let Some((highlight_page, highlight_rect)) = structural_highlight {
-                    if *highlight_page == layout.index {
-                        let time = ui.ctx().input(|i| i.time);
-                        let pulse = (time * 6.0).sin().abs() as f32; // Pulse between 0.0 and 1.0
-                        let outline_color = egui::Color32::from_rgb(255, 165, 0);
-                        let fill_opacity = 20 + (pulse * 35.0) as u8;
-                        let stroke_w = 2.0 + pulse * 2.0;
-
-                        ui.painter().rect_stroke(
-                            *highlight_rect,
-                            0.0,
-                            egui::Stroke::new(stroke_w, outline_color),
-                            egui::StrokeKind::Outside,
-                        );
-                        ui.painter().rect_filled(
-                            *highlight_rect,
-                            0.0,
-                            egui::Color32::from_rgba_unmultiplied(255, 165, 0, fill_opacity),
-                        );
-                        
-                        // Request continuous repaint for smooth pulsing micro-animation!
-                        ui.ctx().request_repaint();
-                    }
-                }
-
-                // Render visual digital signature placement field beautifully if set
-                if let Some((sig_page, sig_rect)) = signature_highlight {
-                    if *sig_page == layout.index {
-                        // Draw beautiful semi-transparent gold/amber background with double borders
-                        ui.painter().rect_filled(
-                            *sig_rect,
-                            4.0,
-                            egui::Color32::from_rgba_unmultiplied(226, 135, 67, 30), // Gold/Amber semi-translucent fill
-                        );
-                        ui.painter().rect_stroke(
-                            *sig_rect,
-                            4.0,
-                            egui::Stroke::new(2.0, egui::Color32::from_rgb(226, 135, 67)), // Solid Gold border
-                            egui::StrokeKind::Outside,
-                        );
-
-                        // Draw diagonal crossing lines
-                        ui.painter().line_segment(
-                            [sig_rect.left_top(), sig_rect.right_bottom()],
-                            egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(226, 135, 67, 100)),
-                        );
-                        ui.painter().line_segment(
-                            [sig_rect.right_top(), sig_rect.left_bottom()],
-                            egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(226, 135, 67, 100)),
-                        );
-
-                        // Render text description
-                        ui.painter().text(
-                            sig_rect.center(),
-                            egui::Align2::CENTER_CENTER,
-                            "🔏 [ DIGITAL SIGNATURE FIELD ]",
-                            egui::FontId::monospace(12.0),
-                            egui::Color32::from_rgb(226, 135, 67),
-                        );
-                    }
-                }
+                // Render overlays
+                self.draw_selection_highlights(ui, layout.index, highlights);
+                self.draw_redaction_highlights(ui, layout.index, redaction_highlights);
+                self.draw_active_redaction_drag(ui, layout.index, active_redaction_drag);
+                self.draw_structural_highlight(ui, layout.index, structural_highlight);
+                self.draw_signature_highlight(ui, layout.index, signature_highlight);
             }
         }
 
         self.visible_pages = new_visible;
         if response.hovered() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+        }
+    }
+
+    fn draw_selection_highlights(
+        &self,
+        ui: &mut egui::Ui,
+        page_index: usize,
+        highlights: &BTreeMap<usize, Vec<egui::Rect>>,
+    ) {
+        if let Some(hl_rects) = highlights.get(&page_index) {
+            for hl_rect in hl_rects {
+                ui.painter().rect_filled(
+                    *hl_rect,
+                    0.0,
+                    egui::Color32::from_rgba_unmultiplied(0, 120, 215, 60),
+                );
+            }
+        }
+    }
+
+    fn draw_redaction_highlights(
+        &self,
+        ui: &mut egui::Ui,
+        page_index: usize,
+        redaction_highlights: &BTreeMap<usize, Vec<egui::Rect>>,
+    ) {
+        if let Some(redact_rects) = redaction_highlights.get(&page_index) {
+            for redact_rect in redact_rects {
+                ui.painter().rect_filled(*redact_rect, 0.0, egui::Color32::BLACK);
+                if redact_rect.width() > 60.0 && redact_rect.height() > 12.0 {
+                    ui.painter().text(
+                        redact_rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        "[REDACTED]",
+                        egui::FontId::monospace(9.0),
+                        egui::Color32::from_rgb(255, 75, 75),
+                    );
+                }
+            }
+        }
+    }
+
+    fn draw_active_redaction_drag(
+        &self,
+        ui: &mut egui::Ui,
+        page_index: usize,
+        active_redaction_drag: &Option<(usize, egui::Rect)>,
+    ) {
+        if let Some((active_page, drag_rect)) = active_redaction_drag {
+            if *active_page == page_index {
+                ui.painter().rect_filled(
+                    *drag_rect,
+                    0.0,
+                    egui::Color32::from_rgba_unmultiplied(255, 0, 0, 100),
+                );
+                ui.painter().rect_stroke(
+                    *drag_rect,
+                    0.0,
+                    egui::Stroke::new(1.5, egui::Color32::RED),
+                    egui::StrokeKind::Outside,
+                );
+            }
+        }
+    }
+
+    fn draw_structural_highlight(
+        &self,
+        ui: &mut egui::Ui,
+        page_index: usize,
+        structural_highlight: &Option<(usize, egui::Rect)>,
+    ) {
+        if let Some((highlight_page, highlight_rect)) = structural_highlight {
+            if *highlight_page == page_index {
+                let time = ui.ctx().input(|i| i.time);
+                let pulse = (time * 6.0).sin().abs() as f32;
+                let outline_color = egui::Color32::from_rgb(255, 165, 0);
+                let fill_opacity = 20 + (pulse * 35.0) as u8;
+                let stroke_w = 2.0 + pulse * 2.0;
+
+                ui.painter().rect_stroke(
+                    *highlight_rect,
+                    0.0,
+                    egui::Stroke::new(stroke_w, outline_color),
+                    egui::StrokeKind::Outside,
+                );
+                ui.painter().rect_filled(
+                    *highlight_rect,
+                    0.0,
+                    egui::Color32::from_rgba_unmultiplied(255, 165, 0, fill_opacity),
+                );
+                ui.ctx().request_repaint();
+            }
+        }
+    }
+
+    fn draw_signature_highlight(
+        &self,
+        ui: &mut egui::Ui,
+        page_index: usize,
+        signature_highlight: &Option<(usize, egui::Rect)>,
+    ) {
+        if let Some((sig_page, sig_rect)) = signature_highlight {
+            if *sig_page == page_index {
+                ui.painter().rect_filled(
+                    *sig_rect,
+                    4.0,
+                    egui::Color32::from_rgba_unmultiplied(226, 135, 67, 30),
+                );
+                ui.painter().rect_stroke(
+                    *sig_rect,
+                    4.0,
+                    egui::Stroke::new(2.0, egui::Color32::from_rgb(226, 135, 67)),
+                    egui::StrokeKind::Outside,
+                );
+                ui.painter().line_segment(
+                    [sig_rect.left_top(), sig_rect.right_bottom()],
+                    egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(226, 135, 67, 100)),
+                );
+                ui.painter().line_segment(
+                    [sig_rect.right_top(), sig_rect.left_bottom()],
+                    egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(226, 135, 67, 100)),
+                );
+                ui.painter().text(
+                    sig_rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    "🔏 [ DIGITAL SIGNATURE FIELD ]",
+                    egui::FontId::monospace(12.0),
+                    egui::Color32::from_rgb(226, 135, 67),
+                );
+            }
         }
     }
 
