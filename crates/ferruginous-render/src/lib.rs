@@ -478,6 +478,10 @@ fn apply_image_smask(rgba_data: &mut [u8], mask: &SMaskData) {
     }
 }
 
+fn has_move_to(path: &BezPath) -> bool {
+    path.elements().iter().any(|el| matches!(el, kurbo::PathEl::MoveTo(_)))
+}
+
 impl RenderBackend for VelloBackend {
     fn transform(&mut self, transform: Affine) {
         self.state.transform *= transform;
@@ -495,6 +499,9 @@ impl RenderBackend for VelloBackend {
     }
 
     fn fill_path(&mut self, path: &BezPath, color: &Color, rule: WindingRule) {
+        if !has_move_to(path) {
+            return;
+        }
         let brush = to_vello_brush(color, self.state.fill_alpha as f32);
         let vello_rule = match rule {
             WindingRule::NonZero => vello::peniko::Fill::NonZero,
@@ -506,6 +513,9 @@ impl RenderBackend for VelloBackend {
     }
 
     fn stroke_path(&mut self, path: &BezPath, color: &Color, style: &StrokeStyle) {
+        if !has_move_to(path) {
+            return;
+        }
         let brush = to_vello_brush(color, self.state.stroke_alpha as f32);
         let mut stroke = Stroke::new(style.width);
         let cap = match style.cap {
@@ -525,6 +535,9 @@ impl RenderBackend for VelloBackend {
     }
 
     fn push_clip(&mut self, path: &BezPath, rule: WindingRule) {
+        if !has_move_to(path) {
+            return;
+        }
         let vello_rule = match rule {
             WindingRule::NonZero => vello::peniko::Fill::NonZero,
             WindingRule::EvenOdd => vello::peniko::Fill::EvenOdd,
