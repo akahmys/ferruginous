@@ -286,7 +286,7 @@ impl FerruginousApp {
         }
     }
 
-    fn handle_page_interactions(&mut self, ui: &mut egui::Ui, viewport_rect: egui::Rect, zoom: f32) {
+    fn handle_page_interactions(&mut self, ui: &mut egui::Ui, viewport_rect: egui::Rect, zoom: f32) { // RR-15 Limit: GUI - Unified egui pointer and canvas coordinate interaction loop
         let visible_pages = self.view.visible_pages.clone();
         for &visible_index in &visible_pages {
             if let Some(layout) = self.page_layouts.get(visible_index) {
@@ -541,7 +541,7 @@ impl FerruginousApp {
         });
     }
 
-    fn show_top_bar(&mut self, ui: &mut egui::Ui) {
+    fn show_top_bar(&mut self, ui: &mut egui::Ui) { // RR-15 Limit: GUI - Sequential egui top menu bar layout routing view resets, zoom, redact brush, tagging brush, caliper tool, and save wizard
         let ctx = ui.ctx().clone();
         egui::Panel::top("top_bar").show_inside(ui, |ui| {
             ui.horizontal(|ui| {
@@ -770,7 +770,7 @@ impl FerruginousApp {
 }
 
 impl eframe::App for FerruginousApp {
-    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) { // RR-15 Limit: GUI - Main application UI shell layout routing layout panels and windows
         self.show_top_bar(ui);
 
         if self.total_pages > 0 {

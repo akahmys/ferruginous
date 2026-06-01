@@ -395,6 +395,89 @@ impl Interpreter<'_> {
         Ok((total_adv_x, total_adv_y))
     }
 
+    fn setup_type3_transform(
+        &mut self,
+        res: &FontResource,
+        total_adv_x: f64,
+        total_adv_y: f64,
+        font_size: f64,
+        th: f64,
+    ) {
+        if let Some(m) = self.text_matrices {
+            let fm_f32 = res.font_matrix.unwrap_or([0.001, 0.0, 0.0, 0.001, 0.0, 0.0]);
+            let fm_f64 = [
+                f64::from(fm_f32[0]),
+                f64::from(fm_f32[1]),
+                f64::from(fm_f32[2]),
+                f64::from(fm_f32[3]),
+                f64::from(fm_f32[4]),
+                f64::from(fm_f32[5]),
+            ];
+            let h_scale = if res.wmode() == 1 { 1.0 } else { th };
+            let v_scale = if res.wmode() == 1 { th } else { 1.0 };
+            let text_to_pt =
+                kurbo::Affine::scale_non_uniform(font_size * h_scale, font_size * v_scale);
+            let local_to_text = kurbo::Affine::new(fm_f64);
+            let translate = kurbo::Affine::translate((total_adv_x, total_adv_y));
+
+            let target_mat = self.state.ctm.as_affine()
+                * m.tm.as_affine()
+                * translate
+                * text_to_pt
+                * local_to_text;
+            self.state.ctm = Matrix(target_mat.as_coeffs());
+            self.update_backend_transform();
+        }
+    }
+
+    fn execute_type3_stream(&mut self, stream_h: Handle<Object>, glyph_name: &str) {
+        self.type3_advance = None;
+        self.in_type3_glyph = true;
+        let old_stack = std::mem::take(&mut self.state_stack);
+        if let Err(e) = self.execute(stream_h) {
+            log::error!("[SDK] Failed to execute Type 3 glyph {glyph_name}: {e:?}");
+        }
+        self.state_stack = old_stack;
+        self.in_type3_glyph = false;
+    }
+
+    fn calculate_type3_advance(
+        &self,
+        res: &FontResource,
+        glyph: &ferruginous_render::TextGlyph,
+        font_size: f64,
+        th: f64,
+    ) -> (f64, f64) {
+        let (wx, mut wy) = if let Some(adv) = self.type3_advance {
+            (adv.wx, adv.wy)
+        } else {
+            (f64::from(glyph.width), 0.0)
+        };
+
+        if res.wmode() == 1 && wy == 0.0 {
+            wy = 1000.0;
+        }
+
+        let fm_f32 = res.font_matrix.unwrap_or([0.001, 0.0, 0.0, 0.001, 0.0, 0.0]);
+        let dx_text = f64::from(fm_f32[0]) * wx + f64::from(fm_f32[2]) * wy;
+        let dy_text = f64::from(fm_f32[1]) * wx + f64::from(fm_f32[3]) * wy;
+        let mut dx = dx_text * font_size * th;
+        let mut dy = dy_text * font_size;
+
+        if res.wmode() == 1 {
+            dy -= self.state.text_state.char_spacing;
+            if glyph.char_code == 0x20 {
+                dy -= self.state.text_state.word_spacing;
+            }
+        } else {
+            dx += self.state.text_state.char_spacing * th;
+            if glyph.char_code == 0x20 {
+                dx += self.state.text_state.word_spacing * th;
+            }
+        }
+        (dx, dy)
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn render_single_type3_glyph(
         &mut self,
@@ -423,72 +506,14 @@ impl Interpreter<'_> {
         let old_state = self.state.clone();
         self.backend.push_state();
 
-        if let Some(m) = self.text_matrices {
-            let fm_f32 = res.font_matrix.unwrap_or([0.001, 0.0, 0.0, 0.001, 0.0, 0.0]);
-            let fm_f64 = [
-                f64::from(fm_f32[0]),
-                f64::from(fm_f32[1]),
-                f64::from(fm_f32[2]),
-                f64::from(fm_f32[3]),
-                f64::from(fm_f32[4]),
-                f64::from(fm_f32[5]),
-            ];
-            let h_scale = if res.wmode() == 1 { 1.0 } else { th };
-            let v_scale = if res.wmode() == 1 { th } else { 1.0 };
-            let text_to_pt =
-                kurbo::Affine::scale_non_uniform(font_size * h_scale, font_size * v_scale);
-            let local_to_text = kurbo::Affine::new(fm_f64);
-            let translate = kurbo::Affine::translate((total_adv_x, total_adv_y));
+        self.setup_type3_transform(res, total_adv_x, total_adv_y, font_size, th);
+        self.execute_type3_stream(*stream_h, &glyph_name);
 
-            let target_mat = self.state.ctm.as_affine()
-                * m.tm.as_affine()
-                * translate
-                * text_to_pt
-                * local_to_text;
-            self.state.ctm = Matrix(target_mat.as_coeffs());
-            self.update_backend_transform();
-        }
-
-        self.type3_advance = None;
-        self.in_type3_glyph = true;
-        let old_stack = std::mem::take(&mut self.state_stack);
-        if let Err(e) = self.execute(*stream_h) {
-            log::error!("[SDK] Failed to execute Type 3 glyph {glyph_name}: {e:?}");
-        }
-        self.state_stack = old_stack;
         self.backend.pop_state();
         self.state = old_state;
         self.update_backend_transform();
-        self.in_type3_glyph = false;
 
-        let (wx, mut wy) = if let Some(adv) = self.type3_advance {
-            (adv.wx, adv.wy)
-        } else {
-            (f64::from(glyph.width), 0.0)
-        };
-
-        if res.wmode() == 1 && wy == 0.0 {
-            wy = 1000.0;
-        }
-
-        let fm_f32 = res.font_matrix.unwrap_or([0.001, 0.0, 0.0, 0.001, 0.0, 0.0]);
-        let dx_text = f64::from(fm_f32[0]) * wx + f64::from(fm_f32[2]) * wy;
-        let dy_text = f64::from(fm_f32[1]) * wx + f64::from(fm_f32[3]) * wy;
-        let mut dx = dx_text * font_size * th;
-        let mut dy = dy_text * font_size;
-
-        if res.wmode() == 1 {
-            dy -= self.state.text_state.char_spacing;
-            if glyph.char_code == 0x20 {
-                dy -= self.state.text_state.word_spacing;
-            }
-        } else {
-            dx += self.state.text_state.char_spacing * th;
-            if glyph.char_code == 0x20 {
-                dx += self.state.text_state.word_spacing * th;
-            }
-        }
-
+        let (dx, dy) = self.calculate_type3_advance(res, glyph, font_size, th);
         Ok((dx, dy))
     }
 

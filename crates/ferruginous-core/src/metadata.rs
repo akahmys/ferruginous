@@ -160,58 +160,31 @@ fn update_xmp_metadata(doc: &crate::Document, info: &MetadataInfo) -> crate::Pdf
     Ok(())
 }
 
+fn insert_text_if_present(
+    map: &mut BTreeMap<crate::object::PdfName, crate::refine::RefinedObject>,
+    key: &str,
+    val: &Option<String>,
+) {
+    if let Some(v) = val {
+        map.insert(
+            crate::object::PdfName::new(key),
+            crate::refine::RefinedObject::Text(v.clone()),
+        );
+    }
+}
+
 fn build_refined_metadata_map(
     info: &MetadataInfo,
 ) -> BTreeMap<crate::object::PdfName, crate::refine::RefinedObject> {
     let mut refined_map = BTreeMap::new();
-    if let Some(v) = &info.title {
-        refined_map.insert(
-            crate::object::PdfName::new("Title"),
-            crate::refine::RefinedObject::Text(v.clone()),
-        );
-    }
-    if let Some(v) = &info.author {
-        refined_map.insert(
-            crate::object::PdfName::new("Author"),
-            crate::refine::RefinedObject::Text(v.clone()),
-        );
-    }
-    if let Some(v) = &info.subject {
-        refined_map.insert(
-            crate::object::PdfName::new("Subject"),
-            crate::refine::RefinedObject::Text(v.clone()),
-        );
-    }
-    if let Some(v) = &info.keywords {
-        refined_map.insert(
-            crate::object::PdfName::new("Keywords"),
-            crate::refine::RefinedObject::Text(v.clone()),
-        );
-    }
-    if let Some(v) = &info.creator {
-        refined_map.insert(
-            crate::object::PdfName::new("Creator"),
-            crate::refine::RefinedObject::Text(v.clone()),
-        );
-    }
-    if let Some(v) = &info.producer {
-        refined_map.insert(
-            crate::object::PdfName::new("Producer"),
-            crate::refine::RefinedObject::Text(v.clone()),
-        );
-    }
-    if let Some(v) = &info.creation_date {
-        refined_map.insert(
-            crate::object::PdfName::new("CreationDate"),
-            crate::refine::RefinedObject::Text(v.clone()),
-        );
-    }
-    if let Some(v) = &info.mod_date {
-        refined_map.insert(
-            crate::object::PdfName::new("ModDate"),
-            crate::refine::RefinedObject::Text(v.clone()),
-        );
-    }
+    insert_text_if_present(&mut refined_map, "Title", &info.title);
+    insert_text_if_present(&mut refined_map, "Author", &info.author);
+    insert_text_if_present(&mut refined_map, "Subject", &info.subject);
+    insert_text_if_present(&mut refined_map, "Keywords", &info.keywords);
+    insert_text_if_present(&mut refined_map, "Creator", &info.creator);
+    insert_text_if_present(&mut refined_map, "Producer", &info.producer);
+    insert_text_if_present(&mut refined_map, "CreationDate", &info.creation_date);
+    insert_text_if_present(&mut refined_map, "ModDate", &info.mod_date);
     refined_map
 }
 
@@ -233,65 +206,47 @@ fn commit_metadata_stream(
     ))
 }
 
+fn find_tag_text(doc: &roxmltree::Document, ns: &str, tag: &str) -> Option<String> {
+    doc.descendants().find(|n| n.has_tag_name((ns, tag)))
+        .and_then(|node| {
+            node.descendants().find(|n| n.is_text()).map(|n| n.text().unwrap_or_default().to_string())
+                .or_else(|| node.text().map(|t| t.to_string()))
+        })
+}
+
 fn apply_xmp_metadata(doc: &roxmltree::Document, info: &mut MetadataInfo) {
     let dc_ns = "http://purl.org/dc/elements/1.1/";
     let xmp_ns = "http://ns.adobe.com/xap/1.0/";
     let pdf_ns = "http://ns.adobe.com/pdf/1.3/";
 
-    // DC:Title
-    if let Some(node) = doc.descendants().find(|n| n.has_tag_name((dc_ns, "title")))
-        && let Some(text) =
-            node.descendants().find(|n| n.is_text()).map(|n| n.text().unwrap_or_default())
-    {
-        info.title = Some(text.to_string());
+    if let Some(text) = find_tag_text(doc, dc_ns, "title") {
+        info.title = Some(text);
     }
-    // DC:Creator (Seq)
     if let Some(node) = doc.descendants().find(|n| n.has_tag_name((dc_ns, "creator"))) {
-        let mut creators = Vec::new();
-        for li in node.descendants().filter(|n| n.has_tag_name("li")) {
-            if let Some(text) = li.text() {
-                creators.push(text.to_string());
-            }
-        }
+        let creators: Vec<String> = node.descendants()
+            .filter(|n| n.has_tag_name("li"))
+            .filter_map(|li| li.text().map(|t| t.to_string()))
+            .collect();
         if !creators.is_empty() {
             info.author = Some(creators.join(", "));
         }
     }
-    // DC:Description
-    if let Some(node) = doc.descendants().find(|n| n.has_tag_name((dc_ns, "description")))
-        && let Some(text) =
-            node.descendants().find(|n| n.is_text()).map(|n| n.text().unwrap_or_default())
-    {
-        info.subject = Some(text.to_string());
+    if let Some(text) = find_tag_text(doc, dc_ns, "description") {
+        info.subject = Some(text);
     }
-    // PDF:Keywords
-    if let Some(node) = doc.descendants().find(|n| n.has_tag_name((pdf_ns, "Keywords")))
-        && let Some(text) = node.text()
-    {
-        info.keywords = Some(text.to_string());
+    if let Some(text) = find_tag_text(doc, pdf_ns, "Keywords") {
+        info.keywords = Some(text);
     }
-    // XMP:CreatorTool
-    if let Some(node) = doc.descendants().find(|n| n.has_tag_name((xmp_ns, "CreatorTool")))
-        && let Some(text) = node.text()
-    {
-        info.creator = Some(text.to_string());
+    if let Some(text) = find_tag_text(doc, xmp_ns, "CreatorTool") {
+        info.creator = Some(text);
     }
-    // PDF:Producer
-    if let Some(node) = doc.descendants().find(|n| n.has_tag_name((pdf_ns, "Producer")))
-        && let Some(text) = node.text()
-    {
-        info.producer = Some(text.to_string());
+    if let Some(text) = find_tag_text(doc, pdf_ns, "Producer") {
+        info.producer = Some(text);
     }
-    // XMP:CreateDate
-    if let Some(node) = doc.descendants().find(|n| n.has_tag_name((xmp_ns, "CreateDate")))
-        && let Some(text) = node.text()
-    {
-        info.creation_date = Some(text.to_string());
+    if let Some(text) = find_tag_text(doc, xmp_ns, "CreateDate") {
+        info.creation_date = Some(text);
     }
-    // XMP:ModifyDate
-    if let Some(node) = doc.descendants().find(|n| n.has_tag_name((xmp_ns, "ModifyDate")))
-        && let Some(text) = node.text()
-    {
-        info.mod_date = Some(text.to_string());
+    if let Some(text) = find_tag_text(doc, xmp_ns, "ModifyDate") {
+        info.mod_date = Some(text);
     }
 }

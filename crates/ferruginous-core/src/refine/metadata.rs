@@ -6,54 +6,95 @@ use bytes::Bytes;
 use std::collections::BTreeMap;
 use xmp_writer::XmpWriter;
 
-/// Parses a legacy PDF date string (e.g. "D:20031003221948+09'00'") or a standard ISO 8601
-/// date string into a `xmp_writer::DateTime`.
-pub fn parse_date_string(s: &str) -> Option<xmp_writer::DateTime> {
-    let s = s.trim();
-    if s.is_empty() {
+fn parse_tz_part(tz: char, tz_part: &str) -> Option<xmp_writer::Timezone> {
+    if tz == 'Z' {
+        Some(xmp_writer::Timezone::Utc)
+    } else {
+        let sign = if tz == '+' { 1 } else { -1 };
+        let tz_digits: String = tz_part.chars().filter(|c| c.is_ascii_digit()).collect();
+        if tz_digits.len() >= 2 {
+            let tz_h = tz_digits[0..2].parse::<i8>().ok().map(|h| h * sign);
+            let mut tz_min = 0;
+            if tz_digits.len() >= 4 && let Ok(m) = tz_digits[2..4].parse::<i8>() {
+                tz_min = m;
+            }
+            tz_h.map(|h| xmp_writer::Timezone::Local { hour: h, minute: tz_min })
+        } else {
+            None
+        }
+    }
+}
+
+fn parse_legacy_pdf_date(s: &str) -> Option<xmp_writer::DateTime> {
+    let mut clean_s = s;
+    if clean_s.starts_with("D:") {
+        clean_s = &clean_s[2..];
+    }
+
+    let mut digits = String::new();
+    let mut tz_char = None;
+    let mut tz_part = "";
+
+    for (i, c) in clean_s.char_indices() {
+        if c.is_ascii_digit() {
+            digits.push(c);
+        } else if c == 'Z' || c == '+' || c == '-' {
+            tz_char = Some(c);
+            tz_part = &clean_s[i..];
+            break;
+        }
+    }
+
+    if digits.len() < 4 {
         return None;
     }
 
-    // 1. Check if it's a legacy PDF date (starts with D: or contains only digits and offset indicators)
-    if s.starts_with("D:") || (s.len() >= 4 && s.chars().take(4).all(|c| c.is_ascii_digit()) && !s.contains('-')) {
-        let mut clean_s = s;
-        if clean_s.starts_with("D:") {
-            clean_s = &clean_s[2..];
+    let year = digits[0..4].parse::<u16>().ok()?;
+    let month = if digits.len() >= 6 { digits[4..6].parse::<u8>().ok() } else { None };
+    let day = if digits.len() >= 8 { digits[6..8].parse::<u8>().ok() } else { None };
+    let hour = if digits.len() >= 10 { digits[8..10].parse::<u8>().ok() } else { None };
+    let minute = if digits.len() >= 12 { digits[10..12].parse::<u8>().ok() } else { None };
+    let second = if digits.len() >= 14 { digits[12..14].parse::<u8>().ok() } else { None };
+
+    let timezone = tz_char.and_then(|tz| parse_tz_part(tz, tz_part));
+
+    Some(xmp_writer::DateTime {
+        year,
+        month,
+        day,
+        hour,
+        minute,
+        second,
+        timezone,
+    })
+}
+
+fn parse_iso8601_date(s: &str) -> Option<xmp_writer::DateTime> {
+    let year = s[0..4].parse::<u16>().ok()?;
+    let month = s[5..7].parse::<u8>().ok();
+    let day = s[8..10].parse::<u8>().ok();
+
+    let mut hour = None;
+    let mut minute = None;
+    let mut second = None;
+    let mut timezone = None;
+
+    if s.len() >= 16 && (s.chars().nth(10) == Some('T') || s.chars().nth(10) == Some(' ')) {
+        hour = s[11..13].parse::<u8>().ok();
+        minute = s[14..16].parse::<u8>().ok();
+
+        let mut rest = &s[16..];
+        if rest.starts_with(':') && rest.len() >= 3 {
+            second = rest[1..3].parse::<u8>().ok();
+            rest = &rest[3..];
         }
 
-        // Extract digits up to timezone character
-        let mut digits = String::new();
-        let mut tz_char = None;
-        let mut tz_part = "";
-
-        for (i, c) in clean_s.char_indices() {
-            if c.is_ascii_digit() {
-                digits.push(c);
-            } else if c == 'Z' || c == '+' || c == '-' {
-                tz_char = Some(c);
-                tz_part = &clean_s[i..];
-                break;
-            }
-        }
-
-        if digits.len() < 4 {
-            return None;
-        }
-
-        let year = digits[0..4].parse::<u16>().ok()?;
-        let month = if digits.len() >= 6 { digits[4..6].parse::<u8>().ok() } else { None };
-        let day = if digits.len() >= 8 { digits[6..8].parse::<u8>().ok() } else { None };
-        let hour = if digits.len() >= 10 { digits[8..10].parse::<u8>().ok() } else { None };
-        let minute = if digits.len() >= 12 { digits[10..12].parse::<u8>().ok() } else { None };
-        let second = if digits.len() >= 14 { digits[12..14].parse::<u8>().ok() } else { None };
-
-        let mut timezone = None;
-        if let Some(tz) = tz_char {
-            if tz == 'Z' {
+        if !rest.is_empty() {
+            if rest.starts_with('Z') {
                 timezone = Some(xmp_writer::Timezone::Utc);
-            } else {
-                let sign = if tz == '+' { 1 } else { -1 };
-                let tz_digits: String = tz_part.chars().filter(|c| c.is_ascii_digit()).collect();
+            } else if rest.starts_with('+') || rest.starts_with('-') {
+                let sign = if rest.starts_with('+') { 1 } else { -1 };
+                let tz_digits: String = rest.chars().filter(|c| c.is_ascii_digit()).collect();
                 if tz_digits.len() >= 2 {
                     let tz_h = tz_digits[0..2].parse::<i8>().ok().map(|h| h * sign);
                     let mut tz_min = 0;
@@ -66,162 +107,72 @@ pub fn parse_date_string(s: &str) -> Option<xmp_writer::DateTime> {
                 }
             }
         }
+    }
 
-        return Some(xmp_writer::DateTime {
-            year,
-            month,
-            day,
-            hour,
-            minute,
-            second,
-            timezone,
-        });
+    Some(xmp_writer::DateTime {
+        year,
+        month,
+        day,
+        hour,
+        minute,
+        second,
+        timezone,
+    })
+}
+
+/// Parses a legacy PDF date string (e.g. "D:20031003221948+09'00'") or a standard ISO 8601
+/// date string into a `xmp_writer::DateTime`.
+pub fn parse_date_string(s: &str) -> Option<xmp_writer::DateTime> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+
+    // 1. Check if it's a legacy PDF date (starts with D: or contains only digits and offset indicators)
+    if s.starts_with("D:") || (s.len() >= 4 && s.chars().take(4).all(|c| c.is_ascii_digit()) && !s.contains('-')) {
+        return parse_legacy_pdf_date(s);
     }
 
     // 2. Otherwise try parsing as ISO 8601 (e.g., "YYYY-MM-DDTHH:mm:ssZ" or "YYYY-MM-DDTHH:mm:ss+HH:mm")
     if s.len() >= 10 && s.chars().nth(4) == Some('-') && s.chars().nth(7) == Some('-') {
-        let year = s[0..4].parse::<u16>().ok()?;
-        let month = s[5..7].parse::<u8>().ok();
-        let day = s[8..10].parse::<u8>().ok();
-
-        let mut hour = None;
-        let mut minute = None;
-        let mut second = None;
-        let mut timezone = None;
-
-        if s.len() >= 16 && (s.chars().nth(10) == Some('T') || s.chars().nth(10) == Some(' ')) {
-            hour = s[11..13].parse::<u8>().ok();
-            minute = s[14..16].parse::<u8>().ok();
-
-            let mut rest = &s[16..];
-            if rest.starts_with(':') && rest.len() >= 3 {
-                second = rest[1..3].parse::<u8>().ok();
-                rest = &rest[3..];
-            }
-
-            if !rest.is_empty() {
-                if rest.starts_with('Z') {
-                    timezone = Some(xmp_writer::Timezone::Utc);
-                } else if rest.starts_with('+') || rest.starts_with('-') {
-                    let sign = if rest.starts_with('+') { 1 } else { -1 };
-                    let tz_digits: String = rest.chars().filter(|c| c.is_ascii_digit()).collect();
-                    if tz_digits.len() >= 2 {
-                        let tz_h = tz_digits[0..2].parse::<i8>().ok().map(|h| h * sign);
-                        let mut tz_min = 0;
-                        if tz_digits.len() >= 4 && let Ok(m) = tz_digits[2..4].parse::<i8>() {
-                            tz_min = m;
-                        }
-                        if let Some(h) = tz_h {
-                            timezone = Some(xmp_writer::Timezone::Local { hour: h, minute: tz_min });
-                        }
-                    }
-                }
-            }
-        }
-
-        return Some(xmp_writer::DateTime {
-            year,
-            month,
-            day,
-            hour,
-            minute,
-            second,
-            timezone,
-        });
+        return parse_iso8601_date(s);
     }
 
     None
 }
 
-/// Generates an XMP Metadata stream from a PDF Info dictionary.
-pub fn info_to_xmp(info: &BTreeMap<PdfName, RefinedObject>) -> String {
-    let mut writer = XmpWriter::new();
+fn get_info_field(info: &BTreeMap<PdfName, RefinedObject>, key: &str) -> Option<String> {
+    info.get(&PdfName::new(key)).map(|obj| match obj {
+        RefinedObject::Text(s) => s.clone(),
+        RefinedObject::String(s) | RefinedObject::Hex(s) => crate::refine::text::recover_string(s),
+        _ => "".into(),
+    }).filter(|s| !s.is_empty())
+}
 
-    // 1. Basic Dublin Core & PDF Properties
-    if let Some(obj) = info.get(&PdfName::new("Title")) {
-        let val = match obj {
-            RefinedObject::Text(s) => s.clone(),
-            RefinedObject::String(s) | RefinedObject::Hex(s) => {
-                crate::refine::text::recover_string(s)
-            }
-            _ => "".into(),
-        };
-        if !val.is_empty() {
-            writer.title([(None, val.as_str())]);
-        }
+fn write_basic_fields(info: &BTreeMap<PdfName, RefinedObject>, writer: &mut XmpWriter) {
+    if let Some(val) = get_info_field(info, "Title") {
+        writer.title([(None, val.as_str())]);
     }
-    if let Some(obj) = info.get(&PdfName::new("Author")) {
-        let val = match obj {
-            RefinedObject::Text(s) => s.clone(),
-            RefinedObject::String(s) | RefinedObject::Hex(s) => {
-                crate::refine::text::recover_string(s)
-            }
-            _ => "".into(),
-        };
-        if !val.is_empty() {
-            writer.creator([val.as_str()]);
-        }
+    if let Some(val) = get_info_field(info, "Author") {
+        writer.creator([val.as_str()]);
     }
-    if let Some(obj) = info.get(&PdfName::new("Subject")) {
-        let val = match obj {
-            RefinedObject::Text(s) => s.clone(),
-            RefinedObject::String(s) | RefinedObject::Hex(s) => {
-                crate::refine::text::recover_string(s)
-            }
-            _ => "".into(),
-        };
-        if !val.is_empty() {
-            writer.description([(None, val.as_str())]);
-        }
+    if let Some(val) = get_info_field(info, "Subject") {
+        writer.description([(None, val.as_str())]);
     }
+    if let Some(val) = get_info_field(info, "Keywords") {
+        writer.pdf_keywords(val.as_str());
+    }
+    if let Some(val) = get_info_field(info, "Creator") {
+        writer.creator_tool(val.as_str());
+    }
+    if let Some(val) = get_info_field(info, "Producer") {
+        writer.producer(val.as_str());
+    }
+}
 
-    if let Some(obj) = info.get(&PdfName::new("Keywords")) {
-        let val = match obj {
-            RefinedObject::Text(s) => s.clone(),
-            RefinedObject::String(s) | RefinedObject::Hex(s) => {
-                crate::refine::text::recover_string(s)
-            }
-            _ => "".into(),
-        };
-        if !val.is_empty() {
-            writer.pdf_keywords(val.as_str());
-        }
-    }
-    if let Some(obj) = info.get(&PdfName::new("Creator")) {
-        let val = match obj {
-            RefinedObject::Text(s) => s.clone(),
-            RefinedObject::String(s) | RefinedObject::Hex(s) => {
-                crate::refine::text::recover_string(s)
-            }
-            _ => "".into(),
-        };
-        if !val.is_empty() {
-            writer.creator_tool(val.as_str());
-        }
-    }
-    if let Some(obj) = info.get(&PdfName::new("Producer")) {
-        let val = match obj {
-            RefinedObject::Text(s) => s.clone(),
-            RefinedObject::String(s) | RefinedObject::Hex(s) => {
-                crate::refine::text::recover_string(s)
-            }
-            _ => "".into(),
-        };
-        if !val.is_empty() {
-            writer.producer(val.as_str());
-        }
-    }
-
-    // 2. Strict PDF 2.0 / XMP Mandatory Fields
-    // Always write the document format (mime type)
-    writer.format("application/pdf");
-
-    // 3. Document and Instance UUIDs (Media Management Schema)
+fn generate_and_write_uuids(info: &BTreeMap<PdfName, RefinedObject>, writer: &mut XmpWriter) {
     let mut doc_hasher = md5::Context::new();
-    let mut title_val = String::new();
-    if let Some(RefinedObject::Text(s)) = info.get(&PdfName::new("Title")) {
-        title_val = s.clone();
-    }
+    let title_val = get_info_field(info, "Title").unwrap_or_default();
     doc_hasher.consume(title_val.as_bytes());
     doc_hasher.consume(b"ferruginous-pdf2.0-stable-document-id-salt");
     let doc_bytes = doc_hasher.finalize().0;
@@ -254,38 +205,12 @@ pub fn info_to_xmp(info: &BTreeMap<PdfName, RefinedObject>) -> String {
 
     writer.document_id(&doc_uuid);
     writer.instance_id(&inst_uuid);
+}
 
-    // 4. Strict Dual-Synchronization of Date Fields (CreateDate, ModifyDate, MetadataDate)
-    let mut create_dt = None;
-    let mut modify_dt = None;
+fn parse_and_write_dates(info: &BTreeMap<PdfName, RefinedObject>, writer: &mut XmpWriter) {
+    let mut create_dt = get_info_field(info, "CreationDate").and_then(|v| parse_date_string(&v));
+    let mut modify_dt = get_info_field(info, "ModDate").and_then(|v| parse_date_string(&v));
 
-    if let Some(obj) = info.get(&PdfName::new("CreationDate")) {
-        let val = match obj {
-            RefinedObject::Text(s) => s.clone(),
-            RefinedObject::String(s) | RefinedObject::Hex(s) => {
-                crate::refine::text::recover_string(s)
-            }
-            _ => "".into(),
-        };
-        if !val.is_empty() {
-            create_dt = parse_date_string(&val);
-        }
-    }
-
-    if let Some(obj) = info.get(&PdfName::new("ModDate")) {
-        let val = match obj {
-            RefinedObject::Text(s) => s.clone(),
-            RefinedObject::String(s) | RefinedObject::Hex(s) => {
-                crate::refine::text::recover_string(s)
-            }
-            _ => "".into(),
-        };
-        if !val.is_empty() {
-            modify_dt = parse_date_string(&val);
-        }
-    }
-
-    // Mutual fallback
     if create_dt.is_none() {
         create_dt = modify_dt;
     }
@@ -293,7 +218,6 @@ pub fn info_to_xmp(info: &BTreeMap<PdfName, RefinedObject>) -> String {
         modify_dt = create_dt;
     }
 
-    // Default system date fallback (May 26, 2026 UTC) if absolutely no date is found
     let fallback_dt = xmp_writer::DateTime {
         year: 2026,
         month: Some(5),
@@ -310,6 +234,15 @@ pub fn info_to_xmp(info: &BTreeMap<PdfName, RefinedObject>) -> String {
     writer.create_date(final_create);
     writer.modify_date(final_modify);
     writer.metadata_date(final_modify);
+}
+
+pub fn info_to_xmp(info: &BTreeMap<PdfName, RefinedObject>) -> String {
+    let mut writer = XmpWriter::new();
+
+    write_basic_fields(info, &mut writer);
+    writer.format("application/pdf");
+    generate_and_write_uuids(info, &mut writer);
+    parse_and_write_dates(info, &mut writer);
 
     writer.finish(None)
 }

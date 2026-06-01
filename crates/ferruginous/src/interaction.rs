@@ -219,6 +219,41 @@ impl SelectionManager {
         self.highlights.insert(page_index, page_highlights);
     }
 
+    fn handle_brush_drag_stop(
+        &mut self,
+        page_index: usize,
+        spans: &[TextSpan],
+        start: egui::Pos2,
+        current: egui::Pos2,
+    ) {
+        let select_rect = egui::Rect::from_two_pos(start, current);
+        if select_rect.width() > 2.0 && select_rect.height() > 2.0 {
+            let mut intersecting_spans = Vec::new();
+            let mut combined_rect = egui::Rect::NOTHING;
+
+            for span in spans {
+                if select_rect.intersects(span.rect) {
+                    intersecting_spans.push(span.clone());
+                    combined_rect = combined_rect.union(span.rect);
+                }
+            }
+
+            if !intersecting_spans.is_empty() {
+                let combined_text = intersecting_spans
+                    .iter()
+                    .map(|s| s.text.clone())
+                    .collect::<Vec<String>>()
+                    .join(" ");
+
+                self.pending_tag_request = Some(PendingTagRequest {
+                    page_index,
+                    combined_rect,
+                    text: combined_text,
+                });
+            }
+        }
+    }
+
     pub fn handle_tagging_brush_interaction(
         &mut self,
         ui: &mut egui::Ui,
@@ -247,32 +282,7 @@ impl SelectionManager {
 
         if response.drag_stopped() {
             if let (Some(start), Some(current)) = (self.drag_start, self.drag_current) {
-                let select_rect = egui::Rect::from_two_pos(start, current);
-                if select_rect.width() > 2.0 && select_rect.height() > 2.0 {
-                    let mut intersecting_spans = Vec::new();
-                    let mut combined_rect = egui::Rect::NOTHING;
-
-                    for span in spans {
-                        if select_rect.intersects(span.rect) {
-                            intersecting_spans.push(span.clone());
-                            combined_rect = combined_rect.union(span.rect);
-                        }
-                    }
-
-                    if !intersecting_spans.is_empty() {
-                        let combined_text = intersecting_spans
-                            .iter()
-                            .map(|s| s.text.clone())
-                            .collect::<Vec<String>>()
-                            .join(" ");
-
-                        self.pending_tag_request = Some(PendingTagRequest {
-                            page_index,
-                            combined_rect,
-                            text: combined_text,
-                        });
-                    }
-                }
+                self.handle_brush_drag_stop(page_index, spans, start, current);
             }
             self.drag_start = None;
             self.drag_current = None;

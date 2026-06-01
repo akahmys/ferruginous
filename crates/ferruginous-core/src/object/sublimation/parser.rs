@@ -37,6 +37,48 @@ impl<'a> Sublimator<'a> {
         }
     }
 
+    fn parse_inline_image(&self, lexer: &mut Lexer) -> Command {
+        // Inline Image Handling (ISO 32000-2:2020 Clause 8.9.7)
+        let mut dict = BTreeMap::new();
+        while let Ok(token) = lexer.next_token() {
+            if token == Token::Keyword("ID".to_string()) {
+                break;
+            }
+            let key = match token {
+                Token::Name(b) => crate::refine::text::recover_string(&b),
+                _ => continue,
+            };
+            let val = match lexer.next_token() {
+                Ok(Token::LeftArray) => self.parse_ir_array(lexer),
+                Ok(Token::LeftDict) => self.parse_ir_dict(lexer),
+                Ok(v) => token_to_ir_object(v).unwrap_or(IrObject::Null),
+                Err(_) => IrObject::Null,
+            };
+            dict.insert(key, val);
+        }
+        
+        // Now skip binary data until EI. 
+        // EI must be preceded by whitespace and followed by whitespace/EOF.
+        let start_pos = lexer.pos();
+        let data = lexer.get_data();
+        let mut end_pos = start_pos;
+        while end_pos + 3 <= data.len() {
+            if &data[end_pos..end_pos+3] == b" EI" || &data[end_pos..end_pos+3] == b"\nEI" || &data[end_pos..end_pos+3] == b"\rEI" {
+                break;
+            }
+            end_pos += 1;
+        }
+        let img_data = data[start_pos..end_pos].to_vec();
+        lexer.set_pos(end_pos + 3);
+        
+        Command::DrawInlineImage {
+            width: dict.get("W").and_then(|v| v.as_i64()).unwrap_or(0) as u32,
+            height: dict.get("H").and_then(|v| v.as_i64()).unwrap_or(0) as u32,
+            format: crate::graphics::PixelFormat::Rgb8, // Placeholder
+            data: img_data,
+        }
+    }
+
     pub fn sublimate(&mut self, data: &[u8]) -> Vec<Command> {
         // DETECT CORRUPTION: If the stream looks like Rust debug output, attempt resurrection (ISO 32000-2:2020 Clause 7.8.2 Fallback)
         if (data.starts_with(b"PushState") || data.starts_with(b"RawOperator"))
@@ -56,45 +98,8 @@ impl<'a> Sublimator<'a> {
             match token {
                 Token::Keyword(kw) => {
                     if kw == "BI" {
-                        // Inline Image Handling (ISO 32000-2:2020 Clause 8.9.7)
-                        let mut dict = BTreeMap::new();
-                        while let Ok(token) = lexer.next_token() {
-                            if token == Token::Keyword("ID".to_string()) {
-                                break;
-                            }
-                            let key = match token {
-                                Token::Name(b) => crate::refine::text::recover_string(&b),
-                                _ => continue,
-                            };
-                            let val = match lexer.next_token() {
-                                Ok(Token::LeftArray) => self.parse_ir_array(&mut lexer),
-                                Ok(Token::LeftDict) => self.parse_ir_dict(&mut lexer),
-                                Ok(v) => token_to_ir_object(v).unwrap_or(IrObject::Null),
-                                Err(_) => IrObject::Null,
-                            };
-                            dict.insert(key, val);
-                        }
-                        
-                        // Now skip binary data until EI. 
-                        // EI must be preceded by whitespace and followed by whitespace/EOF.
-                        let start_pos = lexer.pos();
-                        let data = lexer.get_data();
-                        let mut end_pos = start_pos;
-                        while end_pos + 3 <= data.len() {
-                            if &data[end_pos..end_pos+3] == b" EI" || &data[end_pos..end_pos+3] == b"\nEI" || &data[end_pos..end_pos+3] == b"\rEI" {
-                                break;
-                            }
-                            end_pos += 1;
-                        }
-                        let img_data = data[start_pos..end_pos].to_vec();
-                        lexer.set_pos(end_pos + 3);
-                        
-                        commands.push(Command::DrawInlineImage {
-                            width: dict.get("W").and_then(|v| v.as_i64()).unwrap_or(0) as u32,
-                            height: dict.get("H").and_then(|v| v.as_i64()).unwrap_or(0) as u32,
-                            format: crate::graphics::PixelFormat::Rgb8, // Placeholder
-                            data: img_data,
-                        });
+                        let cmd = self.parse_inline_image(&mut lexer);
+                        commands.push(cmd);
                     } else {
                         let mut cmds = self.handle_operator(&kw, &commands);
                         commands.append(&mut cmds);
@@ -145,7 +150,7 @@ impl<'a> Sublimator<'a> {
     }
 
     #[allow(clippy::collapsible_if)]
-    fn handle_graphics_op(&mut self, op: &str, prev_commands: &[Command]) -> Vec<Command> {
+    fn handle_graphics_op(&mut self, op: &str, prev_commands: &[Command]) -> Vec<Command> { // RR-15 Limit: Dispatcher - Flat non-nested PDF graphics instruction parsing dispatcher routing ops to Commands
         match op {
             "q" => vec![Command::PushState],
             "Q" => vec![Command::PopState],

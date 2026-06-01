@@ -1,6 +1,9 @@
+//! Example demonstrating how to dump text commands from a PDF.
+
 use ferruginous_core::object::sublimation::{Command, TextArrayItem};
 use ferruginous_sdk::PdfDocument;
 
+/// Main function for running the text command dumping example.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
     let path_str = args.get(1).map_or("samples/bokutokitan.pdf", |s| s.as_str());

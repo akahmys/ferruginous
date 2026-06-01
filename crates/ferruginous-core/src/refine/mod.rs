@@ -164,6 +164,68 @@ impl ParallelRefinery {
     }
 
     #[allow(clippy::too_many_arguments)]
+    fn refine_dict_entry(
+        doc: &lopdf::Document,
+        id: (u32, u16),
+        key_name: &PdfName,
+        value: &lopdf::Object,
+        table: &RemappingTable,
+        handle_fonts: &BTreeMap<u32, Arc<FontResource>>,
+        _stream_contexts: &BTreeMap<u32, BTreeMap<String, Arc<FontResource>>>,
+        distilled_fonts: &std::collections::BTreeMap<Handle<Object>, Arc<Vec<u8>>>,
+        depth: usize,
+        issues: &mut Vec<String>,
+    ) -> RefinedObject {
+        if matches!(
+            key_name.as_str(),
+            "Title" | "Author" | "Subject" | "Creator" | "Producer" | "Keywords"
+        ) {
+            match value {
+                lopdf::Object::String(s, _) => {
+                    RefinedObject::Text(crate::refine::text::recover_string(s))
+                }
+                _ => Self::refine_recursive(
+                    doc,
+                    id,
+                    value,
+                    table,
+                    handle_fonts,
+                    _stream_contexts,
+                    distilled_fonts,
+                    depth + 1,
+                    issues,
+                ),
+            }
+        } else {
+            Self::refine_recursive(
+                doc,
+                id,
+                value,
+                table,
+                handle_fonts,
+                _stream_contexts,
+                distilled_fonts,
+                depth + 1,
+                issues,
+            )
+        }
+    }
+
+    fn normalize_ui_text_fields(refined_dict: &mut BTreeMap<PdfName, RefinedObject>) {
+        for field in UI_TEXT_FIELDS {
+            let field_key = PdfName::new(field);
+            let recovered = match refined_dict.get(&field_key) {
+                Some(RefinedObject::String(s)) => Some(text::recover_string(s)),
+                Some(RefinedObject::Hex(s)) => Some(text::recover_string(s)),
+                _ => None,
+            };
+            if let Some(val) = recovered {
+                refined_dict.insert(field_key, RefinedObject::Text(val));
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn refine_dict(
         doc: &lopdf::Document,
         id: (u32, u16),
@@ -178,42 +240,18 @@ impl ParallelRefinery {
         let mut refined_dict = BTreeMap::new();
         for (k, v) in dict {
             let key_name = PdfName::from_bytes(k);
-
-            // Sublimation: Identify common text-bearing keys and normalize to RefinedObject::Text
-            let refined_v = if matches!(
-                key_name.as_str(),
-                "Title" | "Author" | "Subject" | "Creator" | "Producer" | "Keywords"
-            ) {
-                match v {
-                    lopdf::Object::String(s, _) => {
-                        RefinedObject::Text(crate::refine::text::recover_string(s))
-                    }
-                    _ => Self::refine_recursive(
-                        doc,
-                        id,
-                        v,
-                        table,
-                        handle_fonts,
-                        _stream_contexts,
-                        distilled_fonts,
-                        depth + 1,
-                        issues,
-                    ),
-                }
-            } else {
-                Self::refine_recursive(
-                    doc,
-                    id,
-                    v,
-                    table,
-                    handle_fonts,
-                    _stream_contexts,
-                    distilled_fonts,
-                    depth + 1,
-                    issues,
-                )
-            };
-
+            let refined_v = Self::refine_dict_entry(
+                doc,
+                id,
+                &key_name,
+                v,
+                table,
+                handle_fonts,
+                _stream_contexts,
+                distilled_fonts,
+                depth,
+                issues,
+            );
             refined_dict.insert(key_name, refined_v);
         }
 
@@ -228,20 +266,66 @@ impl ParallelRefinery {
             };
         }
 
-        // String Normalization for common UI fields
-        for field in UI_TEXT_FIELDS {
-            let field_key = PdfName::new(field);
-            let recovered = match refined_dict.get(&field_key) {
-                Some(RefinedObject::String(s)) => Some(text::recover_string(s)),
-                Some(RefinedObject::Hex(s)) => Some(text::recover_string(s)),
-                _ => None,
-            };
-            if let Some(val) = recovered {
-                refined_dict.insert(field_key, RefinedObject::Text(val));
-            }
-        }
-
+        Self::normalize_ui_text_fields(&mut refined_dict);
         RefinedObject::Dictionary(refined_dict)
+    }
+
+    fn sublimate_stream_content_static(
+        id: (u32, u16),
+        refined_dict: &BTreeMap<PdfName, RefinedObject>,
+        content: &Bytes,
+        table: &RemappingTable,
+        _stream_contexts: &BTreeMap<u32, BTreeMap<String, Arc<FontResource>>>,
+    ) -> Option<RefinedObject> {
+        let subtype = refined_dict.get(&PdfName::new("Subtype")).and_then(|o| o.as_str());
+        let is_image = subtype == Some("Image");
+        let is_form = subtype == Some("Form");
+        let is_likely_content = (subtype.is_none() || is_form) && !is_image;
+
+        if is_likely_content
+            && let Some(handle) = table.get(&id)
+            && let Some(context) = _stream_contexts.get(&handle.index())
+        {
+            let mut sublimator = crate::object::sublimation::parser::Sublimator::new(context);
+            let commands = sublimator.sublimate(content);
+            return Some(RefinedObject::Sublimated(
+                refined_dict.clone(),
+                crate::object::SublimatedData::Commands { items: commands },
+            ));
+        }
+        None
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn refine_stream_dict(
+        doc: &lopdf::Document,
+        id: (u32, u16),
+        dict: &lopdf::Dictionary,
+        table: &RemappingTable,
+        handle_fonts: &BTreeMap<u32, Arc<FontResource>>,
+        _stream_contexts: &BTreeMap<u32, BTreeMap<String, Arc<FontResource>>>,
+        distilled_fonts: &std::collections::BTreeMap<Handle<Object>, Arc<Vec<u8>>>,
+        depth: usize,
+        issues: &mut Vec<String>,
+    ) -> BTreeMap<PdfName, RefinedObject> {
+        let mut refined_dict = BTreeMap::new();
+        for (k, v) in dict {
+            refined_dict.insert(
+                PdfName::from_bytes(k),
+                Self::refine_recursive(
+                    doc,
+                    id,
+                    v,
+                    table,
+                    handle_fonts,
+                    _stream_contexts,
+                    distilled_fonts,
+                    depth,
+                    issues,
+                ),
+            );
+        }
+        refined_dict
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -257,25 +341,18 @@ impl ParallelRefinery {
         issues: &mut Vec<String>,
     ) -> RefinedObject {
         log::debug!("Refinery: refining stream {:?}", id);
-        let mut refined_dict = BTreeMap::new();
-        for (k, v) in &s.dict {
-            refined_dict.insert(
-                PdfName::from_bytes(k),
-                Self::refine_recursive(
-                    doc,
-                    id,
-                    v,
-                    table,
-                    handle_fonts,
-                    _stream_contexts,
-                    distilled_fonts,
-                    depth + 1,
-                    issues,
-                ),
-            );
-        }
+        let mut refined_dict = Self::refine_stream_dict(
+            doc,
+            id,
+            &s.dict,
+            table,
+            handle_fonts,
+            _stream_contexts,
+            distilled_fonts,
+            depth + 1,
+            issues,
+        );
 
-        // Persistence: Check if this stream is a font file that has been distilled
         if let Some(handle) = table.get(&id)
             && let Some(distilled_data) = distilled_fonts.get(handle)
         {
@@ -284,15 +361,11 @@ impl ParallelRefinery {
             return RefinedObject::Stream(refined_dict, Bytes::copy_from_slice(distilled_data));
         }
 
-        // Content Stream Restructuring (Sublimation Phase 2)
         let subtype = refined_dict.get(&PdfName::new("Subtype")).and_then(|o| o.as_str());
         let is_image = subtype == Some("Image");
-        let is_form = subtype == Some("Form");
-        let is_likely_content = (subtype.is_none() || is_form) && !is_image;
         let is_font = refined_dict.contains_key(&PdfName::new("Length1")) || refined_dict.contains_key(&PdfName::new("Length2")) || refined_dict.contains_key(&PdfName::new("Length3"));
 
         let (content, was_decompressed) = if is_image || is_font {
-            // High-Fidelity Preservation: Never decompress image or font streams during refine.
             (Bytes::copy_from_slice(&s.content), false)
         } else {
             match s.decompressed_content() {
@@ -306,20 +379,52 @@ impl ParallelRefinery {
             refined_dict.remove(&PdfName::new("DecodeParms"));
         }
 
-        if is_likely_content
-            && let Some(handle) = table.get(&id)
-                && let Some(context) = _stream_contexts.get(&handle.index())
-            {
-                let mut sublimator = crate::object::sublimation::parser::Sublimator::new(context);
-                let commands = sublimator.sublimate(&content);
-                return RefinedObject::Sublimated(
-                    refined_dict,
-                    crate::object::SublimatedData::Commands { items: commands },
-                );
-            }
+
+
+        if let Some(sub) = Self::sublimate_stream_content_static(id, &refined_dict, &content, table, _stream_contexts) {
+            return sub;
+        }
 
         RefinedObject::Stream(refined_dict, content)
     }
+}
+
+fn commit_stream_to_arena(
+    arena: &PdfArena,
+    dict: BTreeMap<PdfName, RefinedObject>,
+    bytes: Bytes,
+    depth: usize,
+) -> Object {
+    let committed_dict: BTreeMap<Handle<PdfName>, Object> = dict
+        .into_iter()
+        .map(|(k, v)| (arena.intern_name(k), commit_to_arena(arena, v, depth + 1)))
+        .collect();
+    // Sublimation Phase 1: Pre-decode Images or compress other large streams
+    let is_image = committed_dict
+        .get(&arena.name("Subtype"))
+        .and_then(|o: &Object| o.resolve(arena).as_name())
+        .and_then(|n: Handle<PdfName>| arena.get_name(n))
+        .map(|n: PdfName| n.as_str() == "Image")
+        .unwrap_or(false);
+
+    let is_font = committed_dict.contains_key(&arena.name("Length1")) || committed_dict.contains_key(&arena.name("Length2")) || committed_dict.contains_key(&arena.name("Length3"));
+
+    let sublimated = if is_image || is_font {
+        // High-Fidelity Preservation (Phase 2 & 3): 
+        // Do NOT decode or re-compress images/fonts to internal format during refine.
+        crate::object::SublimatedData::Raw(bytes)
+    } else if bytes.len() > 4096 {
+        let compressed = zstd::encode_all(&*bytes, 3).unwrap_or_else(|_| bytes.to_vec());
+        crate::object::SublimatedData::Compressed {
+            original_len: bytes.len(),
+            data: compressed,
+        }
+    } else {
+        crate::object::SublimatedData::Raw(bytes)
+    };
+
+    let dh = arena.alloc_dict(committed_dict);
+    Object::Stream(dh, std::sync::Arc::new(sublimated))
 }
 
 pub fn commit_to_arena(arena: &PdfArena, refined: RefinedObject, depth: usize) -> Object {
@@ -349,36 +454,7 @@ pub fn commit_to_arena(arena: &PdfArena, refined: RefinedObject, depth: usize) -
             Object::Dictionary(arena.alloc_dict(committed))
         }
         RefinedObject::Stream(dict, bytes) => {
-            let committed_dict: BTreeMap<Handle<PdfName>, Object> = dict
-                .into_iter()
-                .map(|(k, v)| (arena.intern_name(k), commit_to_arena(arena, v, depth + 1)))
-                .collect();
-            // Sublimation Phase 1: Pre-decode Images or compress other large streams
-            let is_image = committed_dict
-                .get(&arena.name("Subtype"))
-                .and_then(|o: &Object| o.resolve(arena).as_name())
-                .and_then(|n: Handle<PdfName>| arena.get_name(n))
-                .map(|n: PdfName| n.as_str() == "Image")
-                .unwrap_or(false);
-
-            let is_font = committed_dict.contains_key(&arena.name("Length1")) || committed_dict.contains_key(&arena.name("Length2")) || committed_dict.contains_key(&arena.name("Length3"));
-
-            let sublimated = if is_image || is_font {
-                // High-Fidelity Preservation (Phase 2 & 3): 
-                // Do NOT decode or re-compress images/fonts to internal format during refine.
-                crate::object::SublimatedData::Raw(bytes)
-            } else if bytes.len() > 4096 {
-                let compressed = zstd::encode_all(&*bytes, 3).unwrap_or_else(|_| bytes.to_vec());
-                crate::object::SublimatedData::Compressed {
-                    original_len: bytes.len(),
-                    data: compressed,
-                }
-            } else {
-                crate::object::SublimatedData::Raw(bytes)
-            };
-
-            let dh = arena.alloc_dict(committed_dict);
-            Object::Stream(dh, std::sync::Arc::new(sublimated))
+            commit_stream_to_arena(arena, dict, bytes, depth)
         }
         RefinedObject::Sublimated(dict, data) => {
             let committed_dict: BTreeMap<Handle<PdfName>, Object> = dict

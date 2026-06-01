@@ -142,6 +142,75 @@ impl Document {
         Self::open(bytes::Bytes::from(data), &crate::ingest::IngestionOptions::default())
     }
 
+    #[cfg(target_os = "macos")]
+    fn load_mac_fallbacks(&self, fonts: &mut BTreeMap<FallbackFontType, Arc<Vec<u8>>>, missing_types: &[FallbackFontType]) {
+        let mac_paths = [
+            (crate::font::FallbackFontType::JapaneseSerif, "/System/Library/Fonts/ヒラギノ明朝 ProN.ttc"),
+            (crate::font::FallbackFontType::JapaneseSans, "/System/Library/Fonts/ヒラギノ角ゴ Interface.ttc"),
+            (crate::font::FallbackFontType::Serif, "/System/Library/Fonts/Times.ttc"),
+            (crate::font::FallbackFontType::SansSerif, "/System/Library/Fonts/Helvetica.ttc"),
+            (crate::font::FallbackFontType::Monospace, "/System/Library/Fonts/Courier.dfont"),
+        ];
+        for (ftype, path) in mac_paths {
+            if missing_types.contains(&ftype) {
+                let _ = std::fs::read(path).map(|data| {
+                    fonts.insert(ftype, Arc::new(data));
+                });
+            }
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    fn load_windows_fallbacks(&self, fonts: &mut BTreeMap<FallbackFontType, Arc<Vec<u8>>>, missing_types: &[FallbackFontType]) {
+        let win_paths = [
+            (crate::font::FallbackFontType::JapaneseSerif, "C:\\Windows\\Fonts\\msmincho.ttc"),
+            (crate::font::FallbackFontType::JapaneseSans, "C:\\Windows\\Fonts\\msgothic.ttc"),
+            (crate::font::FallbackFontType::Serif, "C:\\Windows\\Fonts\\times.ttf"),
+            (crate::font::FallbackFontType::SansSerif, "C:\\Windows\\Fonts\\arial.ttf"),
+            (crate::font::FallbackFontType::Monospace, "C:\\Windows\\Fonts\\cour.ttf"),
+        ];
+        for (ftype, path) in win_paths {
+            if missing_types.contains(&ftype) {
+                let _ = std::fs::read(path).map(|data| {
+                    fonts.insert(ftype, Arc::new(data));
+                });
+            }
+        }
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    fn load_linux_fallbacks(&self, fonts: &mut BTreeMap<FallbackFontType, Arc<Vec<u8>>>, missing_types: &[FallbackFontType]) {
+        let linux_paths = [
+            (crate::font::FallbackFontType::JapaneseSerif, "/usr/share/fonts/truetype/fonts-japanese-mincho.ttf"),
+            (crate::font::FallbackFontType::JapaneseSans, "/usr/share/fonts/truetype/fonts-japanese-gothic.ttf"),
+            (crate::font::FallbackFontType::Serif, "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf"),
+            (crate::font::FallbackFontType::SansSerif, "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
+            (crate::font::FallbackFontType::Monospace, "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"),
+        ];
+        for (ftype, path) in linux_paths {
+            if missing_types.contains(&ftype) {
+                let _ = std::fs::read(path).map(|data| {
+                    fonts.insert(ftype, Arc::new(data));
+                });
+            }
+        }
+    }
+
+    fn load_platform_fallback_fonts(
+        &self,
+        fonts: &mut BTreeMap<FallbackFontType, Arc<Vec<u8>>>,
+        missing_types: &[FallbackFontType],
+    ) {
+        #[cfg(target_os = "macos")]
+        self.load_mac_fallbacks(fonts, missing_types);
+
+        #[cfg(target_os = "windows")]
+        self.load_windows_fallbacks(fonts, missing_types);
+
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        self.load_linux_fallbacks(fonts, missing_types);
+    }
+
     /// Loads system fonts from well-known paths.
     pub fn load_system_fonts(&mut self) {
         let mut fonts = BTreeMap::new();
@@ -177,80 +246,7 @@ impl Document {
         .collect();
 
         if !missing_types.is_empty() {
-            #[cfg(target_os = "macos")]
-            {
-                let mac_paths = [
-                    (
-                        crate::font::FallbackFontType::JapaneseSerif,
-                        "/System/Library/Fonts/ヒラギノ明朝 ProN.ttc",
-                    ),
-                    (
-                        crate::font::FallbackFontType::JapaneseSans,
-                        "/System/Library/Fonts/ヒラギノ角ゴ Interface.ttc",
-                    ),
-                    (crate::font::FallbackFontType::Serif, "/System/Library/Fonts/Times.ttc"),
-                    (crate::font::FallbackFontType::SansSerif, "/System/Library/Fonts/Helvetica.ttc"),
-                    (crate::font::FallbackFontType::Monospace, "/System/Library/Fonts/Courier.dfont"),
-                ];
-                for (ftype, path) in mac_paths {
-                    if !missing_types.contains(&ftype) {
-                        continue;
-                    }
-                    if let Ok(data) = std::fs::read(path) {
-                        fonts.insert(ftype, Arc::new(data));
-                    }
-                }
-            }
-
-            #[cfg(target_os = "windows")]
-            {
-                let win_paths = [
-                    (
-                        crate::font::FallbackFontType::JapaneseSerif,
-                        "C:\\Windows\\Fonts\\msmincho.ttc",
-                    ),
-                    (
-                        crate::font::FallbackFontType::JapaneseSans,
-                        "C:\\Windows\\Fonts\\msgothic.ttc",
-                    ),
-                    (crate::font::FallbackFontType::Serif, "C:\\Windows\\Fonts\\times.ttf"),
-                    (crate::font::FallbackFontType::SansSerif, "C:\\Windows\\Fonts\\arial.ttf"),
-                    (crate::font::FallbackFontType::Monospace, "C:\\Windows\\Fonts\\cour.ttf"),
-                ];
-                for (ftype, path) in win_paths {
-                    if !missing_types.contains(&ftype) {
-                        continue;
-                    }
-                    if let Ok(data) = std::fs::read(path) {
-                        fonts.insert(ftype, Arc::new(data));
-                    }
-                }
-            }
-
-            #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-            {
-                let linux_paths = [
-                    (
-                        crate::font::FallbackFontType::JapaneseSerif,
-                        "/usr/share/fonts/truetype/fonts-japanese-mincho.ttf",
-                    ),
-                    (
-                        crate::font::FallbackFontType::JapaneseSans,
-                        "/usr/share/fonts/truetype/fonts-japanese-gothic.ttf",
-                    ),
-                    (crate::font::FallbackFontType::Serif, "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf"),
-                    (crate::font::FallbackFontType::SansSerif, "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
-                    (crate::font::FallbackFontType::Monospace, "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"),
-                ];
-                for (ftype, path) in linux_paths {
-                    if !missing_types.contains(&ftype) {
-                        continue;
-                    }
-                    if let Ok(data) = std::fs::read(path) {
-                        fonts.insert(ftype, Arc::new(data));
-                    }
-                }
-            }
+            self.load_platform_fallback_fonts(&mut fonts, &missing_types);
         }
 
         self.system_fonts = Arc::new(fonts);
@@ -364,37 +360,31 @@ impl Document {
         Ok(())
     }
 
-    /// Dynamically rebuilds a clean, balanced B-Tree (max_kids = 50) in the arena.
-    pub fn rebuild_page_tree_in_arena(&mut self) -> PdfResult<()> {
-        let max_kids = 50;
-        let mut current_layer: Vec<Object> = self.pages.iter().map(|&h| Object::Reference(h)).collect();
+    fn create_empty_page_tree(&mut self) -> PdfResult<()> {
+        let pages_root_key = self.arena.name("Pages");
+        let type_key = self.arena.name("Type");
+        let count_key = self.arena.name("Count");
+        let kids_key = self.arena.name("Kids");
 
-        if current_layer.is_empty() {
-            // Create a minimal empty Pages root
-            let pages_root_key = self.arena.name("Pages");
-            let type_key = self.arena.name("Type");
-            let count_key = self.arena.name("Count");
-            let kids_key = self.arena.name("Kids");
+        let mut root_dict = BTreeMap::new();
+        root_dict.insert(type_key, Object::Name(pages_root_key));
+        root_dict.insert(count_key, Object::Integer(0));
+        root_dict.insert(kids_key, Object::Array(self.arena.alloc_array(Vec::new())));
 
-            let mut root_dict = BTreeMap::new();
-            root_dict.insert(type_key, Object::Name(pages_root_key));
-            root_dict.insert(count_key, Object::Integer(0));
-            root_dict.insert(kids_key, Object::Array(self.arena.alloc_array(Vec::new())));
+        let root_dh = self.arena.alloc_dict(root_dict);
+        let root_h = self.arena.alloc_object(Object::Dictionary(root_dh));
 
-            let root_dh = self.arena.alloc_dict(root_dict);
-            let root_h = self.arena.alloc_object(Object::Dictionary(root_dh));
+        // Update Catalog
+        let catalog_dh = self.resolve_to_dict(self.root)?;
+        let mut catalog_dict = self.arena.get_dict(catalog_dh).unwrap_or_default();
+        catalog_dict.insert(pages_root_key, Object::Reference(root_h));
+        self.arena.set_dict(catalog_dh, catalog_dict);
+        Ok(())
+    }
 
-            // Update Catalog
-            let catalog_dh = self.resolve_to_dict(self.root)?;
-            let mut catalog_dict = self.arena.get_dict(catalog_dh).unwrap_or_default();
-            catalog_dict.insert(pages_root_key, Object::Reference(root_h));
-            self.arena.set_dict(catalog_dh, catalog_dict);
-            return Ok(());
-        }
-
-        // --- FIXED: Guarantee at least one /Type /Pages node is created at the first layer ---
+    fn build_page_tree_layer(&mut self, layer: &[Object], max_kids: usize) -> PdfResult<Vec<Object>> {
         let mut next_layer = Vec::new();
-        for chunk in current_layer.chunks(max_kids) {
+        for chunk in layer.chunks(max_kids) {
             let mut total_count = 0;
             let mut kids_refs = Vec::new();
 
@@ -431,54 +421,24 @@ impl Document {
 
             next_layer.push(Object::Reference(pages_h));
         }
-        current_layer = next_layer;
+        Ok(next_layer)
+    }
 
-        // Loop until we have a single root node in the current layer (subsequent layers)
+    /// Dynamically rebuilds a clean, balanced B-Tree (max_kids = 50) in the arena.
+    pub fn rebuild_page_tree_in_arena(&mut self) -> PdfResult<()> {
+        let max_kids = 50;
+        let mut current_layer: Vec<Object> = self.pages.iter().map(|&h| Object::Reference(h)).collect();
+
+        if current_layer.is_empty() {
+            return self.create_empty_page_tree();
+        }
+
+        // Build the first layer of Pages nodes
+        current_layer = self.build_page_tree_layer(&current_layer, max_kids)?;
+
+        // Loop until we have a single root node in the subsequent layers
         while current_layer.len() > 1 {
-            let mut next_layer = Vec::new();
-
-            for chunk in current_layer.chunks(max_kids) {
-                // Compute total Count of leaves under this chunk
-                let mut total_count = 0;
-                let mut kids_refs = Vec::new();
-
-                for kid_obj in chunk {
-                    kids_refs.push(kid_obj.clone());
-                    if let Some(kh) = kid_obj.as_reference() {
-                        let kid_dh = self.resolve_to_dict(kh)?;
-                        let kid_dict = self.arena.get_dict(kid_dh).unwrap_or_default();
-                        total_count += self.get_node_count(&kid_dict);
-                    }
-                }
-
-                // Create intermediate Pages dictionary
-                let pages_root_key = self.arena.name("Pages");
-                let type_key = self.arena.name("Type");
-                let count_key = self.arena.name("Count");
-                let kids_key = self.arena.name("Kids");
-
-                let mut pages_dict = BTreeMap::new();
-                pages_dict.insert(type_key, Object::Name(pages_root_key));
-                pages_dict.insert(count_key, Object::Integer(total_count as i64));
-                pages_dict.insert(kids_key, Object::Array(self.arena.alloc_array(kids_refs)));
-
-                let pages_dh = self.arena.alloc_dict(pages_dict);
-                let pages_h = self.arena.alloc_object(Object::Dictionary(pages_dh));
-
-                // Update /Parent for all kids in this chunk
-                for kid_obj in chunk {
-                    if let Some(kh) = kid_obj.as_reference() {
-                        let kid_dh = self.resolve_to_dict(kh)?;
-                        let mut kid_dict = self.arena.get_dict(kid_dh).unwrap_or_default();
-                        kid_dict.insert(self.arena.name("Parent"), Object::Reference(pages_h));
-                        self.arena.set_dict(kid_dh, kid_dict);
-                    }
-                }
-
-                next_layer.push(Object::Reference(pages_h));
-            }
-
-            current_layer = next_layer;
+            current_layer = self.build_page_tree_layer(&current_layer, max_kids)?;
         }
 
         // Now current_layer has exactly one node (the root)
@@ -707,6 +667,58 @@ impl Document {
         let _ = self.push_down_attributes_recursive(root_h, &mut inherited, 0);
     }
 
+    fn process_leaf_page(
+        &self,
+        dict_h: Handle<BTreeMap<Handle<PdfName>, Object>>,
+        dict: &BTreeMap<Handle<PdfName>, Object>,
+        local_inherited: BTreeMap<Handle<PdfName>, Object>,
+    ) -> PdfResult<()> {
+        let mut leaf_dict = dict.clone();
+        for (key, val) in local_inherited {
+            leaf_dict.entry(key).or_insert(val);
+        }
+
+        // Ensure CropBox and Rotate are explicitly set for Acrobat standardization
+        let mb_key = self.arena.name("MediaBox");
+        let cb_key = self.arena.name("CropBox");
+        let rot_key = self.arena.name("Rotate");
+
+        if !leaf_dict.contains_key(&cb_key)
+            && let Some(mb_val) = leaf_dict.get(&mb_key)
+        {
+            leaf_dict.insert(cb_key, mb_val.clone());
+        }
+        leaf_dict.entry(rot_key).or_insert(Object::Integer(0));
+
+        self.arena.set_dict(dict_h, leaf_dict);
+        Ok(())
+    }
+
+    fn process_pages_node(
+        &self,
+        dict_h: Handle<BTreeMap<Handle<PdfName>, Object>>,
+        dict: &BTreeMap<Handle<PdfName>, Object>,
+        local_inherited: &mut BTreeMap<Handle<PdfName>, Object>,
+        depth: usize,
+    ) -> PdfResult<()> {
+        let kids_key = self.arena.name("Kids");
+        let kids_obj = dict.get(&kids_key).ok_or_else(|| PdfError::Other("Missing Kids in Pages node".into()))?;
+        let ah = kids_obj.resolve(&self.arena).as_array().ok_or_else(|| PdfError::Other("Invalid Kids array".into()))?;
+        let kids = self.arena.get_array(ah).ok_or_else(|| PdfError::Other("Invalid kids array handle".into()))?;
+        for kid in kids {
+            if let Some(kh) = kid.as_reference() {
+                self.push_down_attributes_recursive(kh, local_inherited, depth + 1)?;
+            }
+        }
+
+        let mut pages_dict = dict.clone();
+        for attr in ["Resources", "MediaBox", "CropBox", "Rotate"] {
+            pages_dict.remove(&self.arena.name(attr));
+        }
+        self.arena.set_dict(dict_h, pages_dict);
+        Ok(())
+    }
+
     fn push_down_attributes_recursive(
         &self,
         node_h: Handle<Object>,
@@ -742,46 +754,13 @@ impl Document {
         if let Some(name) = &node_type
             && name.as_str() == "Page"
         {
-            let mut leaf_dict = dict.clone();
-            for (key, val) in local_inherited {
-                leaf_dict.entry(key).or_insert(val);
-            }
-
-            // Ensure CropBox and Rotate are explicitly set for Acrobat standardization
-            let mb_key = self.arena.name("MediaBox");
-            let cb_key = self.arena.name("CropBox");
-            let rot_key = self.arena.name("Rotate");
-
-            if !leaf_dict.contains_key(&cb_key)
-                && let Some(mb_val) = leaf_dict.get(&mb_key)
-            {
-                leaf_dict.insert(cb_key, mb_val.clone());
-            }
-            leaf_dict.entry(rot_key).or_insert(Object::Integer(0));
-
-            self.arena.set_dict(dict_h, leaf_dict);
-            return Ok(());
+            return self.process_leaf_page(dict_h, &dict, local_inherited);
         }
 
         if let Some(name) = &node_type
             && name.as_str() == "Pages"
         {
-            let kids_key = self.arena.name("Kids");
-            let kids_obj = dict.get(&kids_key).ok_or_else(|| PdfError::Other("Missing Kids in Pages node".into()))?;
-            let ah = kids_obj.resolve(&self.arena).as_array().ok_or_else(|| PdfError::Other("Invalid Kids array".into()))?;
-            let kids = self.arena.get_array(ah).ok_or_else(|| PdfError::Other("Invalid kids array handle".into()))?;
-            for kid in kids {
-                if let Some(kh) = kid.as_reference() {
-                    self.push_down_attributes_recursive(kh, &mut local_inherited, depth + 1)?;
-                }
-            }
-
-            let mut pages_dict = dict.clone();
-            for attr in ["Resources", "MediaBox", "CropBox", "Rotate"] {
-                pages_dict.remove(&self.arena.name(attr));
-            }
-            self.arena.set_dict(dict_h, pages_dict);
-            return Ok(());
+            return self.process_pages_node(dict_h, &dict, &mut local_inherited, depth);
         }
 
         Err(PdfError::Other("Invalid node type in page tree".into()))

@@ -550,6 +550,66 @@ pub fn retag(doc: &mut Document) -> PdfResult<()> {
     Ok(())
 }
 
+impl HeuristicEngine {
+    fn check_span_intersection(span: &TextSpan, rect: &[f32; 4]) -> bool {
+        let span_min_x = span.x;
+        let span_max_x = span.x + span.width;
+        let span_min_y = span.y;
+        let span_max_y = span.y + span.font_size; // approximate height
+
+        let r_min_x = f64::from(rect[0]);
+        let r_min_y = f64::from(rect[1]);
+        let r_max_x = f64::from(rect[2]);
+        let r_max_y = f64::from(rect[3]);
+
+        span_min_x < r_max_x
+            && span_max_x > r_min_x
+            && span_min_y < r_max_y
+            && span_max_y > r_min_y
+    }
+
+    fn collect_redacted_op_indices(spans: &[TextSpan], redacted_rects: &[[f32; 4]]) -> std::collections::BTreeSet<usize> {
+        let mut redacted_op_indices = std::collections::BTreeSet::new();
+        for span in spans {
+            for rect in redacted_rects {
+                if Self::check_span_intersection(span, rect) {
+                    redacted_op_indices.insert(span.op_index);
+                }
+            }
+        }
+        redacted_op_indices
+    }
+
+    fn rewrite_redacted_tokens(data: bytes::Bytes, redacted_op_indices: &std::collections::BTreeSet<usize>) -> Vec<u8> {
+        use ferruginous_core::lexer::{Lexer, Token};
+        let mut lexer = Lexer::new(data);
+        let mut output = Vec::new();
+        let mut op_index = 0;
+
+        while let Ok(token) = lexer.next_token() {
+            if token == Token::EOF {
+                break;
+            }
+
+            if let Token::Keyword(_) = &token {
+                token.write_to(&mut output);
+                op_index += 1;
+            } else if matches!(token, Token::String(_) | Token::Hex(_)) {
+                if redacted_op_indices.contains(&op_index) {
+                    let redacted_tok = Token::String(bytes::Bytes::from("[REDACTED]"));
+                    redacted_tok.write_to(&mut output);
+                } else {
+                    token.write_to(&mut output);
+                }
+                op_index += 1;
+            } else {
+                token.write_to(&mut output);
+            }
+        }
+        output
+    }
+}
+
 /// Physically scrubs content streams inside specified redaction rectangles on a page (Atomic Redaction).
 pub fn apply_physical_redaction_to_page(
     doc: &Document,
@@ -575,61 +635,14 @@ pub fn apply_physical_redaction_to_page(
         let _ = interpreter.execute_raw(&data);
 
         // 2. Identify which op_indices intersect the redacted rectangles
-        let mut redacted_op_indices = std::collections::BTreeSet::new();
-        for span in &collector.spans {
-            for rect in redacted_rects {
-                // Check intersection between span.rect (PDF User Space) and redacted rect.
-                // redacted rect: [x1, y1, x2, y2]
-                let span_min_x = span.x;
-                let span_max_x = span.x + span.width;
-                let span_min_y = span.y;
-                let span_max_y = span.y + span.font_size; // approximate height with font_size
-
-                let r_min_x = f64::from(rect[0]);
-                let r_min_y = f64::from(rect[1]);
-                let r_max_x = f64::from(rect[2]);
-                let r_max_y = f64::from(rect[3]);
-
-                let intersects = span_min_x < r_max_x
-                    && span_max_x > r_min_x
-                    && span_min_y < r_max_y
-                    && span_max_y > r_min_y;
-
-                if intersects {
-                    redacted_op_indices.insert(span.op_index);
-                }
-            }
-        }
+        let redacted_op_indices = HeuristicEngine::collect_redacted_op_indices(&collector.spans, redacted_rects);
 
         if redacted_op_indices.is_empty() {
             return Ok(());
         }
 
         // 3. Rewrite content stream tokens to scrub redacted string values
-        use ferruginous_core::lexer::{Lexer, Token};
-        let mut lexer = Lexer::new(data);
-        let mut output = Vec::new();
-        let mut op_index = 0;
-
-        while let Ok(token) = lexer.next_token() {
-            if token == Token::EOF {
-                break;
-            }
-
-            if let Token::Keyword(_) = &token {
-                token.write_to(&mut output);
-                op_index += 1;
-            } else if matches!(token, Token::String(_) | Token::Hex(_)) {
-                if redacted_op_indices.contains(&op_index) {
-                    let redacted_tok = Token::String(bytes::Bytes::from("[REDACTED]"));
-                    redacted_tok.write_to(&mut output);
-                } else {
-                    token.write_to(&mut output);
-                }
-            } else {
-                token.write_to(&mut output);
-            }
-        }
+        let output = HeuristicEngine::rewrite_redacted_tokens(data, &redacted_op_indices);
 
         // 4. Write modified contents stream back into PdfArena
         let mut stream_dict = std::collections::BTreeMap::new();

@@ -1,3 +1,5 @@
+//! Example for rendering Japanese PDF samples.
+
 use ferruginous_render::VelloBackend;
 use ferruginous_render::headless::render_to_image;
 use ferruginous_sdk::Interpreter;
@@ -5,6 +7,7 @@ use ferruginous_sdk::PdfDocument;
 use image::ImageFormat;
 use std::path::Path;
 
+/// Main function for running the Japanese PDF rendering example.
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
@@ -17,7 +20,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Rendering {filename}...");
     let path = Path::new(filename);
-    let data = std::fs::read(&path)?;
+    let data = std::fs::read(path)?;
     let doc = PdfDocument::open(data.into())?;
 
     if doc.page_count()? > 0 {
@@ -25,7 +28,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut backend = VelloBackend::new(system_fonts.clone());
 
         let media_box = page.media_box();
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let width = media_box.width() as u32;
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let height = media_box.height() as u32;
 
         if width > 0 && height > 0 {
@@ -40,7 +45,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let output_name = path.file_name().unwrap().to_str().unwrap();
             let output_path = output_dir.join(format!("{output_name}.png"));
             render_to_image(backend.scene(), width, height, &output_path, ImageFormat::Png).await?;
-            println!("  Saved to {output_path:?}");
+            println!("  Saved to {}", output_path.display());
         }
     }
 

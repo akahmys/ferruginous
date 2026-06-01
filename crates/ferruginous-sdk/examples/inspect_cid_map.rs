@@ -1,6 +1,9 @@
+//! Example demonstrating how to inspect the CIDToGIDMap of a PDF font.
+
 use ferruginous_core::font::FontResource;
 use ferruginous_sdk::PdfDocument;
 
+/// Main function for running the CID map inspection example.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
     let path_str = args.get(1).map_or("samples/bokutokitan.pdf", |s| s.as_str());

@@ -845,17 +845,7 @@ impl PdfDocument {
         Ok(((r.x2 - r.x1).abs(), (r.y2 - r.y1).abs()))
     }
 
-    /// Renders a page to a provide backend.
-    pub fn render_page(
-        &self,
-        index: usize,
-        backend: &mut dyn ferruginous_render::RenderBackend,
-        initial_transform: kurbo::Affine,
-    ) -> PdfResult<()> {
-        let page = self.inner.get_page(index)?;
-        let arena = self.inner.arena();
-        let res_dh = page.resources_handle();
-        let mut interpreter = Interpreter::new(backend, &self.inner, res_dh, initial_transform);
+    fn resolve_page_contents(&self, page: &Page) -> PdfResult<Object> {
         let contents_obj = page
             .resolve_attribute("Contents")
             .ok_or_else(|| PdfError::Other("Page has no contents".into()))?;
@@ -867,13 +857,15 @@ impl PdfDocument {
             }
             _ => contents_obj,
         };
-        let resolved_type_str = match &resolved_contents {
-            Object::Stream(_, _) => "Stream",
-            Object::Array(_) => "Array",
-            _ => "Other",
-        };
-        log::debug!("[SDK] Resolved contents type: {resolved_type_str}");
+        Ok(resolved_contents)
+    }
 
+    fn execute_interpreter(
+        &self,
+        interpreter: &mut Interpreter<'_>,
+        resolved_contents: Object,
+    ) -> PdfResult<()> {
+        let arena = self.inner.arena();
         match resolved_contents {
             Object::Stream(dh, ref data) => {
                 if let SublimatedData::Commands { items: cmds, .. } = &**data {
@@ -906,6 +898,22 @@ impl PdfDocument {
                 interpreter.execute_raw(&data)?;
             }
         }
+        Ok(())
+    }
+
+    /// Renders a page to a provide backend.
+    pub fn render_page(
+        &self,
+        index: usize,
+        backend: &mut dyn ferruginous_render::RenderBackend,
+        initial_transform: kurbo::Affine,
+    ) -> PdfResult<()> {
+        let page = self.inner.get_page(index)?;
+        let res_dh = page.resources_handle();
+        let mut interpreter = Interpreter::new(backend, &self.inner, res_dh, initial_transform);
+        
+        let resolved_contents = self.resolve_page_contents(&page)?;
+        self.execute_interpreter(&mut interpreter, resolved_contents)?;
         Ok(())
     }
 

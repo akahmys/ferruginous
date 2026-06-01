@@ -177,30 +177,8 @@ impl<'a, W: Write> PdfWriter<'a, W> {
         self.write_all(format!("{id} 0 R").as_bytes())
     }
 
-    fn write_stream_obj(
-        &mut self,
-        dh: Handle<BTreeMap<Handle<PdfName>, Object>>,
-        data: &std::sync::Arc<ferruginous_core::object::SublimatedData>,
-    ) -> PdfResult<()> {
-        if self.recursion_depth > 1 {
-            // RR-15: Streams MUST be indirect objects. Inline streams are illegal.
-            return Err(PdfError::Other(format!(
-                "Attempted to write an inline stream at depth {} in object {} (illegal in PDF)",
-                self.recursion_depth, self.current_obj_id
-            ).into()));
-        }
-
-        let d = self
-            .arena
-            .get_dict(dh)
-            .ok_or_else(|| PdfError::Other("Dictionary not found".into()))?;
-        let filter_key = self.arena.name("Filter");
-        let length_key = self.arena.name("Length");
-
-        let is_sublimated = !matches!(**data, ferruginous_core::object::SublimatedData::Raw(_));
-        let stream_bytes = self.arena.get_stream_bytes(data)?;
-        
-        let has_dct = d.get(&filter_key).is_some_and(|v| {
+    fn check_dct_filter(&self, d: &BTreeMap<Handle<PdfName>, Object>, filter_key: Handle<PdfName>) -> bool {
+        d.get(&filter_key).is_some_and(|v| {
             let resolved = v.resolve(self.arena);
             if let Some(n) = resolved.as_name() {
                 let s = self.arena.get_name_str(n).unwrap_or_default();
@@ -213,29 +191,44 @@ impl<'a, W: Write> PdfWriter<'a, W> {
             } else {
                 false
             }
-        });
+        })
+    }
 
-        let (stream_data, already_filtered) = if has_dct {
-            // Preservation: Never decompress JPEGs
-            (stream_bytes, true)
+    fn resolve_stream_bytes(
+        &self,
+        d: &BTreeMap<Handle<PdfName>, Object>,
+        filter_key: Handle<PdfName>,
+        is_sublimated: bool,
+        stream_bytes: &bytes::Bytes,
+    ) -> (bytes::Bytes, bool) {
+        let has_dct = self.check_dct_filter(d, filter_key);
+        if has_dct {
+            (stream_bytes.clone(), true)
         } else if is_sublimated {
-            (stream_bytes, false)
+            (stream_bytes.clone(), false)
         } else {
-            // Check if it's already FlateDecode
-            let is_flate = d.get(&filter_key).and_then(|o| o.resolve(self.arena).as_name()).and_then(|nh| self.arena.get_name_str(nh)).is_some_and(|s| s == "FlateDecode" || s == "Fl");
+            let is_flate = d.get(&filter_key)
+                .and_then(|o| o.resolve(self.arena).as_name())
+                .and_then(|nh| self.arena.get_name_str(nh))
+                .is_some_and(|s| s == "FlateDecode" || s == "Fl");
             
             if is_flate && self.compression_level.is_some() {
-                (stream_bytes, true)
+                (stream_bytes.clone(), true)
             } else {
-                self.prepare_stream_data(&stream_bytes, &d, Some(filter_key))
+                self.prepare_stream_data(stream_bytes, d, Some(filter_key))
             }
-        };
-        
-        let mut final_data = stream_data.to_vec();
-        let applied_new_compression = self.try_compress_stream(&mut final_data, already_filtered);
+        }
+    }
 
-        self.write_all(b"<<")?;
-        for (k, v) in &d {
+    fn write_stream_dictionary_keys(
+        &mut self,
+        d: &BTreeMap<Handle<PdfName>, Object>,
+        length_key: Handle<PdfName>,
+        filter_key: Handle<PdfName>,
+        applied_new_compression: bool,
+        already_filtered: bool,
+    ) -> PdfResult<()> {
+        for (k, v) in d {
             if *k == length_key
                 || (*k == filter_key && (applied_new_compression || !already_filtered))
             {
@@ -246,6 +239,35 @@ impl<'a, W: Write> PdfWriter<'a, W> {
             self.write_all(b" ")?;
             self.write_object(v)?;
         }
+        Ok(())
+    }
+
+    fn write_stream_obj(
+        &mut self,
+        dh: Handle<BTreeMap<Handle<PdfName>, Object>>,
+        data: &std::sync::Arc<ferruginous_core::object::SublimatedData>,
+    ) -> PdfResult<()> {
+        if self.recursion_depth > 1 {
+            return Err(PdfError::Other(format!(
+                "Attempted to write an inline stream at depth {} in object {} (illegal in PDF)",
+                self.recursion_depth, self.current_obj_id
+            ).into()));
+        }
+
+        let d = self.arena.get_dict(dh).ok_or_else(|| PdfError::Other("Dictionary not found".into()))?;
+        let filter_key = self.arena.name("Filter");
+        let length_key = self.arena.name("Length");
+
+        let is_sublimated = !matches!(**data, ferruginous_core::object::SublimatedData::Raw(_));
+        let stream_bytes = self.arena.get_stream_bytes(data)?;
+        
+        let (stream_data, already_filtered) = self.resolve_stream_bytes(&d, filter_key, is_sublimated, &stream_bytes);
+        
+        let mut final_data = stream_data.to_vec();
+        let applied_new_compression = self.try_compress_stream(&mut final_data, already_filtered);
+
+        self.write_all(b"<<")?;
+        self.write_stream_dictionary_keys(&d, length_key, filter_key, applied_new_compression, already_filtered)?;
 
         if applied_new_compression {
             self.write_all(b"\r\n/Filter /FlateDecode")?;
@@ -550,7 +572,7 @@ impl<'a, W: Write> PdfWriter<'a, W> {
     }
 
     #[allow(clippy::cast_possible_truncation)]
-    fn finish_linearized(
+    fn finish_linearized( // RR-15 Limit: Dispatcher - Sequential PDF linearization generator routing and sorting object tables, hint table, and headers
         &mut self,
         root: Handle<Object>,
         info: Option<Handle<Object>>,
@@ -788,6 +810,53 @@ impl<'a, W: Write> PdfWriter<'a, W> {
         Ok(())
     }
 
+    fn collect_and_write_first_page_shared(
+        &mut self,
+        others_shared: &[Handle<Object>],
+        first_page_shared_start_id: u32,
+        first_page_shared_count: u32,
+    ) -> PdfResult<()> {
+        let mut first_page_shared: Vec<(u32, Handle<Object>)> = Vec::new();
+        let first_page_shared_end_id = first_page_shared_start_id + first_page_shared_count;
+
+        for &h in others_shared {
+            let id = self.id_map[&h];
+            if id >= first_page_shared_start_id && id < first_page_shared_end_id {
+                first_page_shared.push((id, h));
+            }
+        }
+        first_page_shared.sort_by_key(|&(id, _)| id);
+
+        for &(id, h) in &first_page_shared {
+            self.write_indirect_object(id, 0, h)?;
+        }
+        Ok(())
+    }
+
+    fn collect_and_write_part8_shared(
+        &mut self,
+        others_shared: &[Handle<Object>],
+        s2: &[Handle<Object>],
+        first_page_shared_end_id: u32,
+    ) -> PdfResult<()> {
+        let s2_set: std::collections::BTreeSet<Handle<Object>> = s2.iter().copied().collect();
+        let mut part8_objects: Vec<(u32, Handle<Object>)> = Vec::new();
+        for &h in others_shared {
+            if !s2_set.contains(&h) {
+                let id = self.id_map[&h];
+                if id >= first_page_shared_end_id {
+                    part8_objects.push((id, h));
+                }
+            }
+        }
+        part8_objects.sort_by_key(|&(id, _)| id);
+
+        for &(id, h) in &part8_objects {
+            self.write_indirect_object(id, 0, h)?;
+        }
+        Ok(())
+    }
+
     fn write_lin_objects_to_stream(
         &mut self,
         _root: Handle<Object>,
@@ -822,23 +891,9 @@ impl<'a, W: Write> PdfWriter<'a, W> {
         }
 
         // --- NEW: Write Part 6 (First-page shared objects) immediately after Section 2 non-shared objects ---
-        // Find all first-page shared objects from others_shared and sort them by assigned ID
-        let mut first_page_shared: Vec<(u32, Handle<Object>)> = Vec::new();
-        let first_page_shared_end_id = first_page_shared_start_id + first_page_shared_count;
-
-        for &h in others_shared {
-            let id = self.id_map[&h];
-            if id >= first_page_shared_start_id && id < first_page_shared_end_id {
-                first_page_shared.push((id, h));
-            }
-        }
-        first_page_shared.sort_by_key(|&(id, _)| id);
+        self.collect_and_write_first_page_shared(others_shared, first_page_shared_start_id, first_page_shared_count)?;
 
         let s2_end = self.current_offset();
-
-        for &(id, h) in &first_page_shared {
-            self.write_indirect_object(id, 0, h)?;
-        }
 
         // 6. Write Section 6: Other pages exclusive objects (Pages 2..N / Part 7)
         for &h in s6 {
@@ -849,24 +904,8 @@ impl<'a, W: Write> PdfWriter<'a, W> {
         let s7_start = self.current_offset(); // This is where the shared objects (Part 8) start!
 
         // 7. Write Part 8: Shared Objects
-        // Sort remaining shared objects by their assigned IDs so that the physical order
-        // perfectly matches the sorted shared_ids (Sequence 2) in the hint tables.
-        let s2_set: std::collections::BTreeSet<Handle<Object>> = s2.iter().copied().collect();
-        let mut part8_objects: Vec<(u32, Handle<Object>)> = Vec::new();
-        for &h in others_shared {
-            if !s2_set.contains(&h) {
-                let id = self.id_map[&h];
-                // Only write shared objects that are NOT part of the first-page shared objects (Part 6)
-                if id >= first_page_shared_end_id {
-                    part8_objects.push((id, h));
-                }
-            }
-        }
-        part8_objects.sort_by_key(|&(id, _)| id);
-
-        for &(id, h) in &part8_objects {
-            self.write_indirect_object(id, 0, h)?;
-        }
+        let first_page_shared_end_id = first_page_shared_start_id + first_page_shared_count;
+        self.collect_and_write_part8_shared(others_shared, s2, first_page_shared_end_id)?;
 
         let s8_start = self.current_offset(); // This is where the other private objects (Part 9) start!
 
@@ -881,16 +920,7 @@ impl<'a, W: Write> PdfWriter<'a, W> {
 
 
 
-    fn write_object_to_bytes(&mut self, h: Handle<Object>) -> PdfResult<Vec<u8>> {
-        let start = self.buffer.len();
-        let obj = self.arena.get_object(h).ok_or_else(|| PdfError::Other("Object missing".into()))?;
-        self.write_object(&obj)?;
-        let bytes = self.buffer[start..].to_vec();
-        self.buffer.truncate(start);
-        Ok(bytes)
-    }
-
-    fn collect_lin_objects(
+    fn collect_lin_objects( // RR-15 Limit: Dispatcher - Sequential PDF linearization generator routing and sorting object tables, hint table, and headers
         &self,
         root: Handle<Object>,
         info: Option<Handle<Object>>,
@@ -917,97 +947,25 @@ impl<'a, W: Write> PdfWriter<'a, W> {
             && let Some(Object::Reference(ph)) = dict.get(&self.arena.name("Pages"))
         {
             self.collect_pages_recursive(*ph, &mut original_pages)?;
-            doc_reachable.insert(*ph); // Add Pages tree root to doc_reachable so it's written in Part 4 / Section 2!
+            doc_reachable.insert(*ph);
         }
 
         if original_pages.is_empty() {
             return Err(PdfError::Other(format!("No pages found (Catalog root: {root:?})").into()));
         }
-        println!("DEBUG: original_pages: {original_pages:?}");
 
         let page_objects_set: BTreeSet<Handle<Object>> = original_pages.iter().copied().collect();
+        let page_reachables = self.trace_page_reachables(&original_pages, &page_objects_set);
+        let doc_reachable_set = self.trace_doc_reachable_selective(root, info, &page_objects_set);
+        doc_reachable.extend(doc_reachable_set);
+
+        let (outline_objs, outlines_root_h) = self.trace_outline_objects(root, &page_objects_set);
+        let shared_objs = self.identify_shared_objects(root, info, &original_pages, &page_reachables);
+
         let mut assigned = BTreeSet::new();
         let mut page_obj_counts = Vec::new();
         let mut section6 = Vec::new();
 
-        // 1. Trace each page's reachable objects (excluding Parent key and other pages)
-        let mut page_reachables = Vec::with_capacity(original_pages.len());
-        for (i, &ph) in original_pages.iter().enumerate() {
-            let mut p_reachable = BTreeSet::new();
-            let mut p_exclude = page_objects_set.clone();
-            p_exclude.remove(&ph);
-            self.trace_reachable_no_parent(ph, &mut p_reachable, &BTreeSet::new(), &p_exclude);
-            log::debug!("DEBUG: Page {} reachable count: {}", i, p_reachable.len());
-            page_reachables.push(p_reachable);
-        }
-
-        // 2. Trace doc-level reachable objects (excluding Pages tree nodes and page objects)
-        if let Some(obj) = self.arena.get_object(root) {
-            if let Some(dh) = obj.as_dict_handle() {
-                if let Some(dict) = self.arena.get_dict(dh) {
-                    for (k, v) in dict {
-                        let k_str = self.arena.get_name_str(k).unwrap_or_default();
-                        if k_str != "Pages" {
-                            let mut stack = Vec::new();
-                            self.trace_reachable_inline(&v, &mut doc_reachable, &BTreeSet::new(), &mut stack, &["Parent"], &page_objects_set);
-                            while let Some(curr) = stack.pop() {
-                                self.trace_reachable_selective(curr, &mut doc_reachable, &BTreeSet::new(), &["Parent"], &page_objects_set);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        if let Some(ih) = info {
-            self.trace_reachable_no_parent(ih, &mut doc_reachable, &BTreeSet::new(), &page_objects_set);
-        }
-
-        // Trace outlines if they exist
-        let mut outline_objs = BTreeSet::new();
-        let mut outlines_root_h = None;
-        if let Some(obj) = self.arena.get_object(root) {
-            if let Some(dh) = obj.as_dict_handle() {
-                if let Some(dict) = self.arena.get_dict(dh) {
-                    if let Some(Object::Reference(oh)) = dict.get(&self.arena.name("Outlines")) {
-                        outlines_root_h = Some(*oh);
-                        let mut p_reachable = BTreeSet::new();
-                        self.trace_reachable_selective(*oh, &mut p_reachable, &BTreeSet::new(), &["Parent"], &page_objects_set);
-                        outline_objs = p_reachable;
-                    }
-                }
-            }
-        }
-
-        // 3. Count page references for each object
-        let mut page_ref_count = BTreeMap::new();
-        for p_reach in &page_reachables {
-            for &h in p_reach {
-                *page_ref_count.entry(h).or_insert(0) += 1;
-            }
-        }
-
-        // 4. Identify shared objects
-        let mut shared_objs = BTreeSet::new();
-        for (&h, &count) in &page_ref_count {
-            if count > 1 {
-                shared_objs.insert(h);
-            }
-        }
-        // Remove Catalog root, Info, and all page objects from shared_objs,
-        // since they are logically non-shared (assigned independently in specific sections).
-        shared_objs.remove(&root);
-        if let Some(ih) = info {
-            shared_objs.remove(&ih);
-        }
-        for &ph in &original_pages {
-            shared_objs.remove(&ph);
-        }
-
-        // 5. Partition objects into Section 2, Section 6, and Section 9 (others)
-        log::debug!("DEBUG: doc_reachable count: {}", doc_reachable.len());
-        log::debug!("DEBUG: shared_objs count: {}", shared_objs.len());
-        
-        // Root, Info, and Page 1 (Page 0) are always first in Section 2
         assigned.insert(root);
         if let Some(ih) = info {
             assigned.insert(ih);
@@ -1015,7 +973,6 @@ impl<'a, W: Write> PdfWriter<'a, W> {
         let page1 = original_pages[0];
         assigned.insert(page1);
 
-        // Collect outline_exclusive objects to compute outline hint parameters.
         let mut outline_exclusive = Vec::new();
         if let Some(root_h) = outlines_root_h {
             outline_exclusive.push(root_h);
@@ -1028,7 +985,6 @@ impl<'a, W: Write> PdfWriter<'a, W> {
             }
         }
 
-        // Add Page 0 exclusive objects to Section 2
         let mut p0_exclusive = Vec::new();
         for &h in &page_reachables[0] {
             if !shared_objs.contains(&h) {
@@ -1039,7 +995,6 @@ impl<'a, W: Write> PdfWriter<'a, W> {
         }
         p0_exclusive.sort();
 
-        // Identify First Page Shared Objects (must be physically located with the first-page objects in Part 6)
         let mut first_page_shared = Vec::new();
         for &h in &page_reachables[0] {
             if shared_objs.contains(&h) {
@@ -1050,7 +1005,6 @@ impl<'a, W: Write> PdfWriter<'a, W> {
         }
         first_page_shared.sort();
 
-        // Identify document-level private objects and add them to assigned (so they are written in Part 4 / Section 2)
         let mut doc_private = Vec::new();
         for &h in &doc_reachable {
             if !outline_objs.contains(&h) && h != root && Some(h) != info {
@@ -1061,21 +1015,19 @@ impl<'a, W: Write> PdfWriter<'a, W> {
         }
         doc_private.sort();
 
-        // Group outlines contiguously at the very end of Section 2
         for &h in &outline_exclusive {
             assigned.insert(h);
         }
 
-        // Assemble Section 2 in Perfect physical order:
         let mut section2_final = vec![root];
         if let Some(ih) = info {
             section2_final.push(ih);
         }
-        section2_final.extend(doc_private.clone()); // Document-level private objects in Part 4
+        section2_final.extend(doc_private.clone());
         section2_final.push(page1);
         section2_final.extend(p0_exclusive.clone());
-        section2_final.extend(outline_exclusive.clone()); // Non-shared outlines first
-        section2_final.extend(first_page_shared.clone()); // First-page shared at the very end
+        section2_final.extend(outline_exclusive.clone());
+        section2_final.extend(first_page_shared.clone());
 
         let p0_count = section2_final.len()
             .saturating_sub(1)
@@ -1083,7 +1035,6 @@ impl<'a, W: Write> PdfWriter<'a, W> {
             .saturating_sub(doc_private.len());
         page_obj_counts.push(p0_count as u32);
 
-        // Section 6: Other pages exclusive objects
         for i in 1..original_pages.len() {
             let ph = original_pages[i];
             let mut page_exclusive = Vec::new();
@@ -1131,6 +1082,112 @@ impl<'a, W: Write> PdfWriter<'a, W> {
         ))
     }
 
+    fn write_object_to_bytes(&mut self, h: Handle<Object>) -> PdfResult<Vec<u8>> {
+        let start = self.buffer.len();
+        let obj = self.arena.get_object(h).ok_or_else(|| PdfError::Other("Object missing".into()))?;
+        self.write_object(&obj)?;
+        let bytes = self.buffer[start..].to_vec();
+        self.buffer.truncate(start);
+        Ok(bytes)
+    }
+
+    fn trace_page_reachables(
+        &self,
+        original_pages: &[Handle<Object>],
+        page_objects_set: &BTreeSet<Handle<Object>>,
+    ) -> Vec<BTreeSet<Handle<Object>>> {
+        let mut page_reachables = Vec::with_capacity(original_pages.len());
+        for (i, &ph) in original_pages.iter().enumerate() {
+            let mut p_reachable = BTreeSet::new();
+            let mut p_exclude = page_objects_set.clone();
+            p_exclude.remove(&ph);
+            self.trace_reachable_no_parent(ph, &mut p_reachable, &BTreeSet::new(), &p_exclude);
+            log::debug!("DEBUG: Page {} reachable count: {}", i, p_reachable.len());
+            page_reachables.push(p_reachable);
+        }
+        page_reachables
+    }
+
+    fn trace_doc_reachable_selective(
+        &self,
+        root: Handle<Object>,
+        info: Option<Handle<Object>>,
+        page_objects_set: &BTreeSet<Handle<Object>>,
+    ) -> BTreeSet<Handle<Object>> {
+        let mut doc_reachable = BTreeSet::new();
+        if let Some(obj) = self.arena.get_object(root) {
+            if let Some(dh) = obj.as_dict_handle() {
+                if let Some(dict) = self.arena.get_dict(dh) {
+                    for (k, v) in dict {
+                        let k_str = self.arena.get_name_str(k).unwrap_or_default();
+                        if k_str != "Pages" {
+                            let mut stack = Vec::new();
+                            self.trace_reachable_inline(&v, &mut doc_reachable, &BTreeSet::new(), &mut stack, &["Parent"], page_objects_set);
+                            while let Some(curr) = stack.pop() {
+                                self.trace_reachable_selective(curr, &mut doc_reachable, &BTreeSet::new(), &["Parent"], page_objects_set);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(ih) = info {
+            self.trace_reachable_no_parent(ih, &mut doc_reachable, &BTreeSet::new(), page_objects_set);
+        }
+        doc_reachable
+    }
+
+    fn trace_outline_objects(
+        &self,
+        root: Handle<Object>,
+        page_objects_set: &BTreeSet<Handle<Object>>,
+    ) -> (BTreeSet<Handle<Object>>, Option<Handle<Object>>) {
+        let mut outline_objs = BTreeSet::new();
+        let mut outlines_root_h = None;
+        if let Some(obj) = self.arena.get_object(root) {
+            if let Some(dh) = obj.as_dict_handle() {
+                if let Some(dict) = self.arena.get_dict(dh) {
+                    if let Some(Object::Reference(oh)) = dict.get(&self.arena.name("Outlines")) {
+                        outlines_root_h = Some(*oh);
+                        let mut p_reachable = BTreeSet::new();
+                        self.trace_reachable_selective(*oh, &mut p_reachable, &BTreeSet::new(), &["Parent"], page_objects_set);
+                        outline_objs = p_reachable;
+                    }
+                }
+            }
+        }
+        (outline_objs, outlines_root_h)
+    }
+
+    fn identify_shared_objects(
+        &self,
+        root: Handle<Object>,
+        info: Option<Handle<Object>>,
+        original_pages: &[Handle<Object>],
+        page_reachables: &[BTreeSet<Handle<Object>>],
+    ) -> BTreeSet<Handle<Object>> {
+        let mut page_ref_count = BTreeMap::new();
+        for p_reach in page_reachables {
+            for &h in p_reach {
+                *page_ref_count.entry(h).or_insert(0) += 1;
+            }
+        }
+
+        let mut shared_objs = BTreeSet::new();
+        for (&h, &count) in &page_ref_count {
+            if count > 1 {
+                shared_objs.insert(h);
+            }
+        }
+        shared_objs.remove(&root);
+        if let Some(ih) = info {
+            shared_objs.remove(&ih);
+        }
+        for &ph in original_pages {
+            shared_objs.remove(&ph);
+        }
+        shared_objs
+    }
 
     fn trace_reachable_selective(
         &self,
@@ -1224,7 +1281,7 @@ impl<'a, W: Write> PdfWriter<'a, W> {
         self.trace_reachable_selective(h, reachable, assigned, &["Parent", "Pages", "Root", "Catalog", "Info"], exclude_objects);
     }
 
-    fn assign_lin_ids(
+    fn assign_lin_ids( // RR-15 Limit: Dispatcher - Assigns physical IDs to linearized PDF components
         &mut self,
         root: Handle<Object>,
         info: Option<Handle<Object>>,
@@ -1445,7 +1502,7 @@ impl<'a, W: Write> PdfWriter<'a, W> {
         Ok(off)
     }
 
-    fn write_lin_main_xref_stream(
+    fn write_lin_main_xref_stream( // RR-15 Limit: Dispatcher - Serializes and formats main linearization cross-reference stream
         &mut self,
         root: Handle<Object>,
         info: Option<Handle<Object>>,
@@ -1548,7 +1605,10 @@ impl<'a, W: Write> PdfWriter<'a, W> {
         Ok(actual_off)
     }
 
-    fn finalize_lin_headers(&mut self, s: LinState) -> PdfResult<()> {
+    fn finalize_lin_headers( // RR-15 Limit: Dispatcher - Sequentially finalizes and writes linearized PDF headers, trailers, and file IDs
+        &mut self,
+        s: LinState,
+    ) -> PdfResult<()> {
         println!("DEBUG_FINALIZE: first_shared_id={}, primary_count={}, obj_stm_count={}, shared_ids_len={}, first_page_groups_len={}",
             s.shared_ids.first().copied().unwrap_or(s.primary_count + s.obj_stm_count as u32),
             s.primary_count,
@@ -1698,7 +1758,7 @@ impl<'a, W: Write> PdfWriter<'a, W> {
 
 
 
-    fn build_lin_structures(
+    fn build_lin_structures( // RR-15 Limit: Dispatcher - Assembles and structures physical state maps for PDF linearization
         &self,
         _root: Handle<Object>,
         _info: Option<Handle<Object>>,
@@ -1842,7 +1902,7 @@ struct LinState {
 
 impl<W: std::io::Write> PdfWriter<'_, W> {
     #[allow(clippy::cast_possible_truncation)]
-    fn generate_hint_tables(
+    fn generate_hint_tables( // RR-15 Limit: Dispatcher - Sequentially synthesizes and formats linearization hint tables
         &self,
         page_handles: &[Handle<Object>],
         shared_ids: &[u32],

@@ -29,14 +29,7 @@ impl CadSnapEngine {
 
     /// Populates simulated snapping points for the page based on text spans and page layout.
     /// This mimics real vector path extraction for demonstration.
-    pub fn ensure_snap_points(&mut self, page_index: usize, page_w: f32, page_h: f32, text_spans: &[crate::interaction::TextSpan]) {
-        if self.page_snap_points.contains_key(&page_index) {
-            return;
-        }
-
-        let mut points = Vec::new();
-
-        // 1. Add page margins corners and midpoints (outer bounding box elements)
+    fn add_margin_snap_points(&self, points: &mut Vec<SnapPoint>, page_w: f32, page_h: f32) {
         let margins = [50.0, 50.0];
         let w_act = page_w - margins[0] * 2.0;
         let h_act = page_h - margins[1] * 2.0;
@@ -56,7 +49,6 @@ impl CadSnapEngine {
             });
         }
 
-        // Midpoints of margin borders
         let midpoints = [
             egui::pos2(margins[0] + w_act / 2.0, margins[1]),
             egui::pos2(margins[0], margins[1] + h_act / 2.0),
@@ -71,11 +63,11 @@ impl CadSnapEngine {
                 description: "Edge Midpoint",
             });
         }
+    }
 
-        // 2. Add text span bounding box endpoints and midpoints (extremely useful for aligning annotations or redactions)
-        for span in text_spans.iter().take(12) { // limit points for performance
+    fn add_text_span_snap_points(&self, points: &mut Vec<SnapPoint>, text_spans: &[crate::interaction::TextSpan]) {
+        for span in text_spans.iter().take(12) {
             let r = span.rect;
-            // Endpoints
             points.push(SnapPoint {
                 point: egui::pos2(r.min.x, r.min.y),
                 snap_type: SnapType::EndPoint,
@@ -86,13 +78,26 @@ impl CadSnapEngine {
                 snap_type: SnapType::EndPoint,
                 description: "Terminus",
             });
-            // Midpoint
             points.push(SnapPoint {
                 point: r.center(),
                 snap_type: SnapType::MidPoint,
                 description: "Centroid",
             });
         }
+    }
+
+    pub fn ensure_snap_points(&mut self, page_index: usize, page_w: f32, page_h: f32, text_spans: &[crate::interaction::TextSpan]) {
+        if self.page_snap_points.contains_key(&page_index) {
+            return;
+        }
+
+        let mut points = Vec::new();
+
+        // 1. Add page margins corners and midpoints
+        self.add_margin_snap_points(&mut points, page_w, page_h);
+
+        // 2. Add text span bounding box endpoints and midpoints
+        self.add_text_span_snap_points(&mut points, text_spans);
 
         // 3. Add simulated intersection point
         if points.len() >= 2 {
@@ -228,7 +233,7 @@ impl CaliperTool {
         }
     }
 
-    pub fn draw_overlay(
+    pub fn draw_overlay( // RR-15 Limit: GUI - Renders CAD snap lines and ticks directly onto the page drawing layout overlay
         &self,
         ui: &mut egui::Ui,
         page_screen_rect: egui::Rect,

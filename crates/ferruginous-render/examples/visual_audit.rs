@@ -1,7 +1,6 @@
 use ferruginous_render::VelloBackend;
 use ferruginous_sdk::{Interpreter, PdfDocument};
 use kurbo::Affine;
-use vello::Scene;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let data = std::fs::read("samples/fy05.pdf")?;

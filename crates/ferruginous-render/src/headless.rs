@@ -8,18 +8,8 @@ use vello::wgpu::{
 };
 use vello::{AaConfig, AaSupport, RenderParams, Renderer, RendererOptions, Scene};
 
-pub async fn render_to_bytes(
-    scene: &Scene,
-    width: u32,
-    height: u32,
-) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    log::debug!("[RENDER] Setting up wgpu...");
-    let (mut context, device_id) = setup_wgpu().await?;
-    let device_handle = &mut context.devices[device_id];
-    let (device, queue) = (&device_handle.device, &device_handle.queue);
-
-    log::debug!("[RENDER] Creating vello renderer...");
-    let mut renderer = Renderer::new(
+fn create_renderer(device: &vello::wgpu::Device) -> Result<Renderer, Box<dyn std::error::Error>> {
+    Renderer::new(
         device,
         RendererOptions {
             use_cpu: false,
@@ -40,7 +30,21 @@ pub async fn render_to_bytes(
             },
         )
     })
-    .map_err(|e| format!("Failed to create renderer: {}", e))?;
+    .map_err(|e| format!("Failed to create renderer: {}", e).into())
+}
+
+pub async fn render_to_bytes(
+    scene: &Scene,
+    width: u32,
+    height: u32,
+) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    log::debug!("[RENDER] Setting up wgpu...");
+    let (mut context, device_id) = setup_wgpu().await?;
+    let device_handle = &mut context.devices[device_id];
+    let (device, queue) = (&device_handle.device, &device_handle.queue);
+
+    log::debug!("[RENDER] Creating vello renderer...");
+    let mut renderer = create_renderer(device)?;
 
     let size = Extent3d { width, height, depth_or_array_layers: 1 };
     let target = create_target_texture(device, size);

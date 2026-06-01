@@ -68,6 +68,46 @@ impl USTRegistry {
         None
     }
 
+    fn make_mock_page_node(&self, page_num: usize, next_id: usize) -> USTNode {
+        USTNode {
+            id: next_id,
+            tag: "Part".to_string(),
+            title: format!("Page {} Section", page_num),
+            alt_text: None,
+            rect: None,
+            handle_id: None,
+            children: vec![
+                USTNode {
+                    id: next_id + 1,
+                    tag: "H1".to_string(),
+                    title: format!("Heading of Page {}", page_num),
+                    alt_text: None,
+                    rect: None,
+                    handle_id: None,
+                    children: Vec::new(),
+                },
+                USTNode {
+                    id: next_id + 2,
+                    tag: "P".to_string(),
+                    title: format!("Paragraph content for page {}", page_num),
+                    alt_text: None,
+                    rect: None,
+                    handle_id: None,
+                    children: Vec::new(),
+                },
+                USTNode {
+                    id: next_id + 3,
+                    tag: "Figure".to_string(),
+                    title: format!("Illustration on page {}", page_num),
+                    alt_text: None,
+                    rect: None,
+                    handle_id: None,
+                    children: Vec::new(),
+                },
+            ],
+        }
+    }
+
     #[allow(dead_code)]
     pub fn initialize_mock_tree(&mut self, total_pages: usize) {
         let mut doc_node = USTNode {
@@ -83,43 +123,7 @@ impl USTRegistry {
         let mut next_id = 1;
 
         for i in 0..total_pages {
-            let page_node = USTNode {
-                id: next_id,
-                tag: "Part".to_string(),
-                title: format!("Page {} Section", i + 1),
-                alt_text: None,
-                rect: None,
-                handle_id: None,
-                children: vec![
-                    USTNode {
-                        id: next_id + 1,
-                        tag: "H1".to_string(),
-                        title: format!("Heading of Page {}", i + 1),
-                        alt_text: None,
-                        rect: None,
-                        handle_id: None,
-                        children: Vec::new(),
-                    },
-                    USTNode {
-                        id: next_id + 2,
-                        tag: "P".to_string(),
-                        title: format!("Paragraph content for page {}", i + 1),
-                        alt_text: None,
-                        rect: None,
-                        handle_id: None,
-                        children: Vec::new(),
-                    },
-                    USTNode {
-                        id: next_id + 3,
-                        tag: "Figure".to_string(),
-                        title: format!("Illustration on page {}", i + 1),
-                        alt_text: None,
-                        rect: None,
-                        handle_id: None,
-                        children: Vec::new(),
-                    },
-                ],
-            };
+            let page_node = self.make_mock_page_node(i + 1, next_id);
             doc_node.children.push(page_node);
             next_id += 4;
         }

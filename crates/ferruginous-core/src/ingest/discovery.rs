@@ -41,6 +41,68 @@ pub fn discover_fonts(arena: &PdfArena, doc: &Document) -> BTreeMap<u32, Arc<Fon
     cache
 }
 
+fn accumulate_resources(
+    arena: &PdfArena,
+    dict: &BTreeMap<Handle<PdfName>, Object>,
+    is_form: bool,
+    resources_key: &Handle<PdfName>,
+) -> Vec<BTreeMap<Handle<PdfName>, Object>> {
+    let mut current_node = Some(dict.clone());
+    let mut resource_nodes = Vec::new();
+
+    while let Some(node) = current_node {
+        if let Some(res_obj) = node.get(resources_key)
+            && let Some(res_dict_h) = res_obj.resolve(arena).as_dict_handle()
+            && let Some(res_dict) = arena.get_dict(res_dict_h)
+        {
+            resource_nodes.push(res_dict);
+        }
+
+        if is_form {
+            break;
+        }
+
+        let parent_key = arena.name("Parent");
+        if let Some(parent_ref) = node.get(&parent_key) {
+            let resolved_parent = parent_ref.resolve(arena);
+            if let Object::Dictionary(parent_dict_h) = resolved_parent {
+                current_node = arena.get_dict(parent_dict_h);
+            } else {
+                current_node = None;
+            }
+        } else {
+            current_node = None;
+        }
+    }
+    resource_nodes
+}
+
+fn extract_context_fonts(
+    arena: &PdfArena,
+    mut resource_nodes: Vec<BTreeMap<Handle<PdfName>, Object>>,
+    font_key: &Handle<PdfName>,
+    fonts: &BTreeMap<u32, Arc<FontResource>>,
+) -> BTreeMap<String, Arc<FontResource>> {
+    let mut context_fonts = BTreeMap::new();
+    resource_nodes.reverse(); // Parents first
+    for res_dict in resource_nodes {
+        if let Some(f_obj) = res_dict.get(font_key)
+            && let Some(f_dict_h) = f_obj.resolve(arena).as_dict_handle()
+            && let Some(f_dict) = arena.get_dict(f_dict_h)
+        {
+            for (res_name_h, font_obj) in f_dict {
+                if let Some(res_name) = arena.get_name(res_name_h)
+                    && let Some(font_obj_h) = font_obj.as_reference()
+                    && let Some(font_res) = fonts.get(&font_obj_h.index())
+                {
+                    context_fonts.insert(res_name.as_str().to_string(), font_res.clone());
+                }
+            }
+        }
+    }
+    context_fonts
+}
+
 pub fn map_stream_contexts(
     arena: &PdfArena,
     fonts: &BTreeMap<u32, Arc<FontResource>>,
@@ -66,55 +128,8 @@ pub fn map_stream_contexts(
                 dict.get(&subtype_key).and_then(|o| o.resolve(arena).as_name()) == Some(form_val);
 
             if is_page || is_form {
-                let mut context_fonts = BTreeMap::new();
-
-                // 1. Accumulate resources from the entire hierarchy (Real-world flattening)
-                let mut current_node = Some(dict.clone());
-                let mut resource_nodes = Vec::new();
-
-                while let Some(node) = current_node {
-                    if let Some(res_obj) = node.get(&resources_key)
-                        && let Some(res_dict_h) = res_obj.resolve(arena).as_dict_handle()
-                        && let Some(res_dict) = arena.get_dict(res_dict_h)
-                    {
-                        resource_nodes.push(res_dict);
-                    }
-
-                    if is_form {
-                        break;
-                    }
-
-                    let parent_key = arena.name("Parent");
-                    if let Some(parent_ref) = node.get(&parent_key) {
-                        let resolved_parent = parent_ref.resolve(arena);
-                        if let Object::Dictionary(parent_dict_h) = resolved_parent {
-                            current_node = arena.get_dict(parent_dict_h);
-                        } else {
-                            current_node = None;
-                        }
-                    } else {
-                        current_node = None;
-                    }
-                }
-
-                // 2. Merge all discovered resources (Child overrides Parent)
-                resource_nodes.reverse(); // Parents first
-                for res_dict in resource_nodes {
-                    if let Some(f_obj) = res_dict.get(&font_key)
-                        && let Some(f_dict_h) = f_obj.resolve(arena).as_dict_handle()
-                        && let Some(f_dict) = arena.get_dict(f_dict_h)
-                    {
-                        for (res_name_h, font_obj) in f_dict {
-                            if let Some(res_name) = arena.get_name(res_name_h)
-                                && let Some(font_obj_h) = font_obj.as_reference()
-                                && let Some(font_res) = fonts.get(&font_obj_h.index())
-                            {
-                                context_fonts
-                                    .insert(res_name.as_str().to_string(), font_res.clone());
-                            }
-                        }
-                    }
-                }
+                let resource_nodes = accumulate_resources(arena, &dict, is_form, &resources_key);
+                let context_fonts = extract_context_fonts(arena, resource_nodes, &font_key, fonts);
 
                 if is_page {
                     associate_page_streams(
@@ -125,7 +140,6 @@ pub fn map_stream_contexts(
                         &mut contexts,
                     );
                 } else {
-                    // For Forms, the stream object itself is obj_h
                     contexts.insert(obj_h.index(), context_fonts);
                 }
             }

@@ -62,6 +62,68 @@ impl Ingestor {
     /// 2. **Pass 1 (Inhalation)**: Maps lopdf objects to PdfArena Handles, decoupling from physical offsets.
     /// 3. **Pass 1.5 (Context Discovery)**: Discovers font resources and maps them to content streams.
     /// 4. **Pass 2 (Refinement)**: Parallel processing of page content and metadata.
+    fn resolve_root_info(
+        doc: &lopdf::Document,
+        table: &RemappingTable,
+    ) -> (Handle<Object>, Option<Handle<Object>>) {
+        let root_id = doc.trailer.get(b"Root").ok().and_then(|o| o.as_reference().ok());
+        let info_id = doc.trailer.get(b"Info").ok().and_then(|o| o.as_reference().ok());
+
+        let root_handle = root_id.and_then(|id| table.get(&id)).cloned().unwrap_or(Handle::new(0));
+        let info_handle = info_id.and_then(|id| table.get(&id)).cloned();
+        (root_handle, info_handle)
+    }
+
+    fn build_global_font_registry(
+        arena: &PdfArena,
+        handle_font_cache: &BTreeMap<u32, Arc<FontResource>>,
+    ) -> BTreeMap<String, Arc<FontResource>> {
+        let mut global_font_registry = BTreeMap::new();
+        for (h_idx, font_res) in handle_font_cache {
+            if let Some(_dict) = arena.get_dict(Handle::new(*h_idx)) {
+                global_font_registry.insert(format!("obj_{}", h_idx), font_res.clone());
+                let base_name = font_res.base_font.as_str();
+                let is_subset = base_name.len() > 7 && base_name.as_bytes()[6] == b'+';
+                let is_component_cid = font_res.subtype.as_str() == "CIDFontType0"
+                    || font_res.subtype.as_str() == "CIDFontType2";
+
+                if !is_subset && !is_component_cid {
+                    global_font_registry.insert(base_name.to_string(), font_res.clone());
+                }
+            }
+        }
+        global_font_registry
+    }
+
+    fn perform_active_refinement(
+        doc: &mut lopdf::Document,
+        table: &RemappingTable,
+        handle_font_cache: &BTreeMap<u32, Arc<FontResource>>,
+        stream_contexts: &BTreeMap<u32, BTreeMap<String, Arc<FontResource>>>,
+        arena: &PdfArena,
+    ) -> crate::PdfResult<Vec<String>> {
+        let distilled_fonts = std::collections::BTreeMap::new();
+        let refined_results = ParallelRefinery::refine_all(
+            doc,
+            table,
+            handle_font_cache,
+            stream_contexts,
+            &distilled_fonts,
+        );
+
+        let mut all_issues = Vec::new();
+        for (id, refined, mut issues) in refined_results {
+            let handle = table.get(&id).cloned().ok_or_else(|| PdfError::Ingestion {
+                context: "Pass 3 Integration".into(),
+                message: format!("Missing handle for refined object {:?}", id).into(),
+            })?;
+            let committed = crate::refine::commit_to_arena(arena, refined, 0);
+            arena.set_object(handle, committed);
+            all_issues.append(&mut issues);
+        }
+        Ok(all_issues)
+    }
+
     pub fn ingest(
         doc: &mut lopdf::Document,
         options: &IngestionOptions,
@@ -69,10 +131,8 @@ impl Ingestor {
         let arena = PdfArena::new();
         let mut table = RemappingTable::new();
 
-        // Pass 0: Manual Decryption if lopdf's built-in decryption is incomplete/unsupported
         Self::perform_pass_0_decryption(doc, options)?;
 
-        // Pass 1: Inhale all objects into the Arena
         for &id in doc.objects.keys() {
             let handle = arena.alloc_object(Object::Null);
             table.insert(id, handle);
@@ -87,62 +147,13 @@ impl Ingestor {
             arena.set_object(handle, raw_obj);
         }
 
-        // Pass 1.5: Font Discovery & Contextual Mapping
-        let root_id = match doc.trailer.get(b"Root") {
-            Ok(o) => match o.as_reference() {
-                Ok(id) => Some(id),
-                Err(e) => {
-                    log::warn!("Trailer /Root is not a reference: {:?}", e);
-                    None
-                }
-            },
-            Err(e) => {
-                log::warn!("Trailer /Root is missing: {:?}", e);
-                None
-            }
-        };
-
-        let info_id = match doc.trailer.get(b"Info") {
-            Ok(o) => match o.as_reference() {
-                Ok(id) => Some(id),
-                Err(e) => {
-                    log::warn!("Trailer /Info is not a reference: {:?}", e);
-                    None
-                }
-            },
-            Err(_) => None, // Info is optional
-        };
-
-        let root_handle = root_id.and_then(|id| table.get(&id)).cloned().unwrap_or(Handle::new(0));
-        let info_handle = info_id.and_then(|id| table.get(&id)).cloned();
-
+        let (root_handle, info_handle) = Self::resolve_root_info(doc, &table);
         let temp_doc = Document::new(arena.clone(), root_handle, info_handle);
         let handle_font_cache = discover_fonts(&arena, &temp_doc);
 
-        // 1. Create a Document-wide Global Font Registry
-        let mut global_font_registry = BTreeMap::new();
-        for (h_idx, font_res) in &handle_font_cache {
-            if let Some(_dict) = arena.get_dict(Handle::new(*h_idx)) {
-                // Collect by both physical object index and BaseFont name for maximum resolution
-                global_font_registry.insert(format!("obj_{}", h_idx), font_res.clone());
-
-                // Only register by BaseFont name if it's NOT a subsetted font and NOT a raw CIDFont.
-                // Raw CIDFonts (CIDFontType0/2) are components of Type0 fonts and should not clobber them.
-                let base_name = font_res.base_font.as_str();
-                let is_subset = base_name.len() > 7 && base_name.as_bytes()[6] == b'+';
-                let is_component_cid = font_res.subtype.as_str() == "CIDFontType0"
-                    || font_res.subtype.as_str() == "CIDFontType2";
-
-                if !is_subset && !is_component_cid {
-                    global_font_registry.insert(base_name.to_string(), font_res.clone());
-                }
-            }
-        }
-
+        let global_font_registry = Self::build_global_font_registry(&arena, &handle_font_cache);
         let mut stream_contexts = map_stream_contexts(&arena, &handle_font_cache);
 
-        // 2. Supplement each stream context with the global registry for missing names
-        // (This implements the "Normalization-at-Load" philosophy for broken resource chains)
         for context in stream_contexts.values_mut() {
             for (name, res) in global_font_registry.iter() {
                 let name_string: &String = name;
@@ -152,39 +163,15 @@ impl Ingestor {
             }
         }
 
-        // Map font file stream handles to their distilled (reconstructed) data
-        let distilled_fonts = std::collections::BTreeMap::new();
-        /*
-        for res in handle_font_cache.values() {
-            if let Some(sh) = res.file_handle
-                && let Some(ref data) = res.reconstructed_data
-            {
-                distilled_fonts.insert(sh, Arc::clone(data));
-            }
-        }
-        */
-
         let mut all_issues = Vec::new();
         if options.active_refinement {
-            // Pass 2: Active Refinement
-            let refined_results = ParallelRefinery::refine_all(
+            all_issues = Self::perform_active_refinement(
                 doc,
                 &table,
                 &handle_font_cache,
                 &stream_contexts,
-                &distilled_fonts,
-            );
-
-            // Pass 3: Sequential Integration
-            for (id, refined, mut issues) in refined_results {
-                let handle = table.get(&id).cloned().ok_or_else(|| PdfError::Ingestion {
-                    context: "Pass 3 Integration".into(),
-                    message: format!("Missing handle for refined object {:?}", id).into(),
-                })?;
-                let committed = crate::refine::commit_to_arena(&arena, refined, 0);
-                arena.set_object(handle, committed);
-                all_issues.append(&mut issues);
-            }
+                &arena,
+            )?;
         }
 
         Ok(IngestedDocument {
@@ -202,56 +189,55 @@ impl Ingestor {
     /// if a document is saved with decrypted objects but still contains an `/Encrypt` trailer entry.
     /// After decryption, this method explicitly removes the `/Encrypt` dictionary to satisfy
     /// Adobe fidelity requirements.
+    fn parse_security_handler(
+        doc: &lopdf::Document,
+        options: &IngestionOptions,
+    ) -> Option<SecurityHandler> {
+        let password = options.password.as_deref().unwrap_or("");
+        let encrypt_dict_obj = doc.trailer.get(b"Encrypt").ok()?;
+        let encrypt_obj = if let Ok(id) = encrypt_dict_obj.as_reference() {
+            doc.objects.get(&id)
+        } else {
+            Some(encrypt_dict_obj)
+        };
+
+        if let Some(lopdf::Object::Dictionary(dict)) = encrypt_obj {
+            let v_val = dict.get(b"V").and_then(|o| o.as_i64()).unwrap_or(0);
+            let r_val = dict.get(b"R").and_then(|o| o.as_i64()).unwrap_or(0);
+
+            if v_val == 4 && r_val == 4 {
+                let o_str = dict.get(b"O").and_then(|o| o.as_str()).unwrap_or(&[]);
+                let u_str = dict.get(b"U").and_then(|o| o.as_str()).unwrap_or(&[]);
+                let p_val = dict.get(b"P").and_then(|o| o.as_i64()).unwrap_or(0) as i32;
+                let file_id = doc
+                    .trailer
+                    .get(b"ID")
+                    .and_then(|o| o.as_array())
+                    .map(|a| a.first().and_then(|o| o.as_str().ok()).unwrap_or(&[]))
+                    .unwrap_or(&[]);
+                let encrypt_metadata =
+                    dict.get(b"EncryptMetadata").and_then(|o| o.as_bool()).unwrap_or(true);
+                return SecurityHandler::new_v4(password, o_str, u_str, p_val, file_id, encrypt_metadata).ok();
+            } else if v_val == 5 && (r_val == 5 || r_val == 6) {
+                let mut file_id = &[][..];
+                if let Ok(id_array) = doc.trailer.get(b"ID")
+                    && let Ok(arr) = id_array.as_array()
+                    && let Some(first) = arr.first()
+                    && let Ok(s) = first.as_str()
+                {
+                    file_id = s;
+                }
+                return SecurityHandler::new_v5(password, "", file_id).ok();
+            }
+        }
+        None
+    }
+
     fn perform_pass_0_decryption(
         doc: &mut lopdf::Document,
         options: &IngestionOptions,
     ) -> crate::PdfResult<()> {
-        let mut security_handler = None;
-        let password = options.password.as_deref().unwrap_or("");
-
-        if let Ok(encrypt_dict_obj) = doc.trailer.get(b"Encrypt") {
-            let encrypt_obj = if let Ok(id) = encrypt_dict_obj.as_reference() {
-                doc.objects.get(&id)
-            } else {
-                Some(encrypt_dict_obj)
-            };
-
-            if let Some(lopdf::Object::Dictionary(dict)) = encrypt_obj {
-                let v_val = dict.get(b"V").and_then(|o| o.as_i64()).unwrap_or(0);
-                let r_val = dict.get(b"R").and_then(|o| o.as_i64()).unwrap_or(0);
-
-                if v_val == 4 && r_val == 4 {
-                    let o_str = dict.get(b"O").and_then(|o| o.as_str()).unwrap_or(&[]);
-                    let u_str = dict.get(b"U").and_then(|o| o.as_str()).unwrap_or(&[]);
-                    let p_val = dict.get(b"P").and_then(|o| o.as_i64()).unwrap_or(0) as i32;
-                    let file_id = doc
-                        .trailer
-                        .get(b"ID")
-                        .and_then(|o| o.as_array())
-                        .map(|a| a.first().and_then(|o| o.as_str().ok()).unwrap_or(&[]))
-                        .unwrap_or(&[]);
-                    let encrypt_metadata =
-                        dict.get(b"EncryptMetadata").and_then(|o| o.as_bool()).unwrap_or(true);
-                    if let Ok(handler) =
-                        SecurityHandler::new_v4(password, o_str, u_str, p_val, file_id, encrypt_metadata)
-                    {
-                        security_handler = Some(handler);
-                    }
-                } else if v_val == 5 && (r_val == 5 || r_val == 6) {
-                    let mut file_id = &[][..];
-                    if let Ok(id_array) = doc.trailer.get(b"ID")
-                        && let Ok(arr) = id_array.as_array()
-                        && let Some(first) = arr.first()
-                        && let Ok(s) = first.as_str()
-                    {
-                        file_id = s;
-                    }
-                    if let Ok(handler) = SecurityHandler::new_v5(password, "", file_id) {
-                        security_handler = Some(handler);
-                    }
-                }
-            }
-        }
+        let security_handler = Self::parse_security_handler(doc, options);
 
         if let Some(handler) = security_handler {
             let ids: Vec<lopdf::ObjectId> = doc.objects.keys().cloned().collect();

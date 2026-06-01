@@ -1,6 +1,9 @@
+//! Example for inspecting decoded character sequences on PDF page 2.
+
 use ferruginous_core::font::FontResource;
 use ferruginous_sdk::PdfDocument;
 
+/// Main function for running the page 2 decoding inspection example.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logger to capture resolve_gid candidate scores
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
@@ -74,7 +77,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         let u_char = u_opt.as_ref().and_then(|s| s.chars().next());
                                         
                                         // Let's print out the decoding step and character
-                                        println!("[DECODE] CID {} -> Unicode {:?} (char_code={:?})", cid, u_opt, code);
+                                        println!("[DECODE] CID {cid} -> Unicode {u_opt:?} (char_code={code:?})");
                                         
                                         // Call resolve_gid, which will emit log messages
                                         let _resolved = font.resolve_gid(cid, u_char, None);

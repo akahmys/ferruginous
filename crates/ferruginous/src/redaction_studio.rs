@@ -35,7 +35,7 @@ impl RedactionStudioPanel {
         }
     }
 
-    pub fn show(
+    pub fn show( // RR-15 Limit: GUI - Sequential egui declarations for Redaction Studio window layout
         &mut self,
         ui: &mut egui::Ui,
         raw_texts: &BTreeMap<usize, String>,
@@ -121,6 +121,63 @@ impl RedactionStudioPanel {
         });
     }
 
+    fn perform_regex_search(
+        &mut self,
+        raw_texts: &BTreeMap<usize, String>,
+        page_spans: &BTreeMap<usize, Vec<TextSpan>>,
+        pattern: &str,
+    ) {
+        match Regex::new(pattern) {
+            Ok(re) => {
+                for (&page_idx, text) in raw_texts {
+                    for m in re.find_iter(text) {
+                        let matched_str = m.as_str();
+                        if let Some(spans) = page_spans.get(&page_idx) {
+                            for span in spans {
+                                if span.text.contains(matched_str) || matched_str.contains(&span.text) {
+                                    self.matches.push(SearchMatch {
+                                        page_index: page_idx,
+                                        term: span.text.clone(),
+                                        rect: span.rect,
+                                        checked: true,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                self.error_msg = Some(format!("Invalid regex pattern: {}", e));
+            }
+        }
+    }
+
+    fn perform_simple_search(
+        &mut self,
+        page_spans: &BTreeMap<usize, Vec<TextSpan>>,
+        search_term: &str,
+    ) {
+        for (&page_idx, spans) in page_spans {
+            for span in spans {
+                let text_to_check = if self.case_sensitive {
+                    span.text.clone()
+                } else {
+                    span.text.to_lowercase()
+                };
+
+                if text_to_check.contains(search_term) {
+                    self.matches.push(SearchMatch {
+                        page_index: page_idx,
+                        term: span.text.clone(),
+                        rect: span.rect,
+                        checked: true,
+                    });
+                }
+            }
+        }
+    }
+
     fn perform_search(
         &mut self,
         raw_texts: &BTreeMap<usize, String>,
@@ -139,57 +196,14 @@ impl RedactionStudioPanel {
             } else {
                 format!("(?i){}", self.search_query)
             };
-
-            match Regex::new(&pattern) {
-                Ok(re) => {
-                    for (&page_idx, text) in raw_texts {
-                        for m in re.find_iter(text) {
-                            let matched_str = m.as_str();
-                            if let Some(spans) = page_spans.get(&page_idx) {
-                                // Match text spans that intersect or represent the matched string
-                                for span in spans {
-                                    if span.text.contains(matched_str) || matched_str.contains(&span.text) {
-                                        self.matches.push(SearchMatch {
-                                            page_index: page_idx,
-                                            term: span.text.clone(),
-                                            rect: span.rect,
-                                            checked: true,
-                                        });
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    self.error_msg = Some(format!("Invalid regex pattern: {}", e));
-                }
-            }
+            self.perform_regex_search(raw_texts, page_spans, &pattern);
         } else {
             let search_term = if self.case_sensitive {
                 self.search_query.clone()
             } else {
                 self.search_query.to_lowercase()
             };
-
-            for (&page_idx, spans) in page_spans {
-                for span in spans {
-                    let text_to_check = if self.case_sensitive {
-                        span.text.clone()
-                    } else {
-                        span.text.to_lowercase()
-                    };
-
-                    if text_to_check.contains(&search_term) {
-                        self.matches.push(SearchMatch {
-                            page_index: page_idx,
-                            term: span.text.clone(),
-                            rect: span.rect,
-                            checked: true,
-                        });
-                    }
-                }
-            }
+            self.perform_simple_search(page_spans, &search_term);
         }
     }
 }

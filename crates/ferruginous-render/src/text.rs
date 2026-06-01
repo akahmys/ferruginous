@@ -140,13 +140,59 @@ impl SkrifaBridge {
         )
     }
 
+    fn resolve_glyph_id(
+        font: &FontRef,
+        final_gid_in: u32,
+        is_fallback: bool,
+        is_cid: bool,
+        unicode: Option<char>,
+        char_code: u32,
+        cid_to_gid_map: Option<&BTreeMap<u32, u32>>,
+    ) -> GlyphId {
+        let mut final_gid = GlyphId::new(final_gid_in);
+
+        if is_fallback 
+            || (final_gid.to_u32() == 0 && !is_cid && unicode.is_some() && unicode.and_then(|u| font.charmap().map(u)).is_some())
+        {
+            if is_fallback && let Some(u) = unicode && let Some(gid) = font.charmap().map(u) {
+                final_gid = gid;
+            } else if final_gid.to_u32() == 0 && !is_cid && let Some(u) = unicode && let Some(gid) = font.charmap().map(u) {
+                final_gid = gid;
+            }
+        }
+
+        if final_gid.to_u32() == 0
+            && is_cid
+            && let Some(map) = cid_to_gid_map
+            && let Some(&gid) = map.get(&char_code)
+        {
+            final_gid = GlyphId::new(gid);
+        }
+
+        final_gid
+    }
+
+    fn draw_glyph_path(font: &FontRef, final_gid: GlyphId) -> Option<BezPath> {
+        let upem = font.head().map(|h| h.units_per_em()).unwrap_or(1000);
+        let mut pen = KurboPen::new();
+        let glyph = font.outline_glyphs().get(final_gid)?;
+        if let Err(e) = glyph.draw(
+            DrawSettings::unhinted(SkrifaSize::new(upem as f32), LocationRef::default()),
+            &mut pen,
+        ) {
+            log::warn!("[SKRIFA] Drawing failed for GID {}: {:?}", final_gid, e);
+            return None;
+        }
+        Some(pen.finish())
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn try_extract_from_data(
         &mut self,
         data: &[u8],
         _font_id: u64,
         final_gid_in: u32,
-        _char_code: u32,
+        char_code: u32,
         is_cid: bool,
         collection_index: u32,
         unicode: Option<char>,
@@ -164,30 +210,15 @@ impl SkrifaBridge {
             return None;
         };
 
-        let mut final_gid = GlyphId::new(final_gid_in);
-
-        // Map character code to GID only if:
-        // 1. This is a system fallback font (where we MUST use Unicode)
-        // 2. We hit GID 0 (.notdef) AND this is NOT a CID-keyed font (where GID 0 is a hard failure)
-        if is_fallback 
-            || (final_gid.to_u32() == 0 && !is_cid && unicode.is_some() && unicode.and_then(|u| font.charmap().map(u)).is_some())
-        {
-            if is_fallback && let Some(u) = unicode && let Some(gid) = font.charmap().map(u) {
-                final_gid = gid;
-            } else if final_gid.to_u32() == 0 && !is_cid && let Some(u) = unicode && let Some(gid) = font.charmap().map(u) {
-                final_gid = gid;
-            }
-        }
-
-        // 3. Last resort: If still GID 0 but we have a CIDToGIDMap, try manual mapping
-        if final_gid.to_u32() == 0
-            && is_cid
-            && let Some(map) = cid_to_gid_map
-            && let Some(&gid) = map.get(&_char_code)
-        {
-            final_gid = GlyphId::new(gid);
-        }
-
+        let final_gid = Self::resolve_glyph_id(
+            &font,
+            final_gid_in,
+            is_fallback,
+            is_cid,
+            unicode,
+            char_code,
+            cid_to_gid_map,
+        );
 
         if final_gid.to_u32() == 0 {
             if self.is_blank_char(unicode) {
@@ -196,17 +227,7 @@ impl SkrifaBridge {
             return None;
         }
 
-        let upem = font.head().map(|h| h.units_per_em()).unwrap_or(1000);
-        let mut pen = KurboPen::new();
-        let glyph = font.outline_glyphs().get(final_gid)?;
-        if let Err(e) = glyph.draw(
-            DrawSettings::unhinted(SkrifaSize::new(upem as f32), LocationRef::default()),
-            &mut pen,
-        ) {
-            log::warn!("[SKRIFA] Drawing failed for GID {}: {:?}", final_gid, e);
-            return None;
-        }
-        let path = pen.finish();
+        let path = Self::draw_glyph_path(&font, final_gid)?;
         let seg_count = path.segments().count();
         if seg_count == 0 && !self.is_blank_char(unicode) {
             return None;

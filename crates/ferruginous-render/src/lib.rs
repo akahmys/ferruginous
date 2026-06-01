@@ -210,15 +210,12 @@ impl VelloBackend {
     ///
     /// Handles both horizontal and vertical writing modes, correctly interpreting
     /// signed vertical advances (where negative moves characters DOWN).
-    #[allow(clippy::collapsible_if)]
-    fn render_single_glyph(
-        scene: &mut Scene,
-        skrifa_bridge: &mut crate::text::SkrifaBridge,
-        system_fonts: &Arc<std::collections::BTreeMap<FallbackFontType, Arc<Vec<u8>>>>,
+    fn resolve_font_and_glyph<'a>(
+        system_fonts: &'a Arc<std::collections::BTreeMap<FallbackFontType, Arc<Vec<u8>>>>,
         state: &VelloState,
         glyph: &TextGlyph,
-        ctx: &GlyphRenderContext,
-    ) -> (f64, bool) {
+        ctx: &GlyphRenderContext<'a>,
+    ) -> (bool, bool, &'a [u8], bool, u32) {
         let is_cid = state.is_cid_keyed;
         let is_japanese = state
             .font_name
@@ -238,26 +235,63 @@ impl VelloBackend {
         let mut font_data = ctx.data_ref;
         let is_space = glyph.unicode == " " || glyph.unicode == "\u{3000}";
         
-        // Only fallback if the font explicitly lacks data, or if we're sure it's a fallback situation.
-        // We should NOT fallback just because it's a space if the embedded font has a glyph for it.
         let mut is_fallback = state.is_fallback || glyph.is_fallback;
         let mut gid = glyph.gid;
 
-        if (glyph.is_fallback || (is_fallback && is_space)) && !ctx.data_ref.is_empty() {
-            // If we have data but it's a space, check if GID is non-zero before falling back
-            if gid == 0 {
-                if let Some(sys_data) = system_fonts.get(&state.fallback_type) {
-                    font_data = sys_data;
-                    is_fallback = true;
-                }
-            }
-        } else if glyph.is_fallback {
-            if let Some(sys_data) = system_fonts.get(&state.fallback_type) {
+        if (glyph.is_fallback || (is_fallback && is_space)) && !ctx.data_ref.is_empty() && gid == 0 {
+            let _ = system_fonts.get(&state.fallback_type).map(|sys_data| {
                 font_data = sys_data;
-                gid = 0; 
                 is_fallback = true;
-            }
+            });
+        } else if glyph.is_fallback {
+            let _ = system_fonts.get(&state.fallback_type).map(|sys_data| {
+                font_data = sys_data;
+                gid = 0;
+                is_fallback = true;
+            });
         }
+        (is_cid, is_japanese, font_data, is_fallback, gid)
+    }
+
+    fn calculate_glyph_transform(
+        skrifa_bridge: &mut crate::text::SkrifaBridge,
+        font_data: &[u8],
+        glyph: &TextGlyph,
+        ctx: &GlyphRenderContext,
+    ) -> Affine {
+        let upem = skrifa_bridge.get_units_per_em(font_data).unwrap_or(1000);
+        let scale = ctx.size / upem as f64;
+
+        let h_scale = if ctx.is_vertical { 1.0 } else { ctx.th };
+        let v_scale = if ctx.is_vertical { ctx.th } else { 1.0 };
+
+        let local_to_pt = Affine::scale_non_uniform(scale * h_scale, scale * v_scale)
+            * Affine::translate(kurbo::Vec2::new(-glyph.vx as f64, -glyph.vy as f64));
+
+        let adv_vec = if ctx.is_vertical {
+            kurbo::Vec2::new(0.0, ctx.advance_offset)
+        } else {
+            kurbo::Vec2::new(ctx.advance_offset, 0.0)
+        };
+
+        ctx.transform * Affine::translate(adv_vec) * local_to_pt
+    }
+
+    /// Renders a single glyph to the Vello scene.
+    ///
+    /// Handles both horizontal and vertical writing modes, correctly interpreting
+    /// signed vertical advances (where negative moves characters DOWN).
+    #[allow(clippy::collapsible_if)]
+    fn render_single_glyph(
+        scene: &mut Scene,
+        skrifa_bridge: &mut crate::text::SkrifaBridge,
+        system_fonts: &Arc<std::collections::BTreeMap<FallbackFontType, Arc<Vec<u8>>>>,
+        state: &VelloState,
+        glyph: &TextGlyph,
+        ctx: &GlyphRenderContext,
+    ) -> (f64, bool) {
+        let (is_cid, is_japanese, font_data, is_fallback, gid) =
+            Self::resolve_font_and_glyph(system_fonts, state, glyph, ctx);
 
         let skrifa_ctx = crate::text::GlyphExtractionContext {
             font_id: state.font_id,
@@ -273,55 +307,22 @@ impl VelloBackend {
             is_fallback,
         };
 
-        let path_opt = skrifa_bridge.extract_path(&skrifa_ctx);
-        if let Some(path) = path_opt {
-            let upem = skrifa_bridge.get_units_per_em(font_data).unwrap_or(1000);
-            let scale = ctx.size / upem as f64;
+        let next_advance = Self::calculate_next_advance(
+            glyph,
+            ctx.size,
+            ctx.advance_offset,
+            ctx.tc,
+            ctx.tw,
+            ctx.th,
+            ctx.is_vertical,
+        );
 
-            // In vertical writing mode, horizontal scaling (th) results in a scale factor
-            // of 1.0 for the x dimension and th for the y dimension.
-            let h_scale = if ctx.is_vertical { 1.0 } else { ctx.th };
-            let v_scale = if ctx.is_vertical { ctx.th } else { 1.0 };
-
-            // local_to_pt: Align glyph in EM box and scale to point size
-            let local_to_pt = Affine::scale_non_uniform(scale * h_scale, scale * v_scale)
-                * Affine::translate(kurbo::Vec2::new(-glyph.vx as f64, -glyph.vy as f64));
-
-            // pt_to_page: Move to text advance and apply page transform
-            let adv_vec = if ctx.is_vertical {
-                kurbo::Vec2::new(0.0, ctx.advance_offset)
-            } else {
-                kurbo::Vec2::new(ctx.advance_offset, 0.0)
-            };
-
-            let t = ctx.transform * Affine::translate(adv_vec) * local_to_pt;
-
+        if let Some(path) = skrifa_bridge.extract_path(&skrifa_ctx) {
+            let t = Self::calculate_glyph_transform(skrifa_bridge, font_data, glyph, ctx);
             scene.fill(vello::peniko::Fill::NonZero, t, ctx.brush, None, &path);
-            (
-                Self::calculate_next_advance(
-                    glyph,
-                    ctx.size,
-                    ctx.advance_offset,
-                    ctx.tc,
-                    ctx.tw,
-                    ctx.th,
-                    ctx.is_vertical,
-                ),
-                true,
-            )
+            (next_advance, true)
         } else {
-            (
-                Self::calculate_next_advance(
-                    glyph,
-                    ctx.size,
-                    ctx.advance_offset,
-                    ctx.tc,
-                    ctx.tw,
-                    ctx.th,
-                    ctx.is_vertical,
-                ),
-                false,
-            )
+            (next_advance, false)
         }
     }
 
@@ -368,6 +369,113 @@ struct GlyphRenderContext<'a> {
     advance_offset: f64,
     data_ref: &'a [u8],
     brush: &'a vello::peniko::Brush,
+}
+
+fn convert_image_pixels(
+    fill_color: &Color,
+    fill_alpha: f64,
+    image_data: &[u8],
+    width: u32,
+    height: u32,
+    format: PixelFormat,
+) -> Vec<u8> {
+    match format {
+        PixelFormat::Rgba8 => image_data.to_vec(),
+        PixelFormat::Gray8 => convert_gray8(image_data),
+        PixelFormat::Rgb8 => convert_rgb8(image_data),
+        PixelFormat::Cmyk8 => convert_cmyk8(image_data),
+        PixelFormat::MonoMask => convert_mono_mask(fill_color, fill_alpha, image_data, width, height, false),
+        PixelFormat::MonoMaskInverted => convert_mono_mask(fill_color, fill_alpha, image_data, width, height, true),
+    }
+}
+
+fn convert_gray8(image_data: &[u8]) -> Vec<u8> {
+    let mut data = Vec::with_capacity(image_data.len() * 4);
+    for &g in image_data {
+        data.extend_from_slice(&[g, g, g, 255]);
+    }
+    data
+}
+
+fn convert_rgb8(image_data: &[u8]) -> Vec<u8> {
+    let mut data = Vec::with_capacity(image_data.len() / 3 * 4);
+    for chunk in image_data.chunks_exact(3) {
+        data.extend_from_slice(&[chunk[0], chunk[1], chunk[2], 255]);
+    }
+    data
+}
+
+fn convert_cmyk8(image_data: &[u8]) -> Vec<u8> {
+    let mut data = Vec::with_capacity(image_data.len() / 4 * 4);
+    for chunk in image_data.chunks_exact(4) {
+        let c = f64::from(chunk[0]) / 255.0;
+        let m = f64::from(chunk[1]) / 255.0;
+        let y = f64::from(chunk[2]) / 255.0;
+        let k = f64::from(chunk[3]) / 255.0;
+        let r = ((1.0 - c) * (1.0 - k) * 255.0) as u8;
+        let g = ((1.0 - m) * (1.0 - k) * 255.0) as u8;
+        let b = ((1.0 - y) * (1.0 - k) * 255.0) as u8;
+        data.extend_from_slice(&[r, g, b, 255]);
+    }
+    data
+}
+
+fn convert_mono_mask(
+    fill_color: &Color,
+    fill_alpha: f64,
+    image_data: &[u8],
+    width: u32,
+    height: u32,
+    inverted: bool,
+) -> Vec<u8> {
+    let fill_rgb = fill_color.to_rgb();
+    let (r, g, b) = match fill_rgb {
+        Color::Rgb(rv, gv, bv) => (
+            (rv * 255.0).clamp(0.0, 255.0) as u8,
+            (gv * 255.0).clamp(0.0, 255.0) as u8,
+            (bv * 255.0).clamp(0.0, 255.0) as u8,
+        ),
+        _ => (0, 0, 0),
+    };
+    let alpha = (fill_alpha * 255.0).clamp(0.0, 255.0) as u8;
+
+    let bytes_per_row = (width as usize).div_ceil(8);
+    let mut data = Vec::with_capacity((width * height * 4) as usize);
+
+    for y in 0..height {
+        let row_start = y as usize * bytes_per_row;
+        for x in 0..width {
+            let byte_idx = row_start + (x as usize / 8);
+            let bit_idx = 7 - (x as usize % 8);
+            let byte_val = image_data.get(byte_idx).copied().unwrap_or(0);
+            let bit = (byte_val >> bit_idx) & 1;
+
+            let condition = if inverted { bit == 1 } else { bit == 0 };
+            if condition {
+                data.extend_from_slice(&[r, g, b, alpha]);
+            } else {
+                data.extend_from_slice(&[0, 0, 0, 0]);
+            }
+        }
+    }
+    data
+}
+
+fn apply_image_smask(rgba_data: &mut [u8], mask: &SMaskData) {
+    for (i, chunk) in rgba_data.chunks_exact_mut(4).enumerate() {
+        let mask_val = match mask.format {
+            PixelFormat::Gray8 => mask.data[i],
+            PixelFormat::Rgba8 => mask.data[i * 4 + 3],
+            PixelFormat::Rgb8 => {
+                let r = f64::from(mask.data[i * 3]);
+                let g = f64::from(mask.data[i * 3 + 1]);
+                let b = f64::from(mask.data[i * 3 + 2]);
+                ((0.299 * r) + (0.587 * g) + (0.114 * b)) as u8
+            }
+            _ => 255,
+        };
+        chunk[3] = ((f64::from(chunk[3]) * f64::from(mask_val)) / 255.0) as u8;
+    }
 }
 
 impl RenderBackend for VelloBackend {
@@ -466,124 +574,13 @@ impl RenderBackend for VelloBackend {
         format: PixelFormat,
         smask: Option<SMaskData>,
     ) {
-        // We will convert everything to RGBA8
-        let mut rgba_data = match format {
-            PixelFormat::Rgba8 => image_data.to_vec(),
-            PixelFormat::Gray8 => {
-                let mut data = Vec::with_capacity(image_data.len() * 4);
-                for &g in image_data {
-                    data.extend_from_slice(&[g, g, g, 255]);
-                }
-                data
-            }
-            PixelFormat::Rgb8 => {
-                let mut data = Vec::with_capacity(image_data.len() / 3 * 4);
-                for chunk in image_data.chunks_exact(3) {
-                    data.extend_from_slice(&[chunk[0], chunk[1], chunk[2], 255]);
-                }
-                data
-            }
-            PixelFormat::Cmyk8 => {
-                let mut data = Vec::with_capacity(image_data.len() / 4 * 4);
-                for chunk in image_data.chunks_exact(4) {
-                    let c = f64::from(chunk[0]) / 255.0;
-                    let m = f64::from(chunk[1]) / 255.0;
-                    let y = f64::from(chunk[2]) / 255.0;
-                    let k = f64::from(chunk[3]) / 255.0;
-                    let r = ((1.0 - c) * (1.0 - k) * 255.0) as u8;
-                    let g = ((1.0 - m) * (1.0 - k) * 255.0) as u8;
-                    let b = ((1.0 - y) * (1.0 - k) * 255.0) as u8;
-                    data.extend_from_slice(&[r, g, b, 255]);
-                }
-                data
-            }
-            PixelFormat::MonoMask => {
-                let fill_rgb = self.state.fill_color.to_rgb();
-                let (r, g, b) = match fill_rgb {
-                    Color::Rgb(rv, gv, bv) => {
-                        ((rv * 255.0).clamp(0.0, 255.0) as u8,
-                         (gv * 255.0).clamp(0.0, 255.0) as u8,
-                         (bv * 255.0).clamp(0.0, 255.0) as u8)
-                    }
-                    _ => (0, 0, 0),
-                };
-                let alpha = (self.state.fill_alpha * 255.0).clamp(0.0, 255.0) as u8;
+        let mut rgba_data = convert_image_pixels(&self.state.fill_color, self.state.fill_alpha, image_data, width, height, format);
 
-                let bytes_per_row = (width as usize).div_ceil(8);
-                let mut data = Vec::with_capacity((width * height * 4) as usize);
-
-                for y in 0..height {
-                    let row_start = y as usize * bytes_per_row;
-                    for x in 0..width {
-                        let byte_idx = row_start + (x as usize / 8);
-                        let bit_idx = 7 - (x as usize % 8);
-                        let byte_val = image_data.get(byte_idx).copied().unwrap_or(0);
-                        let bit = (byte_val >> bit_idx) & 1;
-
-                        if bit == 0 {
-                            data.extend_from_slice(&[r, g, b, alpha]);
-                        } else {
-                            data.extend_from_slice(&[0, 0, 0, 0]);
-                        }
-                    }
-                }
-                data
-            }
-            PixelFormat::MonoMaskInverted => {
-                let fill_rgb = self.state.fill_color.to_rgb();
-                let (r, g, b) = match fill_rgb {
-                    Color::Rgb(rv, gv, bv) => {
-                        ((rv * 255.0).clamp(0.0, 255.0) as u8,
-                         (gv * 255.0).clamp(0.0, 255.0) as u8,
-                         (bv * 255.0).clamp(0.0, 255.0) as u8)
-                    }
-                    _ => (0, 0, 0),
-                };
-                let alpha = (self.state.fill_alpha * 255.0).clamp(0.0, 255.0) as u8;
-
-                let bytes_per_row = (width as usize).div_ceil(8);
-                let mut data = Vec::with_capacity((width * height * 4) as usize);
-
-                for y in 0..height {
-                    let row_start = y as usize * bytes_per_row;
-                    for x in 0..width {
-                        let byte_idx = row_start + (x as usize / 8);
-                        let bit_idx = 7 - (x as usize % 8);
-                        let byte_val = image_data.get(byte_idx).copied().unwrap_or(0);
-                        let bit = (byte_val >> bit_idx) & 1;
-
-                        if bit == 1 {
-                            data.extend_from_slice(&[r, g, b, alpha]);
-                        } else {
-                            data.extend_from_slice(&[0, 0, 0, 0]);
-                        }
-                    }
-                }
-                data
-            }
-        };
-
-        // Apply SMask if provided and dimensions match (common for PDF icons)
-        if let Some(mask) = smask
+        if let Some(mask) = &smask
             && mask.width == width
             && mask.height == height
         {
-            for (i, chunk) in rgba_data.chunks_exact_mut(4).enumerate() {
-                let mask_val = match mask.format {
-                    PixelFormat::Gray8 => mask.data[i],
-                    PixelFormat::Rgba8 => mask.data[i * 4 + 3], // Use alpha channel
-                    PixelFormat::Rgb8 => {
-                        let r = f64::from(mask.data[i * 3]);
-                        let g = f64::from(mask.data[i * 3 + 1]);
-                        let b = f64::from(mask.data[i * 3 + 2]);
-                        // Standard Luminance formula: 0.299R + 0.587G + 0.114B
-                        ((0.299 * r) + (0.587 * g) + (0.114 * b)) as u8
-                    }
-                    _ => 255,
-                };
-                // Apply mask to alpha channel
-                chunk[3] = ((f64::from(chunk[3]) * f64::from(mask_val)) / 255.0) as u8;
-            }
+            apply_image_smask(&mut rgba_data, mask);
         }
 
         let image = ImageData {

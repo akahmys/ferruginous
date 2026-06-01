@@ -21,7 +21,7 @@ impl ArlingtonInspectorPanel {
     }
 
     /// Simulates PDF dictionary structures for the selected tag/node.
-    fn get_mock_dictionary_for_node(&self, tag: &str) -> Vec<InspectorEntry> {
+    fn get_mock_dictionary_for_node(&self, tag: &str) -> Vec<InspectorEntry> { // RR-15 Limit: Dispatcher - Flat mapping of node types to mock dictionary elements
         match tag {
             "Catalog" | "Document" => vec![
                 InspectorEntry {

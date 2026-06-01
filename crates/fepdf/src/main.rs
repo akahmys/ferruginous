@@ -401,7 +401,7 @@ enum DebugSubcommands {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> Result<()> { // RR-15 Limit: Dispatcher - CLIs top level command dispatcher routing to handlers
     env_logger::init();
     let cli = Cli::parse();
 
@@ -707,6 +707,68 @@ fn handle_audit(input: PathBuf, format: String, ingest: IngestArgs) -> Result<()
     Ok(())
 }
 
+fn print_dictionary_fields(
+    arena: &ferruginous_core::PdfArena,
+    h: Handle<std::collections::BTreeMap<Handle<ferruginous_core::PdfName>, Object>>,
+) {
+    if let Some(dict) = arena.get_dict(h) {
+        println!("Type: Dictionary");
+        for (k, v) in dict.iter() {
+            let name = arena
+                .get_name(*k)
+                .map(|n| n.as_str().to_string())
+                .unwrap_or_else(|| format!("Unknown_{:?}", k));
+            let val_str = match v {
+                ferruginous_core::Object::Name(vh) => arena
+                    .get_name(*vh)
+                    .map(|n| format!("Name(/{})", n.as_str()))
+                    .unwrap_or_else(|| format!("{:?}", v)),
+                _ => format!("{:?}", v),
+            };
+            println!("  /{} -> {}", name, val_str);
+        }
+    } else {
+        println!("Error: Dictionary handle {:?} not found in arena", h);
+    }
+}
+
+fn print_stream_fields(
+    arena: &ferruginous_core::PdfArena,
+    h: Handle<std::collections::BTreeMap<Handle<ferruginous_core::PdfName>, Object>>,
+    data: std::sync::Arc<ferruginous_core::SublimatedData>,
+) {
+    if let Some(dict) = arena.get_dict(h) {
+        println!("Type: Stream");
+        for (k, v) in dict.iter() {
+            let name = arena
+                .get_name(*k)
+                .map(|n| n.as_str().to_string())
+                .unwrap_or_else(|| format!("Unknown_{:?}", k));
+            println!("  /{} -> {:?}", name, v);
+        }
+        let raw_bytes = arena.get_stream_bytes(&data).unwrap_or_default();
+        println!("Raw Length: {} bytes", raw_bytes.len());
+
+        if let Ok(decoded) = arena.process_filters(&raw_bytes, &dict) {
+            println!("Decoded Length: {} bytes", decoded.len());
+            if decoded.len() < 2000 {
+                println!(
+                    "\n--- [ DECODED CONTENT ] ---\n{}",
+                    String::from_utf8_lossy(&decoded)
+                );
+            } else {
+                println!(
+                    "\n--- [ DECODED CONTENT (PREVIEW) ] ---\n{}",
+                    String::from_utf8_lossy(&decoded[..2000])
+                );
+                println!("... (truncated)");
+            }
+        }
+    } else {
+        println!("Error: Stream dictionary handle {:?} not found in arena", h);
+    }
+}
+
 fn handle_debug_dump(
     input: PathBuf,
     obj_id: u32,
@@ -726,57 +788,10 @@ fn handle_debug_dump(
     println!("\n--- [ OBJECT {} ] ---", obj_id);
     match resolved {
         ferruginous_core::Object::Dictionary(h) => {
-            if let Some(dict) = arena.get_dict(h) {
-                println!("Type: Dictionary");
-                for (k, v) in dict.iter() {
-                    let name = arena
-                        .get_name(*k)
-                        .map(|n| n.as_str().to_string())
-                        .unwrap_or_else(|| format!("Unknown_{:?}", k));
-                    let val_str = match v {
-                        ferruginous_core::Object::Name(vh) => arena
-                            .get_name(*vh)
-                            .map(|n| format!("Name(/{})", n.as_str()))
-                            .unwrap_or_else(|| format!("{:?}", v)),
-                        _ => format!("{:?}", v),
-                    };
-                    println!("  /{} -> {}", name, val_str);
-                }
-            } else {
-                println!("Error: Dictionary handle {:?} not found in arena", h);
-            }
+            print_dictionary_fields(arena, h);
         }
         ferruginous_core::Object::Stream(h, data) => {
-            if let Some(dict) = arena.get_dict(h) {
-                println!("Type: Stream");
-                for (k, v) in dict.iter() {
-                    let name = arena
-                        .get_name(*k)
-                        .map(|n| n.as_str().to_string())
-                        .unwrap_or_else(|| format!("Unknown_{:?}", k));
-                    println!("  /{} -> {:?}", name, v);
-                }
-                let raw_bytes = arena.get_stream_bytes(&data).unwrap_or_default();
-                println!("Raw Length: {} bytes", raw_bytes.len());
-
-                if let Ok(decoded) = arena.process_filters(&raw_bytes, &dict) {
-                    println!("Decoded Length: {} bytes", decoded.len());
-                    if decoded.len() < 2000 {
-                        println!(
-                            "\n--- [ DECODED CONTENT ] ---\n{}",
-                            String::from_utf8_lossy(&decoded)
-                        );
-                    } else {
-                        println!(
-                            "\n--- [ DECODED CONTENT (PREVIEW) ] ---\n{}",
-                            String::from_utf8_lossy(&decoded[..2000])
-                        );
-                        println!("... (truncated)");
-                    }
-                }
-            } else {
-                println!("Error: Stream dictionary handle {:?} not found in arena", h);
-            }
+            print_stream_fields(arena, h, data);
         }
         _ => println!("{:?}", resolved),
     }
@@ -1222,6 +1237,39 @@ fn handle_extract_font(
     Ok(())
 }
 
+fn trace_single_font(
+    font: &ferruginous_core::font::FontResource,
+    name: &str,
+    handle: Handle<Object>,
+    target_char: char,
+) {
+    println!("\n--- [ FONT: {} ] ---", name);
+    println!("Handle: {:?}", handle);
+
+    let mut ctx = TraceContext::new();
+    let cid_match = font.unicode_to_gid.get(&target_char).copied();
+    if let Some(cid) = cid_match {
+        println!("Note: Unicode character maps to CID {} in this font's CMap", cid);
+    }
+
+    let gid = font.resolve_gid(cid_match.unwrap_or(0), Some(target_char), Some(&mut ctx));
+
+    #[cfg(feature = "debug-tools")]
+    for (i, step) in ctx.traces.iter().flat_map(|t| t.steps.iter()).enumerate() {
+        println!("  {:>2}. {}", i + 1, step);
+    }
+
+    match gid {
+        Some(g) => {
+            let cid = cid_match.unwrap_or(0);
+            let w = font.glyph_width_by_cid(cid);
+            let (v_w, vx, vy) = font.glyph_vertical_metrics(cid);
+            println!("RESULT: GID {} (w: {}, vx: {}, vy: {}, v_adv: {})", g, w, vx, vy, v_w);
+        }
+        None => println!("RESULT: FAILED TO RESOLVE"),
+    }
+}
+
 fn handle_debug_trace_glyph(
     input: PathBuf,
     unicode_str: String,
@@ -1256,31 +1304,7 @@ fn handle_debug_trace_glyph(
         };
 
         found_any = true;
-        println!("\n--- [ FONT: {} ] ---", name);
-        println!("Handle: {:?}", summary.handle);
-
-        let mut ctx = TraceContext::new();
-        let cid_match = font.unicode_to_gid.get(&target_char).copied();
-        if let Some(cid) = cid_match {
-            println!("Note: Unicode character maps to CID {} in this font's CMap", cid);
-        }
-
-        let gid = font.resolve_gid(cid_match.unwrap_or(0), Some(target_char), Some(&mut ctx));
-
-        #[cfg(feature = "debug-tools")]
-        for (i, step) in ctx.traces.iter().flat_map(|t| t.steps.iter()).enumerate() {
-            println!("  {:>2}. {}", i + 1, step);
-        }
-
-        match gid {
-            Some(g) => {
-                let cid = cid_match.unwrap_or(0);
-                let w = font.glyph_width_by_cid(cid);
-                let (v_w, vx, vy) = font.glyph_vertical_metrics(cid);
-                println!("RESULT: GID {} (w: {}, vx: {}, vy: {}, v_adv: {})", g, w, vx, vy, v_w);
-            }
-            None => println!("RESULT: FAILED TO RESOLVE"),
-        }
+        trace_single_font(&font, name, summary.handle, target_char);
     }
 
     if !found_any {

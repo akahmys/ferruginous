@@ -69,45 +69,57 @@ pub fn run_worker(rx: Receiver<WorkerRequest>, tx: Sender<WorkerResponse>) {
 
 use ferruginous_core::{Handle, Object, PdfArena, PdfName};
 
-fn handle_open(data: Bytes, name: Option<String>, tx: &Sender<WorkerResponse>) -> Option<PdfDocument> {
-    match PdfDocument::open(data) {
-        Ok(doc) => {
-            let num_pages = doc.page_count().unwrap_or(0);
-            let mut page_sizes = Vec::with_capacity(num_pages);
-            let mut page_texts = Vec::with_capacity(num_pages);
-            for i in 0..num_pages {
-                page_sizes.push(doc.get_page_size(i).unwrap_or((595.0, 842.0)));
-                page_texts.push(doc.extract_text(i).unwrap_or_default());
-            }
+fn load_page_info(doc: &PdfDocument) -> (Vec<(f64, f64)>, Vec<String>) {
+    let num_pages = doc.page_count().unwrap_or(0);
+    let mut page_sizes = Vec::with_capacity(num_pages);
+    let mut page_texts = Vec::with_capacity(num_pages);
+    for i in 0..num_pages {
+        page_sizes.push(doc.get_page_size(i).unwrap_or((595.0, 842.0)));
+        page_texts.push(doc.extract_text(i).unwrap_or_default());
+    }
+    (page_sizes, page_texts)
+}
 
-            let arena = doc.inner().arena();
-            let mut next_id = 0;
-            let mut ust_root = None;
-            let mut audit_findings = Vec::new();
+fn parse_struct_tree_findings(
+    doc: &PdfDocument,
+    next_id: &mut usize,
+) -> (Option<crate::sidebar::USTNode>, Vec<(String, String, String, Option<u32>)>) {
+    let mut ust_root = None;
+    let mut audit_findings = Vec::new();
+    let arena = doc.inner().arena();
 
-            if let Some(cah) = doc.inner().catalog_handle() {
-                if let Some(cadh) = doc.inner().resolve_to_dict(cah).ok() {
-                    if let Some(dict) = arena.get_dict(cadh) {
-                        let str_root_key = arena.name("StructTreeRoot");
-                        if let Some(str_root_obj) = dict.get(&str_root_key) {
-                            if let Some(str_root_ref) = str_root_obj.resolve(arena).as_reference() {
-                                ust_root = parse_struct_node(arena, str_root_ref, &mut next_id);
+    if let Some(cah) = doc.inner().catalog_handle() {
+        if let Some(cadh) = doc.inner().resolve_to_dict(cah).ok() {
+            if let Some(dict) = arena.get_dict(cadh) {
+                let str_root_key = arena.name("StructTreeRoot");
+                if let Some(str_root_obj) = dict.get(&str_root_key) {
+                    if let Some(str_root_ref) = str_root_obj.resolve(arena).as_reference() {
+                        ust_root = parse_struct_node(arena, str_root_ref, next_id);
 
-                                // Perform true Matterhorn compliance audit
-                                let auditor = ferruginous_sdk::structure::MatterhornAuditor::new(arena);
-                                if let Ok(findings) = auditor.audit(str_root_ref) {
-                                    for f in findings {
-                                        audit_findings.push((f.checkpoint, f.severity, f.message, f.handle_id));
-                                    }
-                                }
+                        let auditor = ferruginous_sdk::structure::MatterhornAuditor::new(arena);
+                        if let Ok(findings) = auditor.audit(str_root_ref) {
+                            for f in findings {
+                                audit_findings.push((f.checkpoint, f.severity, f.message, f.handle_id));
                             }
                         }
                     }
                 }
             }
+        }
+    }
+    (ust_root, audit_findings)
+}
+
+fn handle_open(data: Bytes, name: Option<String>, tx: &Sender<WorkerResponse>) -> Option<PdfDocument> {
+    match PdfDocument::open(data) {
+        Ok(doc) => {
+            let num_pages = doc.page_count().unwrap_or(0);
+            let (page_sizes, page_texts) = load_page_info(&doc);
+
+            let mut next_id = 0;
+            let (mut ust_root, audit_findings) = parse_struct_tree_findings(&doc, &mut next_id);
 
             if ust_root.is_none() {
-                // Fallback default node if PDF lacks Structure Tree
                 ust_root = Some(crate::sidebar::USTNode {
                     id: 0,
                     tag: "Document".to_string(),
@@ -318,7 +330,7 @@ fn handle_update_node(
     let _ = tx.send(WorkerResponse::AuditFindings { findings });
 }
 
-fn handle_save(
+fn handle_save( // RR-15 Limit: Dispatcher - Thread pool worker saving request routing dispatcher handling signatures, redactions and compression saving options
     doc_opt: &Option<PdfDocument>,
     path: std::path::PathBuf,
     compress: bool,

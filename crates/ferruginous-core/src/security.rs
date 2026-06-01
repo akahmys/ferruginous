@@ -236,6 +236,32 @@ impl SecurityHandler {
         self.decrypt_with_key(data, &key)
     }
 
+    fn decrypt_block_aes(
+        &self,
+        cipher128: &Option<Aes128>,
+        cipher256: &Option<Aes256>,
+        block_ref: &mut Block,
+    ) {
+        if let Some(c) = cipher128 {
+            c.decrypt_block(block_ref);
+        } else if let Some(c) = cipher256 {
+            c.decrypt_block(block_ref);
+        }
+    }
+
+    fn remove_pkcs7_padding(&self, result: &mut Vec<u8>) {
+        if let Some(&last_byte) = result.last() {
+            let pad_len = last_byte as usize;
+            if pad_len > 0
+                && pad_len <= 16
+                && result.len() >= pad_len
+                && result[result.len() - pad_len..].iter().all(|&b| b == last_byte)
+            {
+                result.truncate(result.len() - pad_len);
+            }
+        }
+    }
+
     #[allow(clippy::manual_is_multiple_of)]
     fn decrypt_with_key(&self, data: &[u8], key: &[u8]) -> PdfResult<Vec<u8>> {
         if data.len() < 16 {
@@ -273,11 +299,7 @@ impl SecurityHandler {
             let mut block = [0u8; 16];
             block.copy_from_slice(chunk);
             let block_ref = Block::from_mut_slice(&mut block);
-            if let Some(c) = &cipher128 {
-                c.decrypt_block(block_ref);
-            } else if let Some(c) = &cipher256 {
-                c.decrypt_block(block_ref);
-            }
+            self.decrypt_block_aes(&cipher128, &cipher256, block_ref);
             for i in 0..16 {
                 block[i] ^= prev_block[i];
             }
@@ -285,16 +307,7 @@ impl SecurityHandler {
             prev_block.copy_from_slice(chunk);
         }
 
-        if let Some(&last_byte) = result.last() {
-            let pad_len = last_byte as usize;
-            if pad_len > 0
-                && pad_len <= 16
-                && result.len() >= pad_len
-                && result[result.len() - pad_len..].iter().all(|&b| b == last_byte)
-            {
-                result.truncate(result.len() - pad_len);
-            }
-        }
+        self.remove_pkcs7_padding(&mut result);
         Ok(result)
     }
 

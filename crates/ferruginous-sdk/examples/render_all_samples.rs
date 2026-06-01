@@ -1,3 +1,5 @@
+//! Example demonstrating rendering of all PDF samples in the samples directory.
+
 use ferruginous_render::VelloBackend;
 use ferruginous_render::headless::render_to_image;
 use ferruginous_sdk::Interpreter;
@@ -5,6 +7,7 @@ use ferruginous_sdk::PdfDocument;
 use image::ImageFormat;
 use std::path::Path;
 
+/// Main function for running the multi-sample rendering example.
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let samples_dir = Path::new("samples");
@@ -32,7 +35,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 // Get media box
                 let media_box = page.media_box();
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                 let width = media_box.width() as u32;
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                 let height = media_box.height() as u32;
 
                 if width == 0 || height == 0 {
@@ -53,7 +58,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let output_path = output_dir.join(format!("{filename}.png"));
                 render_to_image(backend.scene(), width, height, &output_path, ImageFormat::Png)
                     .await?;
-                println!("  Saved to {output_path:?}");
+                println!("  Saved to {}", output_path.display());
             }
         }
     }
