@@ -53,7 +53,7 @@ impl RedactionManager {
             return;
         }
 
-        let (_rect, response) = ui.allocate_at_least(page_rect.size(), egui::Sense::drag());
+        let response = ui.allocate_rect(page_rect, egui::Sense::drag());
         let screen_pos = ui.input(|i| i.pointer.hover_pos());
 
         if response.drag_started() && let Some(pos) = screen_pos {

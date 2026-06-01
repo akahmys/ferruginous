@@ -241,14 +241,26 @@ impl FerruginousApp {
     }
 
     fn queue_visible_pages(&mut self) {
+        // Collect visible pages and calculate pre-render lookahead indices
+        let mut render_targets = std::collections::BTreeSet::new();
         for &visible_index in &self.view.visible_pages {
-            if !self.scenes.contains_key(&visible_index)
-                && !self.request_queue.contains(&visible_index)
-            {
+            render_targets.insert(visible_index);
+
+            // Lookahead pre-rendering: queue previous page and next page in the background
+            if visible_index > 0 {
+                render_targets.insert(visible_index - 1);
+            }
+            if visible_index + 1 < self.total_pages {
+                render_targets.insert(visible_index + 1);
+            }
+        }
+
+        // Queue rendering requests to the worker thread
+        for index in render_targets {
+            if !self.scenes.contains_key(&index) && !self.request_queue.contains(&index) {
                 let scale = 2.0;
-                self.request_queue.insert(visible_index);
-                let _ =
-                    self.tx_worker.send(WorkerRequest::RenderPage { index: visible_index, scale });
+                self.request_queue.insert(index);
+                let _ = self.tx_worker.send(WorkerRequest::RenderPage { index, scale });
             }
         }
     }
@@ -261,7 +273,7 @@ impl FerruginousApp {
         unscaled_h: f32,
         zoom: f32,
     ) {
-        let (_rect, response) = ui.allocate_at_least(page_screen_rect.size(), egui::Sense::drag());
+        let response = ui.allocate_rect(page_screen_rect, egui::Sense::drag());
         let screen_pos = ui.input(|i| i.pointer.hover_pos());
 
         if response.drag_started() && let Some(pos) = screen_pos {
@@ -347,6 +359,11 @@ impl FerruginousApp {
 
     fn get_structural_highlight(&self, viewport_rect: egui::Rect, zoom: f32) -> Option<(usize, egui::Rect)> {
         let selected_id = self.ust_registry.selected_node_id?;
+        if let Some(ref root) = self.ust_registry.root {
+            if root.id == selected_id {
+                return None;
+            }
+        }
         let rect = self.ust_registry.find_rect_by_id(selected_id)?;
         let page_idx = 0; // Default to first page
         let layout = self.page_layouts.get(page_idx)?;
@@ -400,7 +417,7 @@ impl FerruginousApp {
         ui: &mut egui::Ui,
         viewport_rect: egui::Rect,
         zoom: f32,
-        draw_calls: BTreeMap<usize, Vec<(egui::TextureId, egui::Rect)>>,
+        viewport_texture_id: Option<egui::TextureId>,
     ) {
         // Gather redaction highlights
         let mut redaction_highlights = BTreeMap::new();
@@ -437,7 +454,9 @@ impl FerruginousApp {
         self.view.show_virtual(
             ui,
             &self.page_layouts,
-            &draw_calls,
+            viewport_texture_id,
+            viewport_rect,
+            &self.scenes,
             &self.selection_manager.highlights,
             &redaction_highlights,
             &active_redaction_drag,
@@ -467,34 +486,37 @@ impl FerruginousApp {
         };
         vello_renderer.next_frame(rs);
 
-        let mut draw_calls = BTreeMap::new();
         let zoom = self.view.zoom;
-        for &visible_index in &self.view.visible_pages {
-            if let (Some(scene), Some(layout)) =
-                (self.scenes.get(&visible_index), self.page_layouts.get(visible_index))
-            {
-                let unscaled_size = egui::vec2(layout.rect.width(), layout.rect.height());
-                let origin = egui::pos2(viewport_rect.center().x, viewport_rect.min.y + 20.0) + self.view.pan;
-                let page_screen_rect = egui::Rect::from_min_size(
-                    origin + layout.rect.min.to_vec2() * zoom,
-                    layout.rect.size() * zoom,
-                );
 
-                let page_draw_calls = vello_renderer.render_page_virtual(
-                    rs,
-                    scene,
-                    visible_index,
-                    unscaled_size,
-                    page_screen_rect,
-                    viewport_rect,
-                    zoom,
-                );
-                draw_calls.insert(visible_index, page_draw_calls);
+        // Collect visible pages and their scenes
+        let mut visible_pages_data = Vec::new();
+        let origin = egui::pos2(viewport_rect.center().x, viewport_rect.min.y + 20.0) + self.view.pan;
+
+        for layout in &self.page_layouts {
+            let page_screen_rect = egui::Rect::from_min_size(
+                origin + layout.rect.min.to_vec2() * zoom,
+                layout.rect.size() * zoom,
+            );
+
+            if viewport_rect.intersects(page_screen_rect) {
+                if let Some(scene) = self.scenes.get(&layout.index) {
+                    let unscaled_size = egui::vec2(layout.rect.width(), layout.rect.height());
+                    visible_pages_data.push((layout.index, Arc::clone(scene), page_screen_rect, unscaled_size));
+                }
             }
         }
 
+        let scale_factor = ui.ctx().pixels_per_point();
+        let viewport_texture_id = vello_renderer.render_viewport(
+            rs,
+            &visible_pages_data,
+            viewport_rect,
+            scale_factor,
+            zoom,
+        );
+
         self.handle_page_interactions(ui, viewport_rect, zoom);
-        self.draw_view_with_highlights(ui, viewport_rect, zoom, draw_calls);
+        self.draw_view_with_highlights(ui, viewport_rect, zoom, viewport_texture_id);
     }
 
     fn update_vello(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {

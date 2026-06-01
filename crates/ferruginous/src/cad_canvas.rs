@@ -192,7 +192,7 @@ impl CaliperTool {
         // Ensure page snap points exist
         snap_engine.ensure_snap_points(page_index, page_screen_rect.width() / zoom, page_screen_rect.height() / zoom, text_spans);
 
-        let (_rect, response) = ui.allocate_at_least(page_screen_rect.size(), egui::Sense::drag());
+        let response = ui.allocate_rect(page_screen_rect, egui::Sense::drag());
         let screen_pos = ui.input(|i| i.pointer.hover_pos());
 
         if let Some(pos) = screen_pos {

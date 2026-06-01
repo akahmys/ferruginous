@@ -11,6 +11,10 @@ struct Args {
     #[arg(short, long)]
     actual: PathBuf,
 
+    /// Optional path to save visual difference highlighting mismatches in red
+    #[arg(short, long)]
+    diff: Option<PathBuf>,
+
     /// Maximum allowed difference ratio (0.0 to 1.0)
     #[arg(short, long, default_value_t = 0.05)]
     tolerance: f64,
@@ -40,6 +44,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut diff_pixels = 0;
     let total_pixels = width * height;
 
+    let mut diff_image = args.diff.as_ref().map(|_| image::RgbaImage::new(width, height));
+
     for y in 0..height {
         for x in 0..width {
             let p_exp = img_expected.get_pixel(x, y).to_rgba();
@@ -52,7 +58,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             if dist > 50 {
                 diff_pixels += 1;
+                if let Some(ref mut diff_img) = diff_image {
+                    diff_img.put_pixel(x, y, image::Rgba([255, 0, 0, 255]));
+                }
+            } else {
+                if let Some(ref mut diff_img) = diff_image {
+                    // Blend context pixel to make it faded
+                    let r = ((p_exp[0] as u32 + 255) / 2) as u8;
+                    let g = ((p_exp[1] as u32 + 255) / 2) as u8;
+                    let b = ((p_exp[2] as u32 + 255) / 2) as u8;
+                    diff_img.put_pixel(x, y, image::Rgba([r, g, b, 255]));
+                }
             }
+        }
+    }
+
+    if let Some(diff_img) = diff_image {
+        if let Some(diff_path) = &args.diff {
+            // Create directories if they don't exist
+            if let Some(parent) = diff_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            diff_img.save(diff_path)?;
+            println!("Visual diff saved to: {}", diff_path.display());
         }
     }
 

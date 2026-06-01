@@ -71,3 +71,11 @@ setup-arlington:
 audit-external:
 	@if [ -z "$(PDF)" ]; then echo "Error: Please specify target PDF using PDF=<file>"; exit 1; fi
 	./scripts/audit/arlington_audit.sh $(PDF)
+
+.PHONY: visual-test visual-update-ref
+
+visual-test:
+	python3 scripts/visual_regression.py
+
+visual-update-ref:
+	python3 scripts/visual_regression.py --update

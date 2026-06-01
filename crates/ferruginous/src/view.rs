@@ -41,21 +41,33 @@ impl PDFView {
         &mut self,
         ui: &mut egui::Ui,
         layouts: &[PageLayout],
-        draw_calls: &BTreeMap<usize, Vec<(egui::TextureId, egui::Rect)>>,
+        viewport_texture_id: Option<egui::TextureId>,
+        viewport_rect: egui::Rect, // Unified viewport rect from app.rs
+        scenes: &std::collections::BTreeMap<usize, std::sync::Arc<vello::Scene>>,
         highlights: &BTreeMap<usize, Vec<egui::Rect>>,
         redaction_highlights: &BTreeMap<usize, Vec<egui::Rect>>,
         active_redaction_drag: &Option<(usize, egui::Rect)>,
         structural_highlight: &Option<(usize, egui::Rect)>,
         signature_highlight: &Option<(usize, egui::Rect)>,
     ) {
-        let (rect, response) = ui.allocate_at_least(ui.available_size(), egui::Sense::drag());
+        let response = ui.allocate_rect(viewport_rect, egui::Sense::drag());
         self.handle_input(ui, &response);
 
-        // Workspace background (Light Gray)
-        ui.painter().rect_filled(rect, 0.0, egui::Color32::from_rgb(240, 240, 240));
+        // Workspace background (Premium Sleek Dark/Slate Color)
+        ui.painter().rect_filled(viewport_rect, 0.0, egui::Color32::from_rgb(20, 20, 20));
+
+        // Draw the single unified viewport texture covering the document panel workspace
+        if let Some(tid) = viewport_texture_id {
+            ui.painter().image(
+                tid,
+                viewport_rect,
+                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                egui::Color32::WHITE,
+            );
+        }
 
         let mut new_visible = Vec::new();
-        let origin = egui::pos2(rect.center().x, rect.min.y + 20.0) + self.pan;
+        let origin = egui::pos2(viewport_rect.center().x, viewport_rect.min.y + 20.0) + self.pan;
 
         for layout in layouts {
             let page_rect = egui::Rect::from_min_size(
@@ -64,35 +76,29 @@ impl PDFView {
             );
 
             // Viewport culling
-            if rect.intersects(page_rect) {
+            if viewport_rect.intersects(page_rect) {
                 new_visible.push(layout.index);
 
-                // Page Shadow
-                ui.painter().rect_filled(
-                    page_rect.translate(egui::vec2(2.0, 2.0)),
-                    0.0,
-                    egui::Color32::from_black_alpha(50),
-                );
-
-                // Page Background (White)
-                ui.painter().rect_filled(page_rect, 0.0, egui::Color32::WHITE);
-
-                if let Some(calls) = draw_calls.get(&layout.index) {
-                    for &(tid, draw_rect) in calls {
-                        ui.painter().image(
-                            tid,
-                            draw_rect,
-                            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                            egui::Color32::WHITE,
-                        );
-                    }
+                if scenes.contains_key(&layout.index) {
+                    // Page Shadow (Page background is already drawn by Vello onto the viewport texture)
+                    ui.painter().rect_filled(
+                        page_rect.translate(egui::vec2(2.0, 2.0)),
+                        0.0,
+                        egui::Color32::from_black_alpha(50),
+                    );
                 } else {
+                    // Soft translucent container indicating page is rendering
+                    ui.painter().rect_filled(
+                        page_rect,
+                        4.0,
+                        egui::Color32::from_rgba_unmultiplied(200, 200, 200, 200),
+                    );
                     ui.painter().text(
                         page_rect.center(),
                         egui::Align2::CENTER_CENTER,
-                        format!("Loading Page {}...", layout.index + 1),
-                        egui::FontId::proportional(20.0),
-                        egui::Color32::GRAY,
+                        format!("Rendering Page {}...", layout.index + 1),
+                        egui::FontId::proportional(14.0),
+                        egui::Color32::from_rgb(120, 120, 120),
                     );
                 }
 
