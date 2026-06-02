@@ -62,6 +62,31 @@ impl FerruginousApp {
         let (tx_req, rx_req) = channel();
         let (tx_res, rx_res) = channel();
 
+        // Load system CJK/Japanese fonts for egui to support Japanese characters properly
+        let mut fonts = egui::FontDefinitions::default();
+        let paths = [
+            "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+            "/System/Library/Fonts/Hiragino Sans GB.ttc",
+            "/Library/Fonts/Arial Unicode.ttf",
+        ];
+        for path in paths {
+            if let Ok(font_data) = std::fs::read(path) {
+                log::info!("Successfully loaded CJK font from {}", path);
+                fonts.font_data.insert(
+                    "cjk".to_owned(),
+                    egui::FontData::from_owned(font_data).into(),
+                );
+                if let Some(families) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
+                    families.insert(0, "cjk".to_owned());
+                }
+                if let Some(families) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
+                    families.insert(0, "cjk".to_owned());
+                }
+                cc.egui_ctx.set_fonts(fonts);
+                break;
+            }
+        }
+
         std::thread::spawn(move || {
             run_worker(rx_req, tx_res);
         });
@@ -171,17 +196,21 @@ impl FerruginousApp {
 
                     ctx.request_repaint();
                 }
-                WorkerResponse::PageRendered { index, scene, text, .. } => {
+                WorkerResponse::PageRendered { index, scene, text, spans, .. } => {
                     self.scenes.insert(index, scene);
                     self.request_queue.remove(&index);
 
-                    // Lazily compile text spans for the rendered page
                     if let Some(text) = text {
+                        self.raw_texts.insert(index, text);
+                    }
+
+                    if let Some(spans) = spans {
+                        self.page_spans.insert(index, spans);
+                    } else if let Some(text) = self.raw_texts.get(&index) {
                         if let Some(layout) = self.page_layouts.get(index) {
                             let size = layout.rect.size();
-                            let spans = SelectionManager::generate_spans_for_page(&text, size.x, size.y);
+                            let spans = SelectionManager::generate_spans_for_page(text, size.x, size.y);
                             self.page_spans.insert(index, spans);
-                            self.raw_texts.insert(index, text);
                         }
                     }
 
@@ -796,10 +825,7 @@ impl FerruginousApp {
 
 impl eframe::App for FerruginousApp {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) { // RR-15 Limit: GUI - Main application UI shell layout routing layout panels and windows
-        // Globally disable egui's default focus ring/outline to prevent flashing orange/red borders during page switching or mouse clicks
-        ui.ctx().style_mut(|style| {
-            style.visuals.selection.stroke = egui::Stroke::NONE;
-        });
+
 
         self.show_top_bar(ui);
 

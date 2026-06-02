@@ -106,17 +106,35 @@ impl RenderBackend for TextExtractionBackend {
     fn set_word_spacing(&mut self, _spacing: f64) {}
 }
 
-struct CollectorBackend {
-    spans: Vec<TextSpan>,
-    fonts: BTreeMap<String, String>,
-    current_font: Option<String>,
+/// A backend that collects structured text spans with styling and coordinates.
+pub struct CollectorBackend {
+    /// The list of collected text spans.
+    pub spans: Vec<TextSpan>,
+    /// Mappings from local font names to base font family names.
+    pub fonts: BTreeMap<String, String>,
+    /// The name of the font currently active in the text state.
+    pub current_font: Option<String>,
+    /// The current transformation matrix from graphics state (CTM).
+    pub current_transform: Affine,
+    /// Stack of transformation matrices for push/pop state.
+    pub transform_stack: Vec<Affine>,
 }
 
 impl RenderBackend for CollectorBackend {
-    fn transform(&mut self, _matrix: Affine) {}
-    fn set_transform(&mut self, _matrix: Affine) {}
-    fn push_state(&mut self) {}
-    fn pop_state(&mut self) {}
+    fn transform(&mut self, matrix: Affine) {
+        self.current_transform *= matrix;
+    }
+    fn set_transform(&mut self, matrix: Affine) {
+        self.current_transform = matrix;
+    }
+    fn push_state(&mut self) {
+        self.transform_stack.push(self.current_transform);
+    }
+    fn pop_state(&mut self) {
+        if let Some(t) = self.transform_stack.pop() {
+            self.current_transform = t;
+        }
+    }
     fn push_clip(&mut self, _path: &BezPath, _rule: WindingRule) {}
     fn pop_clip(&mut self) {}
     fn draw_image(
@@ -146,7 +164,8 @@ impl RenderBackend for CollectorBackend {
         _state: TextState,
         op_index: usize,
     ) {
-        let coeffs = transform.as_coeffs();
+        let total_transform = self.current_transform * transform;
+        let coeffs = total_transform.as_coeffs();
         let mut is_bold = false;
         let mut width = 0.0;
         let mut text = String::new();
@@ -193,8 +212,15 @@ impl RenderBackend for CollectorBackend {
 }
 
 impl CollectorBackend {
-    fn new() -> Self {
-        Self { spans: Vec::new(), fonts: BTreeMap::new(), current_font: None }
+    /// Creates a new empty CollectorBackend.
+    pub fn new() -> Self {
+        Self {
+            spans: Vec::new(),
+            fonts: BTreeMap::new(),
+            current_font: None,
+            current_transform: Affine::IDENTITY,
+            transform_stack: Vec::new(),
+        }
     }
 }
 

@@ -981,6 +981,13 @@ impl PdfDocument {
         Ok(backend.finish())
     }
 
+    /// Extracts TextSpans from a specific page.
+    pub fn extract_spans(&self, index: usize) -> PdfResult<Vec<crate::remediation::TextSpan>> {
+        let mut collector = crate::remediation::CollectorBackend::new();
+        self.render_page(index, &mut collector, kurbo::Affine::IDENTITY)?;
+        Ok(collector.spans)
+    }
+
     /// Prints a textual representation of the logical structure tree.
     pub fn print_structure(&self) -> PdfResult<String> {
         let root_opt = self.inner.get_structure_root()?;

@@ -37,6 +37,7 @@ pub enum WorkerResponse {
         _scale: f64,
         scene: Arc<Scene>,
         text: Option<String>,
+        spans: Option<Vec<crate::interaction::TextSpan>>,
     },
     AuditFindings {
         findings: Vec<(String, String, String, Option<u32>)>,
@@ -291,6 +292,22 @@ fn handle_render(
     let initial_transform = kurbo::Affine::new([scale, 0.0, 0.0, -scale, 0.0, p_h * scale]);
 
     let text = doc.extract_text(index).ok();
+    let spans = doc.extract_spans(index).ok().map(|sdk_spans| {
+        eprintln!("[Worker] Page {}: extracted {} precision spans", index + 1, sdk_spans.len());
+        if !sdk_spans.is_empty() {
+            eprintln!("[Worker] First span: '{}', x={:.2}, y={:.2}, width={:.2}, font_size={:.2}",
+                sdk_spans[0].text, sdk_spans[0].x, sdk_spans[0].y, sdk_spans[0].width, sdk_spans[0].font_size);
+        }
+        sdk_spans.into_iter().map(|s| {
+            crate::interaction::TextSpan {
+                text: s.text,
+                rect: egui::Rect::from_two_pos(
+                    egui::pos2(s.x as f32, s.y as f32),
+                    egui::pos2((s.x + s.width) as f32, (s.y + s.font_size) as f32),
+                ),
+            }
+        }).collect()
+    });
 
     if let Ok(()) = doc.render_page(index, &mut backend, initial_transform) {
         let scene = Arc::new(backend.scene().clone());
@@ -299,6 +316,7 @@ fn handle_render(
             _scale: scale,
             scene,
             text,
+            spans,
         });
     } else {
         let _ = tx.send(WorkerResponse::Error(format!("Failed to render page {}", index)));
