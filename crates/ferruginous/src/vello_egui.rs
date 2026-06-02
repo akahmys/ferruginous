@@ -66,6 +66,24 @@ impl VelloRenderer {
 
         // Unified Scene covering the entire visible viewport
         let mut viewport_scene = Scene::new();
+
+        // Explicitly fill the entire viewport texture background with our premium slate navy color.
+        // This is required because Vello's storage texture rendering clears to (0, 0, 0, 0) by default,
+        // ignoring the RenderParams base_color, which egui's opaque texture shader then renders as solid black.
+        let viewport_kurbo_rect = kurbo::Rect::new(
+            0.0,
+            0.0,
+            width as f64,
+            height as f64,
+        );
+        viewport_scene.fill(
+            vello::peniko::Fill::NonZero,
+            kurbo::Affine::IDENTITY,
+            vello::peniko::Color::from_rgb8(235, 237, 240),
+            None,
+            &viewport_kurbo_rect,
+        );
+
         let scale = (zoom * scale_factor) as f64 / 2.0;
 
         for &(_idx, ref scene, page_screen_rect, page_unscaled_size) in visible_pages {
@@ -100,7 +118,7 @@ impl VelloRenderer {
             &viewport_scene,
             &tex.view,
             &RenderParams {
-                base_color: vello::peniko::Color::TRANSPARENT, // Fully transparent background to respect native egui theme
+                base_color: vello::peniko::Color::from_rgb8(235, 237, 240), // Solid premium light slate gray clear color
                 width: tex.width,
                 height: tex.height,
                 antialiasing_method: AaConfig::Msaa16,

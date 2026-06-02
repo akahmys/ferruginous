@@ -22,6 +22,7 @@ pub enum WorkerRequest {
         cert_password: String,
         signature_position: Option<(usize, [f32; 4])>,
     },
+    Audit,
 }
 
 pub enum WorkerResponse {
@@ -29,14 +30,13 @@ pub enum WorkerResponse {
         name: Option<String>,
         num_pages: usize,
         page_sizes: Vec<(f64, f64)>, // (width, height)
-        page_texts: Vec<String>,
         ust_root: Option<crate::sidebar::USTNode>,
-        audit_findings: Vec<(String, String, String, Option<u32>)>, // (checkpoint, severity, message, handle_id)
     },
     PageRendered {
         index: usize,
         _scale: f64,
         scene: Arc<Scene>,
+        text: Option<String>,
     },
     AuditFindings {
         findings: Vec<(String, String, String, Option<u32>)>,
@@ -62,6 +62,9 @@ pub fn run_worker(rx: Receiver<WorkerRequest>, tx: Sender<WorkerResponse>) {
             }
             WorkerRequest::Save { path, compress, linearize, vacuum, upgrade_pdf20, redaction_zones, cert_path, cert_password, signature_position } => {
                 handle_save(&current_doc, path, compress, linearize, vacuum, upgrade_pdf20, redaction_zones, cert_path, cert_password, signature_position, &tx);
+            }
+            WorkerRequest::Audit => {
+                handle_audit(&current_doc, &tx);
             }
         }
     }
@@ -114,10 +117,27 @@ fn handle_open(data: Bytes, name: Option<String>, tx: &Sender<WorkerResponse>) -
     match PdfDocument::open(data) {
         Ok(doc) => {
             let num_pages = doc.page_count().unwrap_or(0);
-            let (page_sizes, page_texts) = load_page_info(&doc);
+            let mut page_sizes = Vec::with_capacity(num_pages);
+            for i in 0..num_pages {
+                page_sizes.push(doc.get_page_size(i).unwrap_or((595.0, 842.0)));
+            }
 
             let mut next_id = 0;
-            let (mut ust_root, audit_findings) = parse_struct_tree_findings(&doc, &mut next_id);
+            let mut ust_root = None;
+            let arena = doc.inner().arena();
+
+            if let Some(cah) = doc.inner().catalog_handle() {
+                if let Some(cadh) = doc.inner().resolve_to_dict(cah).ok() {
+                    if let Some(dict) = arena.get_dict(cadh) {
+                        let str_root_key = arena.name("StructTreeRoot");
+                        if let Some(str_root_obj) = dict.get(&str_root_key) {
+                            if let Some(str_root_ref) = str_root_obj.resolve(arena).as_reference() {
+                                ust_root = parse_struct_node(arena, str_root_ref, &mut next_id);
+                            }
+                        }
+                    }
+                }
+            }
 
             if ust_root.is_none() {
                 ust_root = Some(crate::sidebar::USTNode {
@@ -135,9 +155,7 @@ fn handle_open(data: Bytes, name: Option<String>, tx: &Sender<WorkerResponse>) -
                 name,
                 num_pages,
                 page_sizes,
-                page_texts,
                 ust_root,
-                audit_findings,
             });
             Some(doc)
         }
@@ -272,12 +290,44 @@ fn handle_render(
     let mut backend = VelloBackend::new(system_fonts);
     let initial_transform = kurbo::Affine::new([scale, 0.0, 0.0, -scale, 0.0, p_h * scale]);
 
+    let text = doc.extract_text(index).ok();
+
     if let Ok(()) = doc.render_page(index, &mut backend, initial_transform) {
         let scene = Arc::new(backend.scene().clone());
-        let _ = tx.send(WorkerResponse::PageRendered { index, _scale: scale, scene });
+        let _ = tx.send(WorkerResponse::PageRendered {
+            index,
+            _scale: scale,
+            scene,
+            text,
+        });
     } else {
         let _ = tx.send(WorkerResponse::Error(format!("Failed to render page {}", index)));
     }
+}
+
+fn handle_audit(doc_opt: &Option<PdfDocument>, tx: &Sender<WorkerResponse>) {
+    let Some(doc) = doc_opt else { return };
+    let mut audit_findings = Vec::new();
+    let arena = doc.inner().arena();
+
+    if let Some(cah) = doc.inner().catalog_handle() {
+        if let Some(cadh) = doc.inner().resolve_to_dict(cah).ok() {
+            if let Some(dict) = arena.get_dict(cadh) {
+                let str_root_key = arena.name("StructTreeRoot");
+                if let Some(str_root_obj) = dict.get(&str_root_key) {
+                    if let Some(str_root_ref) = str_root_obj.resolve(arena).as_reference() {
+                        let auditor = ferruginous_sdk::structure::MatterhornAuditor::new(arena);
+                        if let Ok(findings) = auditor.audit(str_root_ref) {
+                            for f in findings {
+                                audit_findings.push((f.checkpoint, f.severity, f.message, f.handle_id));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let _ = tx.send(WorkerResponse::AuditFindings { findings: audit_findings });
 }
 
 fn handle_update_node(

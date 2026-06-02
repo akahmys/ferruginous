@@ -53,10 +53,62 @@ impl PDFView {
         let response = ui.allocate_rect(viewport_rect, egui::Sense::drag());
         self.handle_input(ui, &response);
 
-        // Workspace background (Premium Sleek Dark/Slate Color)
-        ui.painter().rect_filled(viewport_rect, 0.0, egui::Color32::from_rgb(20, 20, 20));
+        // Completely disable egui's default focus ring/outline to prevent flashing orange/red borders during interactions or page switches
+        ui.visuals_mut().selection.stroke = egui::Stroke::NONE;
 
-        // Draw the single unified viewport texture covering the document panel workspace
+        // 1. Workspace background (Premium Light Gray Theme matching sidebars)
+        let bg_color = egui::Color32::from_rgb(235, 237, 240); // Clean, elegant light-slate gray matching the light theme
+        ui.painter().rect_filled(viewport_rect, 0.0, bg_color);
+
+        // Draw premium design/CAD grid lines that dynamically move with the pan offset
+        let grid_size = 32.0;
+        let grid_stroke = egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(0, 0, 0, 10));
+        
+        // Vertical grid lines
+        let mut x = viewport_rect.min.x + (self.pan.x % (grid_size * self.zoom));
+        while x < viewport_rect.max.x {
+            ui.painter().line_segment(
+                [egui::pos2(x, viewport_rect.min.y), egui::pos2(x, viewport_rect.max.y)],
+                grid_stroke,
+            );
+            x += grid_size * self.zoom;
+        }
+        
+        // Horizontal grid lines
+        let mut y = viewport_rect.min.y + (self.pan.y % (grid_size * self.zoom));
+        while y < viewport_rect.max.y {
+            ui.painter().line_segment(
+                [egui::pos2(viewport_rect.min.x, y), egui::pos2(viewport_rect.max.x, y)],
+                grid_stroke,
+            );
+            y += grid_size * self.zoom;
+        }
+
+        // 2. Draw page shadows and authoritatively paint solid pure-white backings under each visible page
+        let origin = egui::pos2(viewport_rect.center().x, viewport_rect.min.y + 20.0) + self.pan;
+        for layout in layouts {
+            let page_rect = egui::Rect::from_min_size(
+                origin + layout.rect.min.to_vec2() * self.zoom,
+                layout.rect.size() * self.zoom,
+            );
+            if viewport_rect.intersects(page_rect) {
+                // Draw a beautiful soft blurred/drop shadow for premium depth (drawn *behind* the page backing)
+                if scenes.contains_key(&layout.index) {
+                    for offset in 1..=4 {
+                        ui.painter().rect_filled(
+                            page_rect.translate(egui::vec2(offset as f32 * 1.5, offset as f32 * 1.5)),
+                            4.0,
+                            egui::Color32::from_black_alpha(20 - offset * 4),
+                        );
+                    }
+                }
+
+                // Pure white page backing
+                ui.painter().rect_filled(page_rect, 0.0, egui::Color32::WHITE);
+            }
+        }
+
+        // 3. Draw the single unified viewport texture covering the document panel workspace
         if let Some(tid) = viewport_texture_id {
             ui.painter().image(
                 tid,
@@ -79,26 +131,29 @@ impl PDFView {
             if viewport_rect.intersects(page_rect) {
                 new_visible.push(layout.index);
 
-                if scenes.contains_key(&layout.index) {
-                    // Page Shadow (Page background is already drawn by Vello onto the viewport texture)
-                    ui.painter().rect_filled(
-                        page_rect.translate(egui::vec2(2.0, 2.0)),
-                        0.0,
-                        egui::Color32::from_black_alpha(50),
-                    );
-                } else {
-                    // Soft translucent container indicating page is rendering
+                if !scenes.contains_key(&layout.index) {
+                    // Soft premium white backing for the rendering page to completely remove the gray mask
                     ui.painter().rect_filled(
                         page_rect,
                         4.0,
-                        egui::Color32::from_rgba_unmultiplied(200, 200, 200, 200),
+                        egui::Color32::WHITE,
                     );
+
+                    // Faint, clean border for pristine CAD-like presentation
+                    ui.painter().rect_stroke(
+                        page_rect,
+                        4.0,
+                        egui::Stroke::new(1.0, egui::Color32::from_rgb(220, 224, 230)),
+                        egui::StrokeKind::Inside,
+                    );
+
+                    // Premium, elegant rendering status indicator
                     ui.painter().text(
                         page_rect.center(),
                         egui::Align2::CENTER_CENTER,
-                        format!("Rendering Page {}...", layout.index + 1),
-                        egui::FontId::proportional(14.0),
-                        egui::Color32::from_rgb(120, 120, 120),
+                        format!("⌛ Rendering Page {}...", layout.index + 1),
+                        egui::FontId::proportional(15.0),
+                        egui::Color32::from_rgb(100, 110, 125),
                     );
                 }
 

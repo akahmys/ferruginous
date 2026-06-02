@@ -157,31 +157,34 @@ impl FerruginousApp {
                     name,
                     num_pages,
                     page_sizes,
-                    page_texts,
                     ust_root,
-                    audit_findings,
                 } => {
                     self.pdf_name = name;
                     self.total_pages = num_pages;
                     self.compute_layouts(&page_sizes);
 
-                    // Pre-generate TextSpans for each page
-                    for (i, text) in page_texts.iter().enumerate() {
-                        let size = page_sizes.get(i).cloned().unwrap_or((595.0, 842.0));
-                        let spans = SelectionManager::generate_spans_for_page(text, size.0 as f32, size.1 as f32);
-                        self.page_spans.insert(i, spans);
-                        self.raw_texts.insert(i, text.clone());
-                    }
-
-                    // Load parsed accessibility tag tree & real Matterhorn audit findings
+                    // Load parsed accessibility tag tree
                     self.ust_registry.root = ust_root;
-                    self.ust_registry.audit_findings = audit_findings;
+
+                    // Kick off Matterhorn compliance audit asynchronously in the background
+                    let _ = self.tx_worker.send(WorkerRequest::Audit);
 
                     ctx.request_repaint();
                 }
-                WorkerResponse::PageRendered { index, scene, .. } => {
+                WorkerResponse::PageRendered { index, scene, text, .. } => {
                     self.scenes.insert(index, scene);
                     self.request_queue.remove(&index);
+
+                    // Lazily compile text spans for the rendered page
+                    if let Some(text) = text {
+                        if let Some(layout) = self.page_layouts.get(index) {
+                            let size = layout.rect.size();
+                            let spans = SelectionManager::generate_spans_for_page(&text, size.x, size.y);
+                            self.page_spans.insert(index, spans);
+                            self.raw_texts.insert(index, text);
+                        }
+                    }
+
                     ctx.request_repaint();
                 }
                 WorkerResponse::AuditFindings { findings } => {
@@ -793,6 +796,11 @@ impl FerruginousApp {
 
 impl eframe::App for FerruginousApp {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) { // RR-15 Limit: GUI - Main application UI shell layout routing layout panels and windows
+        // Globally disable egui's default focus ring/outline to prevent flashing orange/red borders during page switching or mouse clicks
+        ui.ctx().style_mut(|style| {
+            style.visuals.selection.stroke = egui::Stroke::NONE;
+        });
+
         self.show_top_bar(ui);
 
         if self.total_pages > 0 {
