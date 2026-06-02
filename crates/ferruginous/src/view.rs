@@ -16,7 +16,12 @@ impl PDFView {
     pub fn new() -> Self {
         Self { zoom: 1.0, pan: egui::Vec2::ZERO, visible_pages: Vec::new() }
     }
-
+    pub fn scroll_to_page(&mut self, page_index: usize, layouts: &[PageLayout]) {
+        if let Some(layout) = layouts.get(page_index) {
+            self.pan.y = -layout.rect.min.y * self.zoom;
+            self.pan.x = 0.0;
+        }
+    }
 
 
     pub fn center_on_rect(&mut self, viewport_rect: egui::Rect, page_layout: &PageLayout, rect: [f32; 4]) {

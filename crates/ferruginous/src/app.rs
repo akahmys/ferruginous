@@ -53,6 +53,10 @@ pub struct FerruginousApp {
     pub caliper_tool: crate::cad_canvas::CaliperTool,
     pub arlington_inspector: crate::inspector::ArlingtonInspectorPanel,
     pub show_inspector: bool,
+
+    // Selection management
+    pub selected_pages: BTreeSet<usize>,
+    pub last_selected_page: Option<usize>,
 }
 
 impl FerruginousApp {
@@ -128,6 +132,10 @@ impl FerruginousApp {
             caliper_tool: crate::cad_canvas::CaliperTool::new(),
             arlington_inspector: crate::inspector::ArlingtonInspectorPanel::new(),
             show_inspector: false,
+
+            // Selection Defaults
+            selected_pages: BTreeSet::new(),
+            last_selected_page: None,
         }
     }
 
@@ -166,6 +174,8 @@ impl FerruginousApp {
         self.selection_manager.clear();
         self.page_spans.clear();
         self.ust_registry.clear();
+        self.selected_pages.clear();
+        self.last_selected_page = None;
         self.reset_view();
         let _ = self.tx_worker.send(WorkerRequest::Open { data, name });
     }
@@ -825,45 +835,172 @@ impl FerruginousApp {
 
 impl eframe::App for FerruginousApp {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) { // RR-15 Limit: GUI - Main application UI shell layout routing layout panels and windows
-
+        ui.ctx().global_style_mut(|style| {
+            style.visuals.selection.stroke = egui::Stroke::NONE;
+        });
 
         self.show_top_bar(ui);
 
         if self.total_pages > 0 {
-            egui::Panel::left("left_sidebar")
+            egui::Panel::right("thumbnail_sidebar")
                 .resizable(true)
-                .default_size(320.0)
-                .size_range(200.0..=500.0)
+                .default_size(200.0)
+                .size_range(160.0..=360.0)
                 .show_inside(ui, |ui| {
-                    self.sidebar_panel.show(ui, &mut self.ust_registry, &self.tx_worker);
-                });
-
-            egui::Panel::right("right_sidebar")
-                .resizable(true)
-                .default_size(320.0)
-                .size_range(200.0..=500.0)
-                .show_inside(ui, |ui| {
-                    self.redaction_studio_panel.show(
-                        ui,
-                        &self.raw_texts,
-                        &self.page_spans,
-                        &mut self.redaction_manager,
-                    );
-                });
-
-            if self.show_inspector {
-                let selected_tag = self.ust_registry.selected_node_id
-                    .and_then(|id| self.ust_registry.root.as_ref()
-                        .and_then(|r| crate::sidebar::USTRegistry::find_node_by_id_recursive(r, id))
-                        .map(|n| n.tag.as_str())
-                    );
-                egui::Panel::bottom("inspector_panel")
-                    .resizable(true)
-                    .default_size(220.0)
-                    .show_inside(ui, |ui| {
-                        self.arlington_inspector.show(ui, selected_tag);
+                    ui.vertical_centered(|ui| {
+                        ui.add_space(8.0);
+                        ui.heading("📖 Pages");
+                        ui.add_space(4.0);
                     });
-            }
+                    ui.separator();
+
+                    egui::ScrollArea::vertical()
+                        .id_salt("thumbnail_scroll_area")
+                        .show(ui, |ui| {
+                            for i in 0..self.total_pages {
+                                if let Some(layout) = self.page_layouts.get(i) {
+                                    let size = layout.rect.size();
+                                    let aspect_ratio = size.y / size.x;
+                                    let is_visible = self.view.visible_pages.contains(&i);
+                                    let is_selected = self.selected_pages.contains(&i);
+
+                                    let card_width = 120.0;
+                                    let card_height = card_width * aspect_ratio;
+
+                                    ui.vertical_centered(|ui| {
+                                        ui.add_space(8.0);
+
+                                        let frame_bg = if is_selected {
+                                            egui::Color32::from_rgb(224, 242, 254) // Premium light selection blue tint
+                                        } else if is_visible {
+                                            egui::Color32::from_rgb(240, 246, 255)
+                                        } else {
+                                            egui::Color32::WHITE
+                                        };
+                                        let frame_stroke = if is_selected {
+                                            egui::Stroke::new(2.0, egui::Color32::from_rgb(14, 165, 233)) // Vibrant selection blue
+                                        } else if is_visible {
+                                            egui::Stroke::new(1.5, egui::Color32::from_rgb(0, 120, 215))
+                                        } else {
+                                            egui::Stroke::new(1.0, egui::Color32::from_rgb(210, 215, 222))
+                                        };
+
+                                        let (rect, response) = ui.allocate_at_least(
+                                            egui::vec2(140.0, card_height + 34.0),
+                                            egui::Sense::click(),
+                                        );
+
+                                        if response.clicked() {
+                                            let shift = ui.input(|ins| ins.modifiers.shift);
+                                            let cmd = ui.input(|ins| ins.modifiers.command || ins.modifiers.ctrl);
+
+                                            if shift {
+                                                if let Some(start) = self.last_selected_page {
+                                                    self.selected_pages.clear();
+                                                    let min = start.min(i);
+                                                    let max = start.max(i);
+                                                    for page_idx in min..=max {
+                                                        self.selected_pages.insert(page_idx);
+                                                    }
+                                                } else {
+                                                    self.selected_pages.clear();
+                                                    self.selected_pages.insert(i);
+                                                    self.last_selected_page = Some(i);
+                                                }
+                                            } else if cmd {
+                                                if self.selected_pages.contains(&i) {
+                                                    self.selected_pages.remove(&i);
+                                                } else {
+                                                    self.selected_pages.insert(i);
+                                                }
+                                                self.last_selected_page = Some(i);
+                                            } else {
+                                                self.selected_pages.clear();
+                                                self.selected_pages.insert(i);
+                                                self.last_selected_page = Some(i);
+                                                self.view.scroll_to_page(i, &self.page_layouts);
+                                            }
+                                        }
+
+                                        let hover_stroke = if response.hovered() && !is_selected && !is_visible {
+                                            egui::Stroke::new(1.5, egui::Color32::from_rgb(100, 160, 240))
+                                        } else {
+                                            frame_stroke
+                                        };
+
+                                        ui.painter().rect(
+                                            rect,
+                                            6.0,
+                                            frame_bg,
+                                            hover_stroke,
+                                            egui::StrokeKind::Outside,
+                                        );
+
+                                        // Draw mini simulated page preview
+                                        let mini_page_width = 90.0;
+                                        let mini_page_height = mini_page_width * aspect_ratio;
+                                        let mini_page_rect = egui::Rect::from_center_size(
+                                            rect.center() - egui::vec2(0.0, 10.0),
+                                            egui::vec2(mini_page_width, mini_page_height)
+                                        );
+
+                                        ui.painter().rect_filled(
+                                            mini_page_rect,
+                                            2.0,
+                                            egui::Color32::WHITE
+                                        );
+                                        ui.painter().rect_stroke(
+                                            mini_page_rect,
+                                            2.0,
+                                            egui::Stroke::new(1.0, egui::Color32::from_rgb(230, 233, 238)),
+                                            egui::StrokeKind::Inside
+                                        );
+
+                                        // Draw simulated lines on the mini page
+                                        let mut line_y = mini_page_rect.min.y + 6.0;
+                                        let step_y = 5.0;
+                                        let line_color = egui::Color32::from_rgb(230, 233, 238);
+                                        while line_y < mini_page_rect.max.y - 6.0 {
+                                            ui.painter().line_segment(
+                                                [
+                                                    egui::pos2(mini_page_rect.min.x + 6.0, line_y),
+                                                    egui::pos2(mini_page_rect.max.x - 6.0, line_y)
+                                                ],
+                                                egui::Stroke::new(2.0, line_color)
+                                            );
+                                            line_y += step_y;
+                                        }
+
+                                        let font_id = egui::FontId::proportional(11.0);
+                                        let text_color = if is_selected {
+                                            egui::Color32::from_rgb(3, 105, 161)
+                                        } else if is_visible {
+                                            egui::Color32::from_rgb(0, 120, 215)
+                                        } else {
+                                            egui::Color32::from_rgb(80, 90, 105)
+                                        };
+                                        ui.painter().text(
+                                            egui::pos2(rect.center().x, rect.max.y - 12.0),
+                                            egui::Align2::CENTER_CENTER,
+                                            format!("Page {}", i + 1),
+                                            font_id,
+                                            text_color,
+                                        );
+
+                                        if is_visible {
+                                            let dot_center = egui::pos2(rect.right() - 10.0, rect.top() + 10.0);
+                                            ui.painter().circle_filled(
+                                                dot_center,
+                                                4.0,
+                                                egui::Color32::from_rgb(34, 197, 94)
+                                            );
+                                        }
+                                    });
+                                }
+                            }
+                            ui.add_space(16.0);
+                        });
+                });
         }
 
         self.update_vello(ui, frame);
