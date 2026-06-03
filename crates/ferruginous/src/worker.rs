@@ -228,20 +228,15 @@ fn parse_kids_helper(
         if let Some(child_node) = parse_struct_node(arena, kid_ref, next_id, visited) {
             children.push(child_node);
         }
-    } else {
-        match kids_obj.resolve(arena) {
-            Object::Array(ah) => {
-                if let Some(array) = arena.get_array(ah) {
-                    for kid in array {
-                        if let Some(kid_ref) = resolve_to_node_handle(arena, &kid) {
-                            if let Some(child_node) = parse_struct_node(arena, kid_ref, next_id, visited) {
-                                children.push(child_node);
-                            }
-                        }
+    } else if let Object::Array(ah) = kids_obj.resolve(arena) {
+        if let Some(array) = arena.get_array(ah) {
+            for kid in array {
+                if let Some(kid_ref) = resolve_to_node_handle(arena, &kid) {
+                    if let Some(child_node) = parse_struct_node(arena, kid_ref, next_id, visited) {
+                        children.push(child_node);
                     }
                 }
             }
-            _ => {}
         }
     }
 }

@@ -57,18 +57,13 @@ impl<'a> StructureVisitor<'a> {
                 if let Some(kids) = dict.get(&kids_key) {
                     if let Some(kid_handle) = resolve_to_node_handle(self.arena, kids) {
                         self.stack.push_back(kid_handle);
-                    } else {
-                        match kids.resolve(self.arena) {
-                            Object::Array(h) => {
-                                if let Some(array) = self.arena.get_array(h) {
-                                    for kid in array.iter().rev() {
-                                        if let Some(kid_handle) = resolve_to_node_handle(self.arena, kid) {
-                                            self.stack.push_back(kid_handle);
-                                        }
-                                    }
+                    } else if let Object::Array(h) = kids.resolve(self.arena) {
+                        if let Some(array) = self.arena.get_array(h) {
+                            for kid in array.iter().rev() {
+                                if let Some(kid_handle) = resolve_to_node_handle(self.arena, kid) {
+                                    self.stack.push_back(kid_handle);
                                 }
                             }
-                            _ => {}
                         }
                     }
                 }

@@ -211,6 +211,12 @@ impl RenderBackend for CollectorBackend {
     fn set_word_spacing(&mut self, _spacing: f64) {}
 }
 
+impl Default for CollectorBackend {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CollectorBackend {
     /// Creates a new empty CollectorBackend.
     pub fn new() -> Self {
