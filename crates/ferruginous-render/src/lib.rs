@@ -450,7 +450,7 @@ fn convert_mono_mask(
             let byte_val = image_data.get(byte_idx).copied().unwrap_or(0);
             let bit = (byte_val >> bit_idx) & 1;
 
-            let condition = if inverted { bit == 1 } else { bit == 0 };
+            let condition = if inverted { bit == 0 } else { bit == 1 };
             if condition {
                 data.extend_from_slice(&[r, g, b, alpha]);
             } else {

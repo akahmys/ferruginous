@@ -33,11 +33,14 @@
 
 mod app;
 mod cad_canvas;
+mod command_palette;
+mod export_wizard;
 mod inspector;
 mod interaction;
 mod redaction;
 mod redaction_studio;
 mod sidebar;
+mod thumbnail_sidebar;
 mod vello_egui;
 mod view;
 mod worker;

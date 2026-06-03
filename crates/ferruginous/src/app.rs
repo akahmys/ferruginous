@@ -11,36 +11,36 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use vello::Scene;
 
 pub struct FerruginousApp {
-    tx_worker: Sender<WorkerRequest>,
-    rx_worker: Receiver<WorkerResponse>,
+    pub tx_worker: Sender<WorkerRequest>,
+    pub rx_worker: Receiver<WorkerResponse>,
 
-    total_pages: usize,
-    page_layouts: Vec<PageLayout>,
+    pub total_pages: usize,
+    pub page_layouts: Vec<PageLayout>,
 
-    view: PDFView,
-    error: Option<String>,
-    pdf_name: Option<String>,
+    pub view: PDFView,
+    pub error: Option<String>,
+    pub pdf_name: Option<String>,
 
-    vello_renderer: Option<VelloRenderer>,
-    scenes: BTreeMap<usize, Arc<Scene>>,
-    request_queue: BTreeSet<usize>,
+    pub vello_renderer: Option<VelloRenderer>,
+    pub scenes: BTreeMap<usize, Arc<Scene>>,
+    pub request_queue: BTreeSet<usize>,
 
-    selection_manager: SelectionManager,
-    page_spans: BTreeMap<usize, Vec<TextSpan>>,
+    pub selection_manager: SelectionManager,
+    pub page_spans: BTreeMap<usize, Vec<TextSpan>>,
 
-    ust_registry: USTRegistry,
-    sidebar_panel: SidebarPanel,
+    pub ust_registry: USTRegistry,
+    pub sidebar_panel: SidebarPanel,
 
-    redaction_manager: RedactionManager,
-    redaction_studio_panel: crate::redaction_studio::RedactionStudioPanel,
-    show_export_wizard: bool,
-    export_compress: bool,
-    export_linearize: bool,
-    export_vacuum: bool,
-    export_upgrade_pdf20: bool,
-    export_apply_tags: bool,
-    export_burn_redactions: bool,
-    raw_texts: BTreeMap<usize, String>, // page_index -> raw extracted text
+    pub redaction_manager: RedactionManager,
+    pub redaction_studio_panel: crate::redaction_studio::RedactionStudioPanel,
+    pub show_export_wizard: bool,
+    pub export_compress: bool,
+    pub export_linearize: bool,
+    pub export_vacuum: bool,
+    pub export_upgrade_pdf20: bool,
+    pub export_apply_tags: bool,
+    pub export_burn_redactions: bool,
+    pub raw_texts: BTreeMap<usize, String>, // page_index -> raw extracted text
 
     // Digital Signature & Placement
     pub cert_path: Option<PathBuf>,
@@ -57,6 +57,13 @@ pub struct FerruginousApp {
     // Selection management
     pub selected_pages: BTreeSet<usize>,
     pub last_selected_page: Option<usize>,
+    pub clear_thumbnails_pending: bool,
+    pub invalidated_thumbnails: BTreeSet<usize>,
+    pub is_loading: bool,
+    pub show_reading_order: bool,
+    pub show_command_palette: bool,
+    pub command_palette_search: String,
+    pub last_viewport_rect: Option<egui::Rect>,
 }
 
 impl FerruginousApp {
@@ -68,6 +75,20 @@ impl FerruginousApp {
 
         // Load system CJK/Japanese fonts for egui to support Japanese characters properly
         let mut fonts = egui::FontDefinitions::default();
+
+        // Load Lucide icon font
+        let lucide_data = include_bytes!("../assets/lucide.ttf");
+        fonts.font_data.insert(
+            "lucide".to_owned(),
+            egui::FontData::from_static(lucide_data).into(),
+        );
+        if let Some(families) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
+            families.push("lucide".to_owned());
+        }
+        if let Some(families) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
+            families.push("lucide".to_owned());
+        }
+
         let paths = [
             "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
             "/System/Library/Fonts/Hiragino Sans GB.ttc",
@@ -86,13 +107,23 @@ impl FerruginousApp {
                 if let Some(families) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
                     families.insert(0, "cjk".to_owned());
                 }
-                cc.egui_ctx.set_fonts(fonts);
                 break;
             }
         }
+        cc.egui_ctx.set_fonts(fonts);
+        cc.egui_ctx.set_visuals(egui::Visuals::light());
 
+        cc.egui_ctx.global_style_mut(|style| {
+            style.visuals.selection.stroke = egui::Stroke::NONE;
+            style.visuals.widgets.active.bg_stroke = egui::Stroke::NONE;
+            style.visuals.widgets.hovered.bg_stroke = egui::Stroke::NONE;
+            style.visuals.widgets.inactive.bg_stroke = egui::Stroke::NONE;
+            style.visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, egui::Color32::from_gray(210));
+        });
+
+        let egui_ctx = cc.egui_ctx.clone();
         std::thread::spawn(move || {
-            run_worker(rx_req, tx_res);
+            run_worker(rx_req, tx_res, egui_ctx);
         });
 
         Self {
@@ -136,6 +167,13 @@ impl FerruginousApp {
             // Selection Defaults
             selected_pages: BTreeSet::new(),
             last_selected_page: None,
+            clear_thumbnails_pending: false,
+            invalidated_thumbnails: BTreeSet::new(),
+            is_loading: false,
+            show_reading_order: true,
+            show_command_palette: false,
+            command_palette_search: String::new(),
+            last_viewport_rect: None,
         }
     }
 
@@ -165,7 +203,7 @@ impl FerruginousApp {
         }
     }
 
-    pub fn open_file_bytes(&mut self, data: bytes::Bytes, name: Option<String>, _ctx: &egui::Context) {
+    pub fn open_file_bytes(&mut self, data: bytes::Bytes, name: Option<String>, ctx: &egui::Context) {
         self.error = None;
         self.total_pages = 0;
         self.page_layouts.clear();
@@ -176,11 +214,14 @@ impl FerruginousApp {
         self.ust_registry.clear();
         self.selected_pages.clear();
         self.last_selected_page = None;
+        self.clear_thumbnails_pending = true;
+        self.is_loading = true;
         self.reset_view();
         let _ = self.tx_worker.send(WorkerRequest::Open { data, name });
+        ctx.request_repaint();
     }
 
-    fn reset_view(&mut self) {
+    pub fn reset_view(&mut self) {
         self.view.zoom = 1.0;
         self.view.pan = egui::Vec2::ZERO;
     }
@@ -188,7 +229,7 @@ impl FerruginousApp {
     fn process_worker_messages(&mut self, ctx: &egui::Context) {
         while let Ok(msg) = self.rx_worker.try_recv() {
             match msg {
-                WorkerResponse::DocumentLoaded {
+                 WorkerResponse::DocumentLoaded {
                     name,
                     num_pages,
                     page_sizes,
@@ -204,11 +245,13 @@ impl FerruginousApp {
                     // Kick off Matterhorn compliance audit asynchronously in the background
                     let _ = self.tx_worker.send(WorkerRequest::Audit);
 
+                    self.is_loading = false;
                     ctx.request_repaint();
                 }
                 WorkerResponse::PageRendered { index, scene, text, spans, .. } => {
                     self.scenes.insert(index, scene);
                     self.request_queue.remove(&index);
+                    self.invalidated_thumbnails.insert(index);
 
                     if let Some(text) = text {
                         self.raw_texts.insert(index, text);
@@ -239,6 +282,7 @@ impl FerruginousApp {
                     ctx.request_repaint();
                 }
                 WorkerResponse::Error(err) => {
+                    self.is_loading = false;
                     self.error = Some(err);
                 }
             }
@@ -268,7 +312,7 @@ impl FerruginousApp {
             egui::CentralPanel::default().show_inside(ui, |ui| {
                 ui.vertical_centered(|ui| {
                     ui.add_space(100.0);
-                    ui.colored_label(egui::Color32::RED, "🚨 GPU Compute Support Error");
+                    ui.colored_label(egui::Color32::RED, "GPU Compute Support Error");
                     ui.add_space(20.0);
                     ui.label("Ferruginous relies on high-performance GPU Compute Shaders (Vello) to render PDFs.");
                     ui.label("Either WebGPU is not supported by your hardware/browser, or your GPU drivers do not support compute shaders.");
@@ -504,6 +548,8 @@ impl FerruginousApp {
             &active_redaction_drag,
             &structural_highlight,
             &signature_highlight,
+            &self.ust_registry,
+            self.show_reading_order,
         );
     }
 
@@ -574,440 +620,277 @@ impl FerruginousApp {
             None => return,
         };
 
+        if self.clear_thumbnails_pending {
+            if let Some(ref mut r) = self.vello_renderer {
+                r.clear_thumbnails(rs);
+            }
+            self.clear_thumbnails_pending = false;
+        }
+
+        if !self.invalidated_thumbnails.is_empty() {
+            if let Some(ref mut r) = self.vello_renderer {
+                for page_idx in std::mem::take(&mut self.invalidated_thumbnails) {
+                    r.invalidate_thumbnail(rs, page_idx);
+                }
+            }
+        }
+
         self.queue_visible_pages();
 
-        egui::CentralPanel::default().show_inside(ui, |ui| {
+        egui::CentralPanel::default().frame(egui::Frame::NONE).show_inside(ui, |ui| {
             if let Some(err) = &self.error {
                 ui.centered_and_justified(|ui| {
                     ui.colored_label(egui::Color32::RED, err);
                 });
             } else if !self.page_layouts.is_empty() {
-                let viewport_rect = ui.clip_rect();
+                let viewport_rect = ui.max_rect();
+                self.last_viewport_rect = Some(viewport_rect);
                 self.render_document_panel(ui, rs, viewport_rect);
-            } else if self.pdf_name.is_some() {
+
+                // Floating page & zoom overlay at the top-center of the CentralPanel
+                let overlay_width = 240.0;
+                let overlay_height = 36.0;
+                let overlay_rect = egui::Rect::from_min_size(
+                    egui::pos2(
+                        viewport_rect.center().x - overlay_width / 2.0,
+                        viewport_rect.top() + 16.0,
+                    ),
+                    egui::vec2(overlay_width, overlay_height),
+                );
+
+                // Rounded semi-transparent background card
+                ui.painter().rect_filled(
+                    overlay_rect,
+                    6.0,
+                    egui::Color32::from_rgba_unmultiplied(255, 255, 255, 220),
+                );
+                ui.painter().rect_stroke(
+                    overlay_rect,
+                    6.0,
+                    egui::Stroke::new(1.0, egui::Color32::from_gray(200)),
+                    egui::StrokeKind::Outside
+                );
+
+                let mut child_ui = ui.child_ui(
+                    overlay_rect,
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    None,
+                );
+                child_ui.horizontal(|ui| {
+                    ui.add_space(8.0);
+                    let current_page = self.view.visible_pages.first().cloned().unwrap_or(0);
+                    if ui.button("◀").clicked() && current_page > 0 {
+                        self.view.scroll_to_page(current_page - 1, &self.page_layouts);
+                    }
+                    ui.label(format!(" {} / {} ", current_page + 1, self.total_pages));
+                    if ui.button("▶").clicked() && current_page + 1 < self.total_pages {
+                        self.view.scroll_to_page(current_page + 1, &self.page_layouts);
+                    }
+
+                    ui.separator();
+                    ui.label(format!("{:.0}%", self.view.zoom * 100.0));
+                    if ui.button("Reset").clicked() {
+                        self.reset_view();
+                    }
+                });
+            } else if self.is_loading {
                 ui.centered_and_justified(|ui| {
                     ui.label("Loading document...");
                 });
             } else {
-                ui.vertical_centered(|ui| {
-                    ui.add_space(100.0);
-                    ui.heading("Ferruginous");
-                    ui.label("Fast, Secure, GPU-Accelerated PDF Viewer");
-                    ui.add_space(20.0);
-                    if ui.button("Open a PDF").clicked()
-                        && let Some(p) =
-                            rfd::FileDialog::new().add_filter("PDF", &["pdf"]).pick_file()
-                    {
-                        self.open_file(p, &ctx);
-                    }
-                });
+                // Keep the central panel blank at startup as requested
             }
         });
     }
 
-    fn show_top_bar(&mut self, ui: &mut egui::Ui) { // RR-15 Limit: GUI - Sequential egui top menu bar layout routing view resets, zoom, redact brush, tagging brush, caliper tool, and save wizard
-        let ctx = ui.ctx().clone();
-        egui::Panel::top("top_bar").show_inside(ui, |ui| {
-            ui.horizontal(|ui| {
-                if ui.button("📂 Open PDF").clicked()
-                    && let Some(p) = rfd::FileDialog::new().add_filter("PDF", &["pdf"]).pick_file()
-                {
-                    self.open_file(p, &ctx);
-                }
-                ui.separator();
-                if self.total_pages > 0 {
-                    ui.label(format!("{} Pages", self.total_pages));
-                    if ui.button("Reset View").clicked() {
-                        self.reset_view();
-                    }
-                    ui.separator();
-                    ui.label(format!("Zoom: {:.1}%", self.view.zoom * 100.0));
-                    if let Some(name) = &self.pdf_name {
-                        ui.separator();
-                        ui.label(name);
-                    }
-                    ui.separator();
 
-                    // Redact Brush toggle
-                    let active_before = self.redaction_manager.is_active;
-                    ui.toggle_value(&mut self.redaction_manager.is_active, "🔏 Redact Brush");
-                    if self.redaction_manager.is_active && !active_before {
-                        self.selection_manager.clear();
-                        self.selection_manager.is_tagging_brush_active = false;
-                        self.caliper_tool.is_active = false;
-                    }
-
-                    ui.separator();
-
-                    // Tagging Brush toggle
-                    let tagging_before = self.selection_manager.is_tagging_brush_active;
-                    ui.toggle_value(&mut self.selection_manager.is_tagging_brush_active, "🏷️ Tagging Brush");
-                    if self.selection_manager.is_tagging_brush_active && !tagging_before {
-                        self.selection_manager.clear();
-                        self.redaction_manager.is_active = false;
-                        self.caliper_tool.is_active = false;
-                    }
-
-                    ui.separator();
-
-                    // Caliper Brush toggle
-                    let caliper_before = self.caliper_tool.is_active;
-                    ui.toggle_value(&mut self.caliper_tool.is_active, "📏 Caliper Brush");
-                    if self.caliper_tool.is_active && !caliper_before {
-                        self.selection_manager.clear();
-                        self.redaction_manager.is_active = false;
-                        self.selection_manager.is_tagging_brush_active = false;
-                    }
-
-                    ui.separator();
-
-                    // Arlington Inspector toggle
-                    ui.toggle_value(&mut self.show_inspector, "🔍 Inspector");
-
-                    ui.separator();
-                    if ui.button("💾 Export PDF").clicked() {
-                        self.show_export_wizard = true;
-                    }
-                }
-            });
-        });
-    }
-
-    fn render_compliance_checkboxes(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Export & Compliance Options");
-        ui.add_space(5.0);
-
-        ui.checkbox(&mut self.export_upgrade_pdf20, "✨ Upgrade to PDF 2.0 (ISO 32000-2)");
-        ui.checkbox(&mut self.export_linearize, "⚡ Hint Table Linearization (Fast Web View)");
-        ui.checkbox(&mut self.export_vacuum, "🧹 Vacuum Pass (Remove orphan/unreachable objects)");
-        ui.checkbox(&mut self.export_compress, "📦 Flate-Compress Content Streams");
-        ui.checkbox(&mut self.export_apply_tags, "🏷️ Compile & Inject USTRegistry Tags (PDF/UA-2)");
-        ui.checkbox(&mut self.export_burn_redactions, "🔏 Burn Physical Redactions (Atomic Stream Sanitization)");
-    }
-
-    fn render_signature_section(&mut self, ui: &mut egui::Ui) {
-        ui.separator();
-        ui.heading("🔏 Digital Signature (PAdES)");
-        ui.add_space(5.0);
-
-        ui.horizontal(|ui| {
-            if ui.button("📁 Select Certificate (.pfx/.p12)").clicked() {
-                if let Some(p) = rfd::FileDialog::new()
-                    .add_filter("PKCS#12", &["pfx", "p12"])
-                    .pick_file()
-                {
-                    self.cert_path = Some(p);
-                }
-            }
-            if let Some(path) = &self.cert_path {
-                ui.label(path.file_name().unwrap_or(&path.as_os_str()).to_string_lossy());
-            } else {
-                ui.label("No certificate loaded");
-            }
-        });
-
-        if self.cert_path.is_some() {
-            ui.horizontal(|ui| {
-                ui.label("Password:");
-                ui.add(egui::TextEdit::singleline(&mut self.cert_password).password(true));
-            });
-
-            ui.horizontal(|ui| {
-                if ui.toggle_value(&mut self.is_placing_signature, "🎯 Place Signature Field").clicked() {
-                    if self.is_placing_signature {
-                        self.show_export_wizard = false;
-                    }
-                }
-                if let Some((page, rect)) = &self.signature_position {
-                    ui.label(format!("Placed: Page {}, Pos ({:.1}, {:.1})", page + 1, rect.min.x, rect.min.y));
-                } else {
-                    ui.label("Not placed yet");
-                }
-            });
-        }
-    }
-
-    fn render_draft_management_section(&mut self, ui: &mut egui::Ui) {
-        ui.separator();
-        ui.heading("Draft Management");
-        ui.add_space(5.0);
-
-        ui.horizontal(|ui| {
-            if ui.button("📥 Save UST Draft JSON").clicked() {
-                if let Some(p) = rfd::FileDialog::new()
-                    .add_filter("JSON", &["json"])
-                    .set_file_name("ust_draft.json")
-                    .save_file()
-                {
-                    if let Ok(json_str) = serde_json::to_string_pretty(&self.ust_registry) {
-                        if std::fs::write(&p, json_str).is_ok() {
-                            self.error = Some(format!("Draft JSON saved to {:?}", p.file_name().unwrap_or(&p.as_os_str())));
-                        } else {
-                            self.error = Some("Failed to write draft JSON file".to_string());
-                        }
-                    }
-                }
-            }
-
-            if ui.button("📤 Load UST Draft JSON").clicked() {
-                if let Some(p) = rfd::FileDialog::new().add_filter("JSON", &["json"]).pick_file() {
-                    if let Ok(bytes) = std::fs::read(&p) {
-                        if let Ok(draft) = serde_json::from_slice::<USTRegistry>(&bytes) {
-                            self.ust_registry = draft;
-                            self.error = Some("Draft JSON loaded successfully".to_string());
-                        } else {
-                            self.error = Some("Invalid draft JSON structure".to_string());
-                        }
-                    }
-                }
-            }
-        });
-    }
-
-    fn handle_confirm_export_pdf(&mut self) -> bool {
-        if let Some(p) = rfd::FileDialog::new()
-            .add_filter("PDF", &["pdf"])
-            .set_file_name("output_compliant.pdf")
-            .save_file()
-        {
-            if self.export_burn_redactions {
-                let mut keys: Vec<usize> = self.raw_texts.keys().cloned().collect();
-                keys.sort();
-                for page_idx in keys {
-                    if let (Some(raw_text), Some(spans)) = (
-                        self.raw_texts.get(&page_idx).cloned(),
-                        self.page_spans.get_mut(&page_idx),
-                    ) {
-                        let sanitized = self.redaction_manager.perform_physical_redaction(
-                            page_idx,
-                            &raw_text,
-                            spans,
-                        );
-                        self.raw_texts.insert(page_idx, sanitized);
-                    }
-                }
-                self.redaction_manager.clear();
-            }
-
-            let sig_pos = self.signature_position.map(|(idx, r)| {
-                (idx, [r.min.x, r.min.y, r.max.x, r.max.y])
-            });
-            let _ = self.tx_worker.send(WorkerRequest::Save {
-                path: p,
-                compress: self.export_compress,
-                linearize: self.export_linearize,
-                vacuum: self.export_vacuum,
-                upgrade_pdf20: self.export_upgrade_pdf20,
-                redaction_zones: self.redaction_manager.zones.clone(),
-                cert_path: self.cert_path.clone(),
-                cert_password: self.cert_password.clone(),
-                signature_position: sig_pos,
-            });
-            true
-        } else {
-            false
-        }
-    }
 
     fn show_export_wizard_window(&mut self, ctx: &egui::Context) {
-        let mut open = self.show_export_wizard;
-        let mut should_close = false;
-        egui::Window::new("💾 Production Studio Export Wizard")
-            .open(&mut open)
-            .resizable(false)
-            .default_width(360.0)
-            .show(ctx, |ui| {
-                self.render_compliance_checkboxes(ui);
-                self.render_signature_section(ui);
-                self.render_draft_management_section(ui);
-
-                ui.separator();
-
-                ui.vertical_centered_justified(|ui| {
-                    if ui.button("🚀 Confirm & Export PDF").clicked() {
-                        should_close = self.handle_confirm_export_pdf();
-                    }
-                });
-            });
-        self.show_export_wizard = open && !should_close;
+        crate::export_wizard::ExportWizard::show(self, ctx);
     }
 }
 
 impl eframe::App for FerruginousApp {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) { // RR-15 Limit: GUI - Main application UI shell layout routing layout panels and windows
+        ui.ctx().set_visuals(egui::Visuals::light());
         ui.ctx().global_style_mut(|style| {
             style.visuals.selection.stroke = egui::Stroke::NONE;
+            style.visuals.widgets.active.bg_stroke = egui::Stroke::NONE;
+            style.visuals.widgets.hovered.bg_stroke = egui::Stroke::NONE;
+            style.visuals.widgets.inactive.bg_stroke = egui::Stroke::NONE;
+            style.visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, egui::Color32::from_gray(210));
         });
 
-        self.show_top_bar(ui);
+        let entire_rect = ui.max_rect();
+        ui.painter().rect_filled(entire_rect, 0.0, ui.visuals().window_fill);
 
-        if self.total_pages > 0 {
-            egui::Panel::right("thumbnail_sidebar")
-                .resizable(true)
-                .default_size(200.0)
-                .size_range(160.0..=360.0)
-                .show_inside(ui, |ui| {
-                    ui.vertical_centered(|ui| {
-                        ui.add_space(8.0);
-                        ui.heading("📖 Pages");
-                        ui.add_space(4.0);
-                    });
-                    ui.separator();
+        let ctx = ui.ctx().clone();
 
-                    egui::ScrollArea::vertical()
-                        .id_salt("thumbnail_scroll_area")
-                        .show(ui, |ui| {
-                            for i in 0..self.total_pages {
-                                if let Some(layout) = self.page_layouts.get(i) {
-                                    let size = layout.rect.size();
-                                    let aspect_ratio = size.y / size.x;
-                                    let is_visible = self.view.visible_pages.contains(&i);
-                                    let is_selected = self.selected_pages.contains(&i);
-
-                                    let card_width = 120.0;
-                                    let card_height = card_width * aspect_ratio;
-
-                                    ui.vertical_centered(|ui| {
-                                        ui.add_space(8.0);
-
-                                        let frame_bg = if is_selected {
-                                            egui::Color32::from_rgb(224, 242, 254) // Premium light selection blue tint
-                                        } else if is_visible {
-                                            egui::Color32::from_rgb(240, 246, 255)
-                                        } else {
-                                            egui::Color32::WHITE
-                                        };
-                                        let frame_stroke = if is_selected {
-                                            egui::Stroke::new(2.0, egui::Color32::from_rgb(14, 165, 233)) // Vibrant selection blue
-                                        } else if is_visible {
-                                            egui::Stroke::new(1.5, egui::Color32::from_rgb(0, 120, 215))
-                                        } else {
-                                            egui::Stroke::new(1.0, egui::Color32::from_rgb(210, 215, 222))
-                                        };
-
-                                        let (rect, response) = ui.allocate_at_least(
-                                            egui::vec2(140.0, card_height + 34.0),
-                                            egui::Sense::click(),
-                                        );
-
-                                        if response.clicked() {
-                                            let shift = ui.input(|ins| ins.modifiers.shift);
-                                            let cmd = ui.input(|ins| ins.modifiers.command || ins.modifiers.ctrl);
-
-                                            if shift {
-                                                if let Some(start) = self.last_selected_page {
-                                                    self.selected_pages.clear();
-                                                    let min = start.min(i);
-                                                    let max = start.max(i);
-                                                    for page_idx in min..=max {
-                                                        self.selected_pages.insert(page_idx);
-                                                    }
-                                                } else {
-                                                    self.selected_pages.clear();
-                                                    self.selected_pages.insert(i);
-                                                    self.last_selected_page = Some(i);
-                                                }
-                                            } else if cmd {
-                                                if self.selected_pages.contains(&i) {
-                                                    self.selected_pages.remove(&i);
-                                                } else {
-                                                    self.selected_pages.insert(i);
-                                                }
-                                                self.last_selected_page = Some(i);
-                                            } else {
-                                                self.selected_pages.clear();
-                                                self.selected_pages.insert(i);
-                                                self.last_selected_page = Some(i);
-                                                self.view.scroll_to_page(i, &self.page_layouts);
-                                            }
-                                        }
-
-                                        let hover_stroke = if response.hovered() && !is_selected && !is_visible {
-                                            egui::Stroke::new(1.5, egui::Color32::from_rgb(100, 160, 240))
-                                        } else {
-                                            frame_stroke
-                                        };
-
-                                        ui.painter().rect(
-                                            rect,
-                                            6.0,
-                                            frame_bg,
-                                            hover_stroke,
-                                            egui::StrokeKind::Outside,
-                                        );
-
-                                        // Draw mini simulated page preview
-                                        let mini_page_width = 90.0;
-                                        let mini_page_height = mini_page_width * aspect_ratio;
-                                        let mini_page_rect = egui::Rect::from_center_size(
-                                            rect.center() - egui::vec2(0.0, 10.0),
-                                            egui::vec2(mini_page_width, mini_page_height)
-                                        );
-
-                                        ui.painter().rect_filled(
-                                            mini_page_rect,
-                                            2.0,
-                                            egui::Color32::WHITE
-                                        );
-                                        ui.painter().rect_stroke(
-                                            mini_page_rect,
-                                            2.0,
-                                            egui::Stroke::new(1.0, egui::Color32::from_rgb(230, 233, 238)),
-                                            egui::StrokeKind::Inside
-                                        );
-
-                                        // Draw simulated lines on the mini page
-                                        let mut line_y = mini_page_rect.min.y + 6.0;
-                                        let step_y = 5.0;
-                                        let line_color = egui::Color32::from_rgb(230, 233, 238);
-                                        while line_y < mini_page_rect.max.y - 6.0 {
-                                            ui.painter().line_segment(
-                                                [
-                                                    egui::pos2(mini_page_rect.min.x + 6.0, line_y),
-                                                    egui::pos2(mini_page_rect.max.x - 6.0, line_y)
-                                                ],
-                                                egui::Stroke::new(2.0, line_color)
-                                            );
-                                            line_y += step_y;
-                                        }
-
-                                        let font_id = egui::FontId::proportional(11.0);
-                                        let text_color = if is_selected {
-                                            egui::Color32::from_rgb(3, 105, 161)
-                                        } else if is_visible {
-                                            egui::Color32::from_rgb(0, 120, 215)
-                                        } else {
-                                            egui::Color32::from_rgb(80, 90, 105)
-                                        };
-                                        ui.painter().text(
-                                            egui::pos2(rect.center().x, rect.max.y - 12.0),
-                                            egui::Align2::CENTER_CENTER,
-                                            format!("Page {}", i + 1),
-                                            font_id,
-                                            text_color,
-                                        );
-
-                                        if is_visible {
-                                            let dot_center = egui::pos2(rect.right() - 10.0, rect.top() + 10.0);
-                                            ui.painter().circle_filled(
-                                                dot_center,
-                                                4.0,
-                                                egui::Color32::from_rgb(34, 197, 94)
-                                            );
-                                        }
-                                    });
+        // Render panels from startup (empty state if no document loaded)
+        // 1. Context Panel (260px width, left side) - Rendered first to prevent coordinate alignment issues on resize boundary
+        egui::SidePanel::left("context_panel")
+            .resizable(true)
+            .default_width(260.0)
+            .size_range(200.0..=360.0)
+            .show_inside(ui, |ui| {
+                egui::Frame::NONE
+                    .inner_margin(egui::Margin::same(12))
+                    .show(ui, |ui| {
+                        ui.vertical(|ui| {
+                            ui.label(egui::RichText::new("File Information").strong().size(13.0));
+                            ui.add_space(6.0);
+                            ui.horizontal(|ui| {
+                                ui.label(egui::RichText::new("Name:").weak());
+                                if let Some(name) = &self.pdf_name {
+                                    ui.label(egui::RichText::new(name).strong());
+                                } else {
+                                    ui.label(egui::RichText::new("(No document loaded)").weak());
                                 }
-                            }
-                            ui.add_space(16.0);
+                            });
+                            ui.add_space(10.0);
+                            ui.separator();
+                            ui.add_space(10.0);
+                            self.sidebar_panel.show(ui, &mut self.ust_registry, &self.tx_worker);
+                        });
+                    });
+            });
+
+        // 2. Arlington Dictionary Inspector (Left side, next to context panel)
+        if self.show_inspector {
+            let selected_tag = self.ust_registry.selected_node_id
+                .and_then(|id| {
+                    if let Some(ref root) = self.ust_registry.root {
+                        crate::sidebar::USTRegistry::find_node_by_id_recursive(root, id).map(|n| n.tag.as_str())
+                    } else {
+                        None
+                    }
+                });
+            egui::SidePanel::left("inspector_panel")
+                .resizable(true)
+                .default_width(280.0)
+                .size_range(200.0..=450.0)
+                .show_inside(ui, |ui| {
+                    egui::Frame::NONE
+                        .inner_margin(egui::Margin::same(12))
+                        .show(ui, |ui| {
+                            self.arlington_inspector.show(ui, selected_tag);
                         });
                 });
         }
+
+        // 3. Icon Bar (Right-most, 50px width)
+        egui::SidePanel::right("icon_bar")
+            .resizable(false)
+            .default_width(50.0)
+            .show_inside(ui, |ui| {
+                ui.vertical_centered(|ui| {
+                    ui.add_space(8.0);
+                    let load_btn = egui::Button::new(egui::RichText::new("\u{e247}").size(16.0))
+                        .min_size(egui::vec2(36.0, 36.0));
+                    if ui.add(load_btn).on_hover_text("Load PDF").clicked()
+                        && let Some(p) = rfd::FileDialog::new().add_filter("PDF", &["pdf"]).pick_file()
+                    {
+                        self.open_file(p, &ctx);
+                    }
+                    ui.separator();
+
+                    // Disable editing tools if no document loaded
+                    let has_doc = self.total_pages > 0;
+                    ui.add_enabled_ui(has_doc, |ui| {
+                        // Redact Brush
+                        let redact_is_active = self.redaction_manager.is_active;
+                        let redact_btn = egui::Button::new(egui::RichText::new("\u{e28f}").size(16.0))
+                            .min_size(egui::vec2(36.0, 36.0))
+                            .selected(redact_is_active);
+                        if ui.add(redact_btn).on_hover_text("Redact Brush").clicked() {
+                            self.redaction_manager.is_active = !redact_is_active;
+                            if self.redaction_manager.is_active {
+                                self.selection_manager.clear();
+                                self.selection_manager.is_tagging_brush_active = false;
+                                self.caliper_tool.is_active = false;
+                            }
+                        }
+
+                        // Tagging Brush
+                        let tagging_is_active = self.selection_manager.is_tagging_brush_active;
+                        let tagging_btn = egui::Button::new(egui::RichText::new("\u{e17f}").size(16.0))
+                            .min_size(egui::vec2(36.0, 36.0))
+                            .selected(tagging_is_active);
+                        if ui.add(tagging_btn).on_hover_text("Tagging Brush").clicked() {
+                            self.selection_manager.is_tagging_brush_active = !tagging_is_active;
+                            if self.selection_manager.is_tagging_brush_active {
+                                self.selection_manager.clear();
+                                self.redaction_manager.is_active = false;
+                                self.caliper_tool.is_active = false;
+                            }
+                        }
+
+                        // Caliper Brush
+                        let caliper_is_active = self.caliper_tool.is_active;
+                        let caliper_btn = egui::Button::new(egui::RichText::new("\u{e14b}").size(16.0))
+                            .min_size(egui::vec2(36.0, 36.0))
+                            .selected(caliper_is_active);
+                        if ui.add(caliper_btn).on_hover_text("Caliper Brush").clicked() {
+                            self.caliper_tool.is_active = !caliper_is_active;
+                            if self.caliper_tool.is_active {
+                                self.selection_manager.clear();
+                                self.redaction_manager.is_active = false;
+                                self.selection_manager.is_tagging_brush_active = false;
+                            }
+                        }
+
+                        ui.separator();
+                        let inspector_btn = egui::Button::new(egui::RichText::new("\u{e151}").size(16.0))
+                            .min_size(egui::vec2(36.0, 36.0))
+                            .selected(self.show_inspector);
+                        if ui.add(inspector_btn).on_hover_text("Inspector").clicked() {
+                            self.show_inspector = !self.show_inspector;
+                        }
+
+                        ui.separator();
+                        let export_btn = egui::Button::new(egui::RichText::new("\u{e14d}").size(16.0))
+                            .min_size(egui::vec2(36.0, 36.0));
+                        if ui.add(export_btn).on_hover_text("Export PDF").clicked() {
+                            self.show_export_wizard = true;
+                        }
+                    });
+                });
+            });
+
+        // 4. Thumbnails Panel (200px width, inner-right)
+        crate::thumbnail_sidebar::ThumbnailSidebar::show(self, ui, frame);
+
+        // 5. Status Bar (28px height, bottom)
+        egui::TopBottomPanel::bottom("status_bar")
+            .default_height(28.0)
+            .resizable(false)
+            .show_inside(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Status: Ready");
+                    ui.separator();
+                    if self.total_pages > 0 {
+                        let current_page = self.view.visible_pages.first().cloned().unwrap_or(0);
+                        ui.label(format!("Page {} of {}", current_page + 1, self.total_pages));
+                    } else {
+                        ui.label("No document loaded");
+                    }
+                    ui.separator();
+                    if self.show_reading_order {
+                        ui.label("Reading Order Overlay: Enabled");
+                    } else {
+                        ui.label("Reading Order Overlay: Disabled");
+                    }
+                });
+            });
 
         self.update_vello(ui, frame);
 
         if self.show_export_wizard {
             self.show_export_wizard_window(ui.ctx());
         }
+
+        // Show Command Palette window overlay
+        crate::command_palette::CommandPalette::show(self, ui.ctx());
 
         // Show interactive Create Semantic Tag popup dialog on visual tag selector brush highlights
         if let Some(req) = self.selection_manager.pending_tag_request.clone() {

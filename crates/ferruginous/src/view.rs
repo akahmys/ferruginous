@@ -54,12 +54,20 @@ impl PDFView {
         active_redaction_drag: &Option<(usize, egui::Rect)>,
         structural_highlight: &Option<(usize, egui::Rect)>,
         signature_highlight: &Option<(usize, egui::Rect)>,
+        ust_registry: &crate::sidebar::USTRegistry,
+        show_reading_order: bool,
     ) {
+        // Completely disable egui's default focus ring/outline/selection stroke before allocating any rects to prevent flashing orange/red borders
+        let visuals = ui.visuals_mut();
+        visuals.selection.stroke = egui::Stroke::NONE;
+        visuals.widgets.active.bg_stroke = egui::Stroke::NONE;
+        visuals.widgets.hovered.bg_stroke = egui::Stroke::NONE;
+        visuals.widgets.inactive.bg_stroke = egui::Stroke::NONE;
+        visuals.widgets.noninteractive.bg_stroke = egui::Stroke::NONE;
+
         let response = ui.allocate_rect(viewport_rect, egui::Sense::drag());
         self.handle_input(ui, &response);
-
-        // Completely disable egui's default focus ring/outline to prevent flashing orange/red borders during interactions or page switches
-        ui.visuals_mut().selection.stroke = egui::Stroke::NONE;
+        self.clamp_pan(viewport_rect, layouts);
 
         // 1. Workspace background (Premium Light Gray Theme matching sidebars)
         let bg_color = egui::Color32::from_rgb(235, 237, 240); // Clean, elegant light-slate gray matching the light theme
@@ -168,6 +176,20 @@ impl PDFView {
                 self.draw_active_redaction_drag(ui, layout.index, active_redaction_drag);
                 self.draw_structural_highlight(ui, layout.index, structural_highlight);
                 self.draw_signature_highlight(ui, layout.index, signature_highlight);
+
+                if show_reading_order {
+                    if let Some(ref root) = ust_registry.root {
+                        self.draw_semantic_borders(
+                            ui,
+                            page_rect,
+                            self.zoom,
+                            layout.rect.height(),
+                            root,
+                            ust_registry.selected_node_id,
+                        );
+                        self.draw_reading_order_bar(ui, page_rect, root);
+                    }
+                }
             }
         }
 
@@ -324,5 +346,138 @@ impl PDFView {
         if response.dragged() {
             self.pan += response.drag_delta();
         }
+    }
+
+    fn draw_semantic_borders(
+        &self,
+        ui: &mut egui::Ui,
+        page_rect: egui::Rect,
+        zoom: f32,
+        unscaled_h: f32,
+        node: &crate::sidebar::USTNode,
+        selected_id: Option<usize>,
+    ) {
+        if let Some(rect) = node.rect {
+            let min_screen = crate::interaction::SelectionManager::pdf_to_screen(
+                page_rect,
+                zoom,
+                unscaled_h,
+                egui::pos2(rect[0], rect[3]),
+            );
+            let max_screen = crate::interaction::SelectionManager::pdf_to_screen(
+                page_rect,
+                zoom,
+                unscaled_h,
+                egui::pos2(rect[2], rect[1]),
+            );
+            let element_rect = egui::Rect::from_min_max(min_screen, max_screen);
+
+            let color = match node.tag.as_str() {
+                "H1" | "H2" | "H3" => egui::Color32::from_rgb(0, 120, 215), // Blue
+                "P" => egui::Color32::from_rgb(34, 197, 94), // Green
+                "Figure" => egui::Color32::from_rgb(168, 85, 247), // Purple
+                "Table" => egui::Color32::from_rgb(249, 115, 22), // Orange
+                _ => egui::Color32::from_gray(120),
+            };
+
+            let stroke = if Some(node.id) == selected_id {
+                egui::Stroke::new(2.0, egui::Color32::from_rgb(240, 165, 0)) // Amber selection
+            } else {
+                egui::Stroke::new(1.0, color)
+            };
+
+            ui.painter().rect_stroke(element_rect, 2.0, stroke, egui::StrokeKind::Outside);
+        }
+
+        for child in &node.children {
+            self.draw_semantic_borders(ui, page_rect, zoom, unscaled_h, child, selected_id);
+        }
+    }
+
+    fn collect_nodes_for_reading_order(node: &crate::sidebar::USTNode, list: &mut Vec<(String, egui::Color32)>) {
+        if node.rect.is_some() {
+            let color = match node.tag.as_str() {
+                "H1" | "H2" | "H3" => egui::Color32::from_rgb(0, 120, 215), // Blue
+                "P" => egui::Color32::from_rgb(34, 197, 94), // Green
+                "Figure" => egui::Color32::from_rgb(168, 85, 247), // Purple
+                "Table" => egui::Color32::from_rgb(249, 115, 22), // Orange
+                _ => egui::Color32::from_gray(120),
+            };
+            list.push((node.tag.clone(), color));
+        }
+        for child in &node.children {
+            Self::collect_nodes_for_reading_order(child, list);
+        }
+    }
+
+    fn draw_reading_order_bar(&self, ui: &mut egui::Ui, page_rect: egui::Rect, root_node: &crate::sidebar::USTNode) {
+        let mut list = Vec::new();
+        Self::collect_nodes_for_reading_order(root_node, &mut list);
+        
+        if list.is_empty() {
+            return;
+        }
+
+        let bar_height = 24.0;
+        let bar_rect = egui::Rect::from_min_size(
+            egui::pos2(page_rect.left(), page_rect.bottom() + 8.0),
+            egui::vec2(page_rect.width(), bar_height)
+        );
+
+        ui.painter().rect_filled(bar_rect, 4.0, egui::Color32::from_gray(40));
+
+        let mut x_offset = bar_rect.left() + 4.0;
+        for (i, (tag, color)) in list.iter().enumerate() {
+            let label = format!("{}: {}", i + 1, tag);
+            let text_gal = ui.painter().layout_no_wrap(label.clone(), egui::FontId::proportional(10.0), egui::Color32::WHITE);
+            let block_width = text_gal.size().x + 12.0;
+
+            if x_offset + block_width > bar_rect.right() - 4.0 {
+                break;
+            }
+
+            let block_rect = egui::Rect::from_min_size(
+                egui::pos2(x_offset, bar_rect.top() + 3.0),
+                egui::vec2(block_width, bar_height - 6.0)
+            );
+
+            ui.painter().rect_filled(block_rect, 2.0, *color);
+            ui.painter().text(
+                block_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                &label,
+                egui::FontId::proportional(10.0),
+                egui::Color32::WHITE
+            );
+
+            x_offset += block_width + 6.0;
+        }
+    }
+
+    pub fn clamp_pan(&mut self, viewport_rect: egui::Rect, layouts: &[PageLayout]) {
+        if layouts.is_empty() {
+            return;
+        }
+        let mut min_x = f32::MAX;
+        let mut max_x = f32::MIN;
+        let mut min_y = f32::MAX;
+        let mut max_y = f32::MIN;
+        for layout in layouts {
+            min_x = min_x.min(layout.rect.min.x);
+            max_x = max_x.max(layout.rect.max.x);
+            min_y = min_y.min(layout.rect.min.y);
+            max_y = max_y.max(layout.rect.max.y);
+        }
+
+        let origin_no_pan = egui::pos2(viewport_rect.center().x, viewport_rect.min.y + 20.0);
+        let min_overlap = 50.0f32;
+
+        let min_pan_x = viewport_rect.min.x + min_overlap - origin_no_pan.x - max_x * self.zoom;
+        let max_pan_x = viewport_rect.max.x - min_overlap - origin_no_pan.x - min_x * self.zoom;
+        self.pan.x = self.pan.x.clamp(min_pan_x, max_pan_x);
+
+        let min_pan_y = viewport_rect.min.y + min_overlap - origin_no_pan.y - max_y * self.zoom;
+        let max_pan_y = viewport_rect.max.y - min_overlap - origin_no_pan.y - min_y * self.zoom;
+        self.pan.y = self.pan.y.clamp(min_pan_y, max_pan_y);
     }
 }

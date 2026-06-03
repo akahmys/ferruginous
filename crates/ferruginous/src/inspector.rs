@@ -107,6 +107,7 @@ impl ArlingtonInspectorPanel {
         self.active_object_name = format!("Dictionary: <{}>", tag);
 
         ui.vertical(|ui| {
+            ui.style_mut().wrap = Some(true);
             ui.heading("🔍 Arlington Dictionary Inspector");
             ui.add_space(5.0);
 
@@ -133,21 +134,56 @@ impl ArlingtonInspectorPanel {
                         continue;
                     }
 
-                    ui.group(|ui| {
-                        ui.horizontal(|ui| {
-                            ui.colored_label(egui::Color32::from_rgb(255, 128, 0), &entry.key);
-                            ui.label(":");
-                            ui.colored_label(egui::Color32::LIGHT_GRAY, format!("{}  =>  ", entry.val_type));
-                            ui.monospace(&entry.raw_value);
+                    let frame = egui::Frame::NONE
+                        .fill(ui.style().visuals.extreme_bg_color)
+                        .stroke(egui::Stroke::new(1.0, ui.style().visuals.widgets.noninteractive.bg_stroke.color))
+                        .corner_radius(6.0)
+                        .inner_margin(egui::Margin::same(8));
+
+                    frame.show(ui, |ui| {
+                        ui.vertical(|ui| {
+                            ui.horizontal(|ui| {
+                                // Key name in bold primary color
+                                ui.colored_label(egui::Color32::from_rgb(230, 90, 0), egui::RichText::new(&entry.key).strong());
+                                
+                                // Type badge
+                                let badge_color = match entry.val_type.as_str() {
+                                    "Name" => egui::Color32::from_rgb(0, 120, 200),
+                                    "Dictionary" => egui::Color32::from_rgb(120, 50, 180),
+                                    "String" => egui::Color32::from_rgb(0, 150, 80),
+                                    _ => egui::Color32::from_rgb(100, 100, 100),
+                                };
+                                let badge_frame = egui::Frame::NONE
+                                    .fill(badge_color.linear_multiply(0.1))
+                                    .stroke(egui::Stroke::new(1.0, badge_color))
+                                    .corner_radius(3.0)
+                                    .inner_margin(egui::Margin::symmetric(4, 2));
+                                badge_frame.show(ui, |ui| {
+                                    ui.colored_label(badge_color, egui::RichText::new(&entry.val_type).small().strong());
+                                });
+
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    ui.monospace(egui::RichText::new(&entry.raw_value).strong());
+                                });
+                            });
+
+                            ui.add_space(4.0);
+                            ui.label(egui::RichText::new(entry.compliance_rule).small().weak());
+
+                            if let Some(warn) = entry.warning {
+                                ui.add_space(6.0);
+                                let warn_frame = egui::Frame::NONE
+                                    .fill(egui::Color32::from_rgba_unmultiplied(255, 200, 200, 30))
+                                    .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(255, 80, 80)))
+                                    .corner_radius(4.0)
+                                    .inner_margin(egui::Margin::same(6));
+                                warn_frame.show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.colored_label(egui::Color32::from_rgb(255, 80, 80), egui::RichText::new(warn).small());
+                                    });
+                                });
+                            }
                         });
-
-                        ui.add_space(2.0);
-                        ui.small(entry.compliance_rule);
-
-                        if let Some(warn) = entry.warning {
-                            ui.add_space(3.0);
-                            ui.colored_label(egui::Color32::from_rgb(255, 80, 80), warn);
-                        }
                     });
                     ui.add_space(5.0);
                 }

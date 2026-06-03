@@ -11,9 +11,19 @@ struct ViewportTexture {
     height: u32,
 }
 
+struct ThumbnailTexture {
+    _texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    egui_texture: egui::TextureId,
+    width: u32,
+    height: u32,
+}
+
 pub struct VelloRenderer {
     renderer: Renderer,
+    thumb_renderer: Renderer,
     viewport_texture: Option<ViewportTexture>,
+    thumbnail_textures: std::collections::BTreeMap<usize, ThumbnailTexture>,
 }
 
 impl VelloRenderer {
@@ -29,9 +39,22 @@ impl VelloRenderer {
         )
         .ok()?;
 
+        let thumb_renderer = Renderer::new(
+            device,
+            RendererOptions {
+                use_cpu: false,
+                antialiasing_support: vello::AaSupport::all(),
+                num_init_threads: None,
+                pipeline_cache: None,
+            },
+        )
+        .ok()?;
+
         Some(Self {
             renderer,
+            thumb_renderer,
             viewport_texture: None,
+            thumbnail_textures: std::collections::BTreeMap::new(),
         })
     }
 
@@ -166,5 +189,101 @@ impl VelloRenderer {
             width,
             height,
         });
+    }
+
+    pub fn render_thumbnail(
+        &mut self,
+        render_state: &RenderState,
+        page_index: usize,
+        scene: &Scene,
+        unscaled_size: egui::Vec2,
+        thumb_width: u32,
+    ) -> Option<egui::TextureId> {
+        let aspect = unscaled_size.y / unscaled_size.x;
+        let thumb_height = (thumb_width as f32 * aspect).round() as u32;
+        let thumb_height = thumb_height.clamp(1, 2048);
+        let thumb_width = thumb_width.clamp(1, 2048);
+
+        let needs_recreate = if let Some(tex) = self.thumbnail_textures.get(&page_index) {
+            tex.width != thumb_width || tex.height != thumb_height
+        } else {
+            true
+        };
+
+        if needs_recreate {
+            let device = &render_state.device;
+            let texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some(&format!("Vello Target Thumbnail Texture {}", page_index)),
+                size: wgpu::Extent3d { width: thumb_width, height: thumb_height, depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            });
+            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+            if let Some(old_tex) = self.thumbnail_textures.remove(&page_index) {
+                render_state.renderer.write().free_texture(&old_tex.egui_texture);
+            }
+            let tid = render_state.renderer.write().register_native_texture(
+                device,
+                &view,
+                wgpu::FilterMode::Linear,
+            );
+            self.thumbnail_textures.insert(page_index, ThumbnailTexture {
+                _texture: texture,
+                view,
+                egui_texture: tid,
+                width: thumb_width,
+                height: thumb_height,
+            });
+
+            // Render page scene onto thumbnail texture
+            let tex = self.thumbnail_textures.get(&page_index)?;
+            let mut thumb_scene = Scene::new();
+            let rect = kurbo::Rect::new(0.0, 0.0, thumb_width as f64, thumb_height as f64);
+            thumb_scene.fill(
+                vello::peniko::Fill::NonZero,
+                kurbo::Affine::IDENTITY,
+                vello::peniko::color::palette::css::WHITE,
+                None,
+                &rect,
+            );
+
+            let scale = (thumb_width as f64 / unscaled_size.x as f64) / 2.0;
+            let transform = kurbo::Affine::scale(scale);
+            thumb_scene.append(scene, Some(transform));
+
+            let queue = &render_state.queue;
+            let _ = self.thumb_renderer.render_to_texture(
+                device,
+                queue,
+                &thumb_scene,
+                &tex.view,
+                &RenderParams {
+                    base_color: vello::peniko::Color::WHITE,
+                    width: tex.width,
+                    height: tex.height,
+                    antialiasing_method: AaConfig::Msaa16,
+                },
+            );
+        }
+
+        let tex = self.thumbnail_textures.get(&page_index)?;
+        Some(tex.egui_texture)
+    }
+
+    pub fn invalidate_thumbnail(&mut self, render_state: &RenderState, page_index: usize) {
+        if let Some(old_tex) = self.thumbnail_textures.remove(&page_index) {
+            render_state.renderer.write().free_texture(&old_tex.egui_texture);
+        }
+    }
+
+    pub fn clear_thumbnails(&mut self, render_state: &RenderState) {
+        for old_tex in self.thumbnail_textures.values() {
+            render_state.renderer.write().free_texture(&old_tex.egui_texture);
+        }
+        self.thumbnail_textures.clear();
     }
 }

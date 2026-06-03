@@ -48,24 +48,31 @@ pub enum WorkerResponse {
     Error(String),
 }
 
-pub fn run_worker(rx: Receiver<WorkerRequest>, tx: Sender<WorkerResponse>) {
+pub fn run_worker(rx: Receiver<WorkerRequest>, tx: Sender<WorkerResponse>, ctx: egui::Context) {
     let mut current_doc: Option<PdfDocument> = None;
     let system_fonts = VelloBackend::load_system_fonts();
 
     for request in rx {
         match request {
-            WorkerRequest::Open { data, name } => current_doc = handle_open(data, name, &tx),
+            WorkerRequest::Open { data, name } => {
+                current_doc = handle_open(data, name, &tx);
+                ctx.request_repaint();
+            }
             WorkerRequest::RenderPage { index, scale } => {
-                handle_render(&current_doc, index, scale, &tx, Arc::clone(&system_fonts))
+                handle_render(&current_doc, index, scale, &tx, Arc::clone(&system_fonts));
+                ctx.request_repaint();
             }
             WorkerRequest::UpdateNode { handle_id, tag, alt_text } => {
                 handle_update_node(&mut current_doc, handle_id, tag, alt_text, &tx);
+                ctx.request_repaint();
             }
             WorkerRequest::Save { path, compress, linearize, vacuum, upgrade_pdf20, redaction_zones, cert_path, cert_password, signature_position } => {
                 handle_save(&current_doc, path, compress, linearize, vacuum, upgrade_pdf20, redaction_zones, cert_path, cert_password, signature_position, &tx);
+                ctx.request_repaint();
             }
             WorkerRequest::Audit => {
                 handle_audit(&current_doc, &tx);
+                ctx.request_repaint();
             }
         }
     }

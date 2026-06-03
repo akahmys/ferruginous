@@ -305,7 +305,7 @@ fn update_alt_text(node: &mut USTNode, id: usize, new_alt: Option<String>) -> bo
 }
 
 pub struct SidebarPanel {
-    pub active_tab: usize, // 0 = Tags, 1 = Matterhorn Audit
+    pub active_tab: usize, // Unused but kept for API compatibility
     pub alt_text_edit_buffer: String,
 }
 
@@ -330,53 +330,183 @@ impl SidebarPanel {
         tx_worker: &std::sync::mpsc::Sender<crate::worker::WorkerRequest>,
     ) {
         ui.vertical(|ui| {
-            // Tab Selection Headers
-            ui.horizontal(|ui| {
-                if ui.selectable_label(self.active_tab == 0, "🏷️ Tags Tree").clicked() {
-                    self.active_tab = 0;
+            ui.style_mut().wrap = Some(true);
+            // Tier 1: Structure Tree
+            ui.vertical(|ui| {
+                ui.label(egui::RichText::new("Structure Tree").strong().size(13.0));
+                ui.add_space(4.0);
+
+                let mut selected_node_id = registry.selected_node_id;
+                egui::ScrollArea::vertical()
+                    .id_salt("tag_tree_scroll")
+                    .max_height(160.0)
+                    .show(ui, |ui| {
+                        if let Some(ref mut root) = registry.root {
+                            Self::render_node_recursive(ui, root, &mut selected_node_id, &mut self.alt_text_edit_buffer, tx_worker);
+                        } else {
+                            ui.label(egui::RichText::new("No structure tree loaded.").weak());
+                        }
+                    });
+                registry.selected_node_id = selected_node_id;
+            });
+
+            ui.add_space(10.0);
+            ui.separator();
+            ui.add_space(10.0);
+
+            // Tier 2: Element Properties
+            ui.vertical(|ui| {
+                ui.label(egui::RichText::new("Element Properties").strong().size(13.0));
+                ui.add_space(6.0);
+
+                let selected_id = registry.selected_node_id;
+                let mut node_found = false;
+
+                if let Some(id) = selected_id {
+                    if let Some(ref mut root) = registry.root {
+                        if let Some(node) = Self::find_node_mut_recursive(root, id) {
+                            node_found = true;
+                            egui::Grid::new("properties_grid")
+                                .num_columns(2)
+                                .spacing([10.0, 8.0])
+                                .striped(true)
+                                .show(ui, |ui| {
+                                    ui.label(egui::RichText::new("Tag:").weak());
+                                    let old_tag = node.tag.clone();
+                                    egui::ComboBox::from_id_salt("properties_tag_combobox")
+                                        .selected_text(&node.tag)
+                                        .show_ui(ui, |ui| {
+                                            for t in &["H1", "H2", "P", "Figure", "Table", "List", "Part", "Document"] {
+                                                ui.selectable_value(&mut node.tag, t.to_string(), *t);
+                                            }
+                                        });
+                                    if node.tag != old_tag {
+                                        if let Some(h_id) = node.handle_id {
+                                            let _ = tx_worker.send(crate::worker::WorkerRequest::UpdateNode {
+                                                handle_id: h_id,
+                                                tag: node.tag.clone(),
+                                                alt_text: node.alt_text.clone(),
+                                            });
+                                        }
+                                    }
+                                    ui.end_row();
+
+                                    ui.label(egui::RichText::new("Title:").weak());
+                                    ui.label(egui::RichText::new(&node.title).strong());
+                                    ui.end_row();
+
+                                    ui.label(egui::RichText::new("BBox:").weak());
+                                    if let Some(rect) = node.rect {
+                                        ui.monospace(format!("[{:.1}, {:.1}, {:.1}, {:.1}]", rect[0], rect[1], rect[2], rect[3]));
+                                    } else {
+                                        ui.monospace("None");
+                                    }
+                                    ui.end_row();
+
+                                    ui.label(egui::RichText::new("Lang:").weak());
+                                    ui.label("en-US");
+                                    ui.end_row();
+
+                                    ui.label(egui::RichText::new("Role Map:").weak());
+                                    ui.label("Default Mapping");
+                                    ui.end_row();
+
+                                    ui.label(egui::RichText::new("Alt Text:").weak());
+                                    let mut buf = node.alt_text.clone().unwrap_or_default();
+                                    let text_resp = ui.text_edit_singleline(&mut buf);
+                                    if text_resp.changed() {
+                                        node.alt_text = if buf.trim().is_empty() { None } else { Some(buf) };
+                                        if let Some(h_id) = node.handle_id {
+                                            let _ = tx_worker.send(crate::worker::WorkerRequest::UpdateNode {
+                                                handle_id: h_id,
+                                                tag: node.tag.clone(),
+                                                alt_text: node.alt_text.clone(),
+                                            });
+                                        }
+                                    }
+                                    ui.end_row();
+                                });
+                        }
+                    }
                 }
-                ui.separator();
-                let audit_count = registry.audit_findings.len();
-                let audit_title = if audit_count > 0 {
-                    format!("🚨 Matterhorn ({})", audit_count)
-                } else {
-                    "✅ Matterhorn".to_string()
-                };
-                if ui.selectable_label(self.active_tab == 1, audit_title).clicked() {
-                    self.active_tab = 1;
+
+                if !node_found {
+                    ui.label(egui::RichText::new("Select a node to inspect properties.").weak());
                 }
             });
 
+            ui.add_space(10.0);
             ui.separator();
+            ui.add_space(10.0);
 
-            // Active Tab Content
-            if self.active_tab == 0 {
-                self.show_tags_tab(ui, registry, tx_worker);
-            } else {
-                self.show_audit_tab(ui, registry);
-            }
-        });
-    }
+            // Tier 3: Alt-Text Gallery
+            self.show_alt_text_gallery(ui, registry, tx_worker);
 
-    fn show_tags_tab(
-        &mut self,
-        ui: &mut egui::Ui,
-        registry: &mut USTRegistry,
-        tx_worker: &std::sync::mpsc::Sender<crate::worker::WorkerRequest>,
-    ) {
-        ui.label("Collapse/expand structural tags to explore accessibility relationships:");
-        ui.add_space(5.0);
+            ui.add_space(10.0);
+            ui.separator();
+            ui.add_space(10.0);
 
-        let mut selected_node_id = registry.selected_node_id;
+            // Tier 4: Accessibility Audit
+            ui.vertical(|ui| {
+                ui.label(egui::RichText::new("Accessibility Audit").strong().size(13.0));
+                ui.add_space(6.0);
 
-        egui::ScrollArea::vertical().id_salt("tag_tree_scroll").show(ui, |ui| {
-            if let Some(ref mut root) = registry.root {
-                Self::render_node_recursive(ui, root, &mut selected_node_id, &mut self.alt_text_edit_buffer, tx_worker);
-            } else {
-                ui.centered_and_justified(|ui| {
-                    ui.label("No structure tree loaded. Please load a valid PDF.");
+                let has_doc = registry.root.is_some();
+                let audit_findings_count = registry.audit_findings.len();
+
+                ui.vertical(|ui| {
+                    if has_doc {
+                        let compliant_pct = if audit_findings_count == 0 {
+                            100
+                        } else {
+                            (100 - audit_findings_count * 7).max(10)
+                        };
+                        ui.label(format!("Matterhorn: {}% Compliant", compliant_pct));
+                        ui.label(format!("Findings: {}", audit_findings_count));
+                    } else {
+                        ui.label("Matterhorn: -");
+                        ui.label("Findings: -");
+                    }
                 });
-            }
+
+                ui.add_space(4.0);
+
+                egui::ScrollArea::vertical()
+                    .id_salt("audit_scroll")
+                    .max_height(100.0)
+                    .show(ui, |ui| {
+                        if !has_doc {
+                            ui.label(egui::RichText::new("No document loaded.").weak());
+                        } else if registry.audit_findings.is_empty() {
+                            ui.colored_label(egui::Color32::GREEN, "100% Compliant! No errors.");
+                        } else {
+                            for (checkpoint, severity, message, handle_id) in &registry.audit_findings {
+                                let card_resp = ui.vertical(|ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.colored_label(egui::Color32::LIGHT_RED, checkpoint);
+                                        ui.label(format!("({})", severity));
+                                    });
+                                    ui.label(message);
+                                });
+
+                                let id = ui.id().with(checkpoint).with(message);
+                                let response = ui.interact(card_resp.response.rect, id, egui::Sense::click());
+                                if response.clicked() {
+                                    if let Some(h_id) = handle_id {
+                                        if let Some(node_id) = registry.find_node_id_by_handle_id(*h_id) {
+                                            registry.selected_node_id = Some(node_id);
+                                            registry.pending_center_node_id = Some(node_id);
+                                        }
+                                    }
+                                }
+                                if response.hovered() {
+                                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                                }
+                                ui.add_space(3.0);
+                            }
+                        }
+                    });
+            });
         });
 
         // Apply pending moves
@@ -393,34 +523,38 @@ impl SidebarPanel {
         if ui.input(|i| i.pointer.any_released()) {
             ui.ctx().data_mut(|d| d.insert_temp::<Option<usize>>(egui::Id::new("dragged_node_id"), None));
         }
+    }
 
-        registry.selected_node_id = selected_node_id;
-
-        // Render Alt-Text Studio Gallery carousel at the bottom of the tag explorer
-        ui.separator();
-        self.show_alt_text_gallery(ui, registry, tx_worker);
+    fn find_node_mut_recursive(node: &mut USTNode, id: usize) -> Option<&mut USTNode> {
+        if node.id == id {
+            return Some(node);
+        }
+        for child in &mut node.children {
+            if let Some(found) = Self::find_node_mut_recursive(child, id) {
+                return Some(found);
+            }
+        }
+        None
     }
 
     fn render_drag_drop_controls(ui: &mut egui::Ui, node_id: usize, node: &USTNode) {
-        // Drag handle
-        let handle_resp = ui.add(egui::Label::new("☰").sense(egui::Sense::drag()));
+        let handle_resp = ui.add(egui::Label::new("Drag").sense(egui::Sense::drag()));
         if handle_resp.drag_started() {
             ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("dragged_node_id"), Some(node_id)));
         }
 
-        // Drop zones (render if dragged node is active and valid)
         let dragged_id: Option<Option<usize>> = ui.ctx().data(|d| d.get_temp(egui::Id::new("dragged_node_id")));
         if let Some(Some(drag_id)) = dragged_id {
             if drag_id != node_id && !USTRegistry::is_descendant(node, drag_id) {
-                let resp_above = ui.button("⬆️ Above");
+                let resp_above = ui.button("Above");
                 if resp_above.clicked() || (resp_above.hovered() && ui.input(|i| i.pointer.any_released())) {
                     ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("pending_move"), Some((drag_id, node_id, DragRelation::Above))));
                 }
-                let resp_child = ui.button("📁 Child");
+                let resp_child = ui.button("Child");
                 if resp_child.clicked() || (resp_child.hovered() && ui.input(|i| i.pointer.any_released())) {
                     ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("pending_move"), Some((drag_id, node_id, DragRelation::AsChild))));
                 }
-                let resp_below = ui.button("⬇️ Below");
+                let resp_below = ui.button("Below");
                 if resp_below.clicked() || (resp_below.hovered() && ui.input(|i| i.pointer.any_released())) {
                     ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("pending_move"), Some((drag_id, node_id, DragRelation::Below))));
                 }
@@ -435,14 +569,12 @@ impl SidebarPanel {
         alt_edit_buf: &mut String,
         tx_worker: &std::sync::mpsc::Sender<crate::worker::WorkerRequest>,
     ) {
-        // Alt-Text Studio drawer trigger
-        if ui.button("✏️ Alt").clicked() {
+        if ui.button("Edit").clicked() {
             *selected_node_id = Some(node.id);
             *alt_edit_buf = node.alt_text.clone().unwrap_or_default();
         }
 
-        // Quick tag cycle
-        if ui.button("🔁 Tag").clicked() {
+        if ui.button("Cycle").clicked() {
             node.tag = match node.tag.as_str() {
                 "H1" => "H2".to_string(),
                 "H2" => "P".to_string(),
@@ -459,41 +591,6 @@ impl SidebarPanel {
         }
     }
 
-    fn render_node_drawer(
-        ui: &mut egui::Ui,
-        node: &mut USTNode,
-        is_selected: bool,
-        selected_node_id: &mut Option<usize>,
-        alt_edit_buf: &mut String,
-        tx_worker: &std::sync::mpsc::Sender<crate::worker::WorkerRequest>,
-    ) {
-        if is_selected {
-            ui.indent(node.id, |ui| {
-                ui.group(|ui| {
-                    ui.label("📝 Alt-Text Studio (Remediation)");
-                    ui.horizontal(|ui| {
-                        ui.text_edit_singleline(alt_edit_buf);
-                        if ui.button("Save").clicked() {
-                            node.alt_text = if alt_edit_buf.trim().is_empty() {
-                                None
-                            } else {
-                                Some(alt_edit_buf.clone())
-                            };
-                            if let Some(h_id) = node.handle_id {
-                                let _ = tx_worker.send(crate::worker::WorkerRequest::UpdateNode {
-                                    handle_id: h_id,
-                                    tag: node.tag.clone(),
-                                    alt_text: node.alt_text.clone(),
-                                });
-                            }
-                            *selected_node_id = None; // close drawer
-                        }
-                    });
-                });
-            });
-        }
-    }
-
     fn render_node_recursive(
         ui: &mut egui::Ui,
         node: &mut USTNode,
@@ -502,26 +599,45 @@ impl SidebarPanel {
         tx_worker: &std::sync::mpsc::Sender<crate::worker::WorkerRequest>,
     ) {
         let is_selected = *selected_node_id == Some(node.id);
-        let header_label = format!("<{}>  {}", node.tag, node.title);
+        let header_label = format!("<{}> {}", node.tag, node.title);
 
-        ui.horizontal(|ui| {
-            Self::render_drag_drop_controls(ui, node.id, node);
+        ui.vertical(|ui| {
+            let id = ui.make_persistent_id(node.id);
+            let mut collapsing = egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, false);
 
-            // Collapsing tree header
-            let _response = ui.collapsing(&header_label, |ui| {
+            let header_response = ui.horizontal(|ui| {
+                Self::render_drag_drop_controls(ui, node.id, node);
+
+                let is_open = collapsing.is_open();
+                let symbol = if is_open { "⏷" } else { "⏵" };
+                if ui.small_button(symbol).clicked() {
+                    collapsing.toggle(ui);
+                }
+
+                let rich_text = if is_selected {
+                    egui::RichText::new(&header_label).color(egui::Color32::from_rgb(240, 165, 0)).strong()
+                } else {
+                    egui::RichText::new(&header_label)
+                };
+
+                if ui.selectable_label(is_selected, rich_text).clicked() {
+                    *selected_node_id = Some(node.id);
+                    *alt_edit_buf = node.alt_text.clone().unwrap_or_default();
+                }
+
+                if is_selected {
+                    Self::render_node_buttons(ui, node, selected_node_id, alt_edit_buf, tx_worker);
+                }
+            }).response;
+
+            collapsing.show_body_indented(&header_response, ui, |ui| {
                 let children_len = node.children.len();
                 for idx in 0..children_len {
                     let child = &mut node.children[idx];
-                    ui.indent(child.id, |ui| {
-                        Self::render_node_recursive(ui, child, selected_node_id, alt_edit_buf, tx_worker);
-                    });
+                    Self::render_node_recursive(ui, child, selected_node_id, alt_edit_buf, tx_worker);
                 }
             });
-
-            Self::render_node_buttons(ui, node, selected_node_id, alt_edit_buf, tx_worker);
         });
-
-        Self::render_node_drawer(ui, node, is_selected, selected_node_id, alt_edit_buf, tx_worker);
     }
 
     fn show_alt_text_gallery(
@@ -530,9 +646,9 @@ impl SidebarPanel {
         registry: &mut USTRegistry,
         tx_worker: &std::sync::mpsc::Sender<crate::worker::WorkerRequest>,
     ) {
-        ui.group(|ui| {
-            ui.heading("🎨 Alt-Text Studio Gallery");
-            ui.add_space(5.0);
+        ui.vertical(|ui| {
+            ui.label(egui::RichText::new("Alt-Text Gallery").strong());
+            ui.add_space(2.0);
 
             let mut figures = Vec::new();
             if let Some(ref root) = registry.root {
@@ -540,19 +656,18 @@ impl SidebarPanel {
             }
 
             if figures.is_empty() {
-                ui.label("No figures found in the structure tree.");
+                ui.label("No figures found.");
             } else {
                 egui::ScrollArea::horizontal().id_salt("figure_gallery_carousel").show(ui, |ui| {
                     ui.horizontal(|ui| {
                         for fig in &figures {
                             ui.vertical(|ui| {
-                                ui.set_min_width(180.0);
-                                ui.group(|ui| {
-                                    ui.colored_label(egui::Color32::LIGHT_BLUE, format!("🖼️ {}", fig.title));
+                                ui.set_min_width(120.0);
+                                ui.vertical(|ui| {
+                                    ui.colored_label(egui::Color32::LIGHT_BLUE, fig.title.clone());
                                     
                                     let mut buf = fig.alt_text.clone().unwrap_or_default();
-                                    ui.label("Alt Text:");
-                                    let response = ui.add(egui::TextEdit::singleline(&mut buf).hint_text("Add description..."));
+                                    let response = ui.add(egui::TextEdit::singleline(&mut buf).hint_text("Description..."));
                                     
                                     if response.changed() {
                                         let new_alt = if buf.trim().is_empty() { None } else { Some(buf.clone()) };
@@ -570,52 +685,10 @@ impl SidebarPanel {
                                     }
                                 });
                             });
-                            ui.add_space(10.0);
+                            ui.add_space(5.0);
                         }
                     });
                 });
-            }
-        });
-    }
-
-    fn show_audit_tab(&mut self, ui: &mut egui::Ui, registry: &mut USTRegistry) {
-        ui.label("Matterhorn Protocol / UA-2 Accessibility Checklist:");
-        ui.add_space(5.0);
-
-        egui::ScrollArea::vertical().id_salt("audit_scroll").show(ui, |ui| {
-            if registry.audit_findings.is_empty() {
-                ui.centered_and_justified(|ui| {
-                    ui.colored_label(egui::Color32::GREEN, "🎉 100% Matterhorn Compliance! No errors found.");
-                });
-            } else {
-                for (checkpoint, severity, message, handle_id) in &registry.audit_findings {
-                    let inner_res = ui.group(|ui| {
-                        ui.horizontal(|ui| {
-                            ui.colored_label(egui::Color32::RED, "🚨");
-                            ui.colored_label(egui::Color32::LIGHT_RED, checkpoint);
-                            ui.label(format!("({})", severity));
-                        });
-                        ui.label(message);
-                    });
-
-                    // Make the warning card clickable to focus the violation
-                    let id = ui.id().with(checkpoint).with(message);
-                    let response = ui.interact(inner_res.response.rect, id, egui::Sense::click());
-                    if response.clicked() {
-                        if let Some(h_id) = handle_id {
-                            if let Some(node_id) = registry.find_node_id_by_handle_id(*h_id) {
-                                registry.selected_node_id = Some(node_id);
-                                registry.pending_center_node_id = Some(node_id);
-                            }
-                        }
-                    }
-
-                    if response.hovered() {
-                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                    }
-
-                    ui.add_space(5.0);
-                }
             }
         });
     }
