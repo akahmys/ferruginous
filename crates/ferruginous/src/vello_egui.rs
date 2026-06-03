@@ -24,6 +24,9 @@ pub struct VelloRenderer {
     thumb_renderer: Renderer,
     viewport_texture: Option<ViewportTexture>,
     thumbnail_textures: std::collections::BTreeMap<usize, ThumbnailTexture>,
+    last_visible_pages: Vec<(usize, usize, egui::Rect)>,
+    last_viewport_rect: egui::Rect,
+    last_zoom: f32,
 }
 
 impl VelloRenderer {
@@ -55,6 +58,9 @@ impl VelloRenderer {
             thumb_renderer,
             viewport_texture: None,
             thumbnail_textures: std::collections::BTreeMap::new(),
+            last_visible_pages: Vec::new(),
+            last_viewport_rect: egui::Rect::NOTHING,
+            last_zoom: 0.0,
         })
     }
 
@@ -70,6 +76,20 @@ impl VelloRenderer {
         scale_factor: f32,
         zoom: f32,
     ) -> Option<egui::TextureId> {
+        let current_visible_pages: Vec<(usize, usize, egui::Rect)> = visible_pages
+            .iter()
+            .map(|(idx, scene, rect, _)| (*idx, Arc::as_ptr(scene) as usize, *rect))
+            .collect();
+
+        if self.last_visible_pages == current_visible_pages
+            && self.last_viewport_rect == viewport_rect
+            && self.last_zoom == zoom
+        {
+            if let Some(ref tex) = self.viewport_texture {
+                return Some(tex.egui_texture);
+            }
+        }
+
         let width = (viewport_rect.width() * scale_factor).round() as u32;
         let height = (viewport_rect.height() * scale_factor).round() as u32;
         let width = width.clamp(1, 8192);
@@ -148,6 +168,10 @@ impl VelloRenderer {
             },
         );
 
+        self.last_visible_pages = current_visible_pages;
+        self.last_viewport_rect = viewport_rect;
+        self.last_zoom = zoom;
+
         Some(tex.egui_texture)
     }
 
@@ -191,7 +215,7 @@ impl VelloRenderer {
         });
     }
 
-    pub fn render_thumbnail(
+    pub fn render_thumbnail( // RR-15 Limit: GUI - Performs rendering of page scenes to thumbnail textures
         &mut self,
         render_state: &RenderState,
         page_index: usize,

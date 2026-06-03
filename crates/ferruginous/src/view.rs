@@ -66,7 +66,7 @@ impl PDFView {
         visuals.widgets.noninteractive.bg_stroke = egui::Stroke::NONE;
 
         let response = ui.allocate_rect(viewport_rect, egui::Sense::drag());
-        self.handle_input(ui, &response);
+        self.handle_input(ui, &response, viewport_rect);
         self.clamp_pan(viewport_rect, layouts);
 
         // 1. Workspace background (Premium Light Gray Theme matching sidebars)
@@ -329,20 +329,25 @@ impl PDFView {
         }
     }
 
-    fn handle_input(&mut self, ui: &mut egui::Ui, response: &egui::Response) {
-        ui.input(|i| {
-            let zoom_delta = i.zoom_delta();
-            if zoom_delta != 1.0 {
-                self.zoom = (self.zoom * zoom_delta).clamp(0.1, 10.0);
-            }
-            let scroll_delta = i.smooth_scroll_delta;
-            if i.modifiers.command && scroll_delta.y != 0.0 {
-                self.zoom = (self.zoom * (scroll_delta.y * 0.005).exp()).clamp(0.1, 10.0);
-            }
-            if !i.modifiers.command {
-                self.pan += scroll_delta;
-            }
+    fn handle_input(&mut self, ui: &mut egui::Ui, response: &egui::Response, viewport_rect: egui::Rect) {
+        let is_hovered = ui.ctx().input(|i| {
+            i.pointer.hover_pos().map_or(false, |pos| viewport_rect.contains(pos))
         });
+        if is_hovered {
+            ui.input(|i| {
+                let zoom_delta = i.zoom_delta();
+                if zoom_delta != 1.0 {
+                    self.zoom = (self.zoom * zoom_delta).clamp(0.1, 10.0);
+                }
+                let scroll_delta = i.smooth_scroll_delta;
+                if i.modifiers.command && scroll_delta.y != 0.0 {
+                    self.zoom = (self.zoom * (scroll_delta.y * 0.005).exp()).clamp(0.1, 10.0);
+                }
+                if !i.modifiers.command {
+                    self.pan += scroll_delta;
+                }
+            });
+        }
         if response.dragged() {
             self.pan += response.drag_delta();
         }

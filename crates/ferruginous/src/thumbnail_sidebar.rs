@@ -10,6 +10,7 @@ impl ThumbnailSidebar {
             .show_inside(ui, |ui| {
                 egui::ScrollArea::vertical()
                     .id_salt("thumbnail_scroll_area")
+                    .hscroll(false)
                     .show(ui, |ui| {
                         if app.total_pages == 0 {
                             ui.centered_and_justified(|ui| {
@@ -26,11 +27,12 @@ impl ThumbnailSidebar {
                                     ui.vertical_centered(|ui| {
                                         ui.add_space(1.0);
 
-                                        let mini_page_width = 90.0;
+                                        let sidebar_width = ui.available_width();
+                                        let mini_page_width = (sidebar_width - 50.0).clamp(110.0, 250.0);
                                         let mini_page_height = mini_page_width * aspect_ratio;
 
                                         let (rect, response) = ui.allocate_at_least(
-                                            egui::vec2(140.0, mini_page_height + 26.0),
+                                            egui::vec2(sidebar_width - 20.0, mini_page_height + 26.0),
                                             egui::Sense::click(),
                                         );
 
@@ -115,7 +117,7 @@ impl ThumbnailSidebar {
                                                     i,
                                                     scene,
                                                     size,
-                                                    90,
+                                                    256,
                                                 ) {
                                                     ui.painter().image(
                                                         tex_id,

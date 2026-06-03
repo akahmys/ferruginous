@@ -51,22 +51,38 @@ pub enum WorkerResponse {
 pub fn run_worker(rx: Receiver<WorkerRequest>, tx: Sender<WorkerResponse>, ctx: egui::Context) {
     let mut current_doc: Option<PdfDocument> = None;
     let system_fonts = VelloBackend::load_system_fonts();
+    let mut text_cache = std::collections::BTreeMap::new();
+    let mut spans_cache = std::collections::BTreeMap::new();
 
     for request in rx {
         match request {
             WorkerRequest::Open { data, name } => {
+                text_cache.clear();
+                spans_cache.clear();
                 current_doc = handle_open(data, name, &tx);
                 ctx.request_repaint();
             }
             WorkerRequest::RenderPage { index, scale } => {
-                handle_render(&current_doc, index, scale, &tx, Arc::clone(&system_fonts));
+                handle_render(
+                    &current_doc,
+                    index,
+                    scale,
+                    &tx,
+                    Arc::clone(&system_fonts),
+                    &mut text_cache,
+                    &mut spans_cache,
+                );
                 ctx.request_repaint();
             }
             WorkerRequest::UpdateNode { handle_id, tag, alt_text } => {
+                text_cache.clear();
+                spans_cache.clear();
                 handle_update_node(&mut current_doc, handle_id, tag, alt_text, &tx);
                 ctx.request_repaint();
             }
             WorkerRequest::Save { path, compress, linearize, vacuum, upgrade_pdf20, redaction_zones, cert_path, cert_password, signature_position } => {
+                text_cache.clear();
+                spans_cache.clear();
                 handle_save(&current_doc, path, compress, linearize, vacuum, upgrade_pdf20, redaction_zones, cert_path, cert_password, signature_position, &tx);
                 ctx.request_repaint();
             }
@@ -91,6 +107,21 @@ fn load_page_info(doc: &PdfDocument) -> (Vec<(f64, f64)>, Vec<String>) {
     (page_sizes, page_texts)
 }
 
+fn resolve_to_node_handle(arena: &PdfArena, obj: &Object) -> Option<Handle<Object>> {
+    match obj {
+        Object::Reference(h) => Some(*h),
+        Object::Dictionary(dh) => Some(Handle::new(dh.index())),
+        _ => {
+            let resolved = obj.resolve(arena);
+            match resolved {
+                Object::Reference(h) => Some(h),
+                Object::Dictionary(dh) => Some(Handle::new(dh.index())),
+                _ => None,
+            }
+        }
+    }
+}
+
 fn parse_struct_tree_findings(
     doc: &PdfDocument,
     next_id: &mut usize,
@@ -104,8 +135,9 @@ fn parse_struct_tree_findings(
             if let Some(dict) = arena.get_dict(cadh) {
                 let str_root_key = arena.name("StructTreeRoot");
                 if let Some(str_root_obj) = dict.get(&str_root_key) {
-                    if let Some(str_root_ref) = str_root_obj.resolve(arena).as_reference() {
-                        ust_root = parse_struct_node(arena, str_root_ref, next_id);
+                    if let Some(str_root_ref) = resolve_to_node_handle(arena, str_root_obj) {
+                        let mut visited = std::collections::HashSet::new();
+                        ust_root = parse_struct_node(arena, str_root_ref, next_id, &mut visited);
 
                         let auditor = ferruginous_sdk::structure::MatterhornAuditor::new(arena);
                         if let Ok(findings) = auditor.audit(str_root_ref) {
@@ -121,6 +153,18 @@ fn parse_struct_tree_findings(
     (ust_root, audit_findings)
 }
 
+fn resolve_struct_tree_root(doc: &PdfDocument, next_id: &mut usize) -> Option<crate::sidebar::USTNode> {
+    let arena = doc.inner().arena();
+    let cah = doc.inner().catalog_handle()?;
+    let cadh = doc.inner().resolve_to_dict(cah).ok()?;
+    let dict = arena.get_dict(cadh)?;
+    let str_root_key = arena.name("StructTreeRoot");
+    let str_root_obj = dict.get(&str_root_key)?;
+    let str_root_ref = resolve_to_node_handle(arena, str_root_obj)?;
+    let mut visited = std::collections::HashSet::new();
+    parse_struct_node(arena, str_root_ref, next_id, &mut visited)
+}
+
 fn handle_open(data: Bytes, name: Option<String>, tx: &Sender<WorkerResponse>) -> Option<PdfDocument> {
     match PdfDocument::open(data) {
         Ok(doc) => {
@@ -131,21 +175,7 @@ fn handle_open(data: Bytes, name: Option<String>, tx: &Sender<WorkerResponse>) -
             }
 
             let mut next_id = 0;
-            let mut ust_root = None;
-            let arena = doc.inner().arena();
-
-            if let Some(cah) = doc.inner().catalog_handle() {
-                if let Some(cadh) = doc.inner().resolve_to_dict(cah).ok() {
-                    if let Some(dict) = arena.get_dict(cadh) {
-                        let str_root_key = arena.name("StructTreeRoot");
-                        if let Some(str_root_obj) = dict.get(&str_root_key) {
-                            if let Some(str_root_ref) = str_root_obj.resolve(arena).as_reference() {
-                                ust_root = parse_struct_node(arena, str_root_ref, &mut next_id);
-                            }
-                        }
-                    }
-                }
-            }
+            let mut ust_root = resolve_struct_tree_root(&doc, &mut next_id);
 
             if ust_root.is_none() {
                 ust_root = Some(crate::sidebar::USTNode {
@@ -191,35 +221,28 @@ fn parse_kids_helper(
     arena: &PdfArena,
     kids_obj: &Object,
     next_id: &mut usize,
+    visited: &mut std::collections::HashSet<Handle<Object>>,
     children: &mut Vec<crate::sidebar::USTNode>,
 ) {
-    match kids_obj.resolve(arena) {
-        Object::Array(ah) => {
-            if let Some(array) = arena.get_array(ah) {
-                for kid in array {
-                    if let Some(kid_ref) = kid.resolve(arena).as_reference() {
-                        if let Some(child_node) = parse_struct_node(arena, kid_ref, next_id) {
-                            children.push(child_node);
+    if let Some(kid_ref) = resolve_to_node_handle(arena, kids_obj) {
+        if let Some(child_node) = parse_struct_node(arena, kid_ref, next_id, visited) {
+            children.push(child_node);
+        }
+    } else {
+        match kids_obj.resolve(arena) {
+            Object::Array(ah) => {
+                if let Some(array) = arena.get_array(ah) {
+                    for kid in array {
+                        if let Some(kid_ref) = resolve_to_node_handle(arena, &kid) {
+                            if let Some(child_node) = parse_struct_node(arena, kid_ref, next_id, visited) {
+                                children.push(child_node);
+                            }
                         }
                     }
                 }
             }
+            _ => {}
         }
-        Object::Reference(kid_ref) => {
-            if let Some(child_node) = parse_struct_node(arena, kid_ref, next_id) {
-                children.push(child_node);
-            }
-        }
-        Object::Boolean(_)
-        | Object::Integer(_)
-        | Object::Real(_)
-        | Object::String(_)
-        | Object::Name(_)
-        | Object::Dictionary(_)
-        | Object::Stream(_, _)
-        | Object::Hex(_)
-        | Object::Text(_)
-        | Object::Null => {}
     }
 }
 
@@ -256,7 +279,15 @@ fn parse_alt_text_helper(arena: &PdfArena, dict: &std::collections::BTreeMap<Han
     String::from_utf8(bytes.to_vec()).ok()
 }
 
-fn parse_struct_node(arena: &PdfArena, handle: Handle<Object>, next_id: &mut usize) -> Option<crate::sidebar::USTNode> {
+fn parse_struct_node(
+    arena: &PdfArena,
+    handle: Handle<Object>,
+    next_id: &mut usize,
+    visited: &mut std::collections::HashSet<Handle<Object>>,
+) -> Option<crate::sidebar::USTNode> {
+    if !visited.insert(handle) {
+        return None;
+    }
     let obj = arena.get_object(handle)?;
     let dh = obj.as_dict_handle()?;
     let dict = arena.get_dict(dh)?;
@@ -272,8 +303,10 @@ fn parse_struct_node(arena: &PdfArena, handle: Handle<Object>, next_id: &mut usi
 
     let mut children = Vec::new();
     if let Some(kids) = dict.get(&arena.name("K")) {
-        parse_kids_helper(arena, kids, next_id, &mut children);
+        parse_kids_helper(arena, kids, next_id, visited, &mut children);
     }
+
+    visited.remove(&handle);
 
     Some(crate::sidebar::USTNode {
         id,
@@ -286,25 +319,30 @@ fn parse_struct_node(arena: &PdfArena, handle: Handle<Object>, next_id: &mut usi
     })
 }
 
-fn handle_render(
-    doc_opt: &Option<PdfDocument>,
+fn get_or_extract_text(
+    doc: &PdfDocument,
     index: usize,
-    scale: f64,
-    tx: &Sender<WorkerResponse>,
-    system_fonts: Arc<std::collections::BTreeMap<FallbackFontType, Arc<Vec<u8>>>>,
-) {
-    let Some(doc) = doc_opt else { return };
-    let (_, p_h) = doc.get_page_size(index).unwrap_or((595.0, 842.0));
-    let mut backend = VelloBackend::new(system_fonts);
-    let initial_transform = kurbo::Affine::new([scale, 0.0, 0.0, -scale, 0.0, p_h * scale]);
-
+    cache: &mut std::collections::BTreeMap<usize, String>,
+) -> Option<String> {
+    if let Some(cached) = cache.get(&index) {
+        return Some(cached.clone());
+    }
     let text = doc.extract_text(index).ok();
-    let spans = doc.extract_spans(index).ok().map(|sdk_spans| {
-        eprintln!("[Worker] Page {}: extracted {} precision spans", index + 1, sdk_spans.len());
-        if !sdk_spans.is_empty() {
-            eprintln!("[Worker] First span: '{}', x={:.2}, y={:.2}, width={:.2}, font_size={:.2}",
-                sdk_spans[0].text, sdk_spans[0].x, sdk_spans[0].y, sdk_spans[0].width, sdk_spans[0].font_size);
-        }
+    if let Some(ref t) = text {
+        cache.insert(index, t.clone());
+    }
+    text
+}
+
+fn get_or_extract_spans(
+    doc: &PdfDocument,
+    index: usize,
+    cache: &mut std::collections::BTreeMap<usize, Vec<crate::interaction::TextSpan>>,
+) -> Option<Vec<crate::interaction::TextSpan>> {
+    if let Some(cached) = cache.get(&index) {
+        return Some(cached.clone());
+    }
+    let spans: Option<Vec<crate::interaction::TextSpan>> = doc.extract_spans(index).ok().map(|sdk_spans| {
         sdk_spans.into_iter().map(|s| {
             crate::interaction::TextSpan {
                 text: s.text,
@@ -315,6 +353,28 @@ fn handle_render(
             }
         }).collect()
     });
+    if let Some(ref s) = spans {
+        cache.insert(index, s.clone());
+    }
+    spans
+}
+
+fn handle_render(
+    doc_opt: &Option<PdfDocument>,
+    index: usize,
+    scale: f64,
+    tx: &Sender<WorkerResponse>,
+    system_fonts: Arc<std::collections::BTreeMap<FallbackFontType, Arc<Vec<u8>>>>,
+    text_cache: &mut std::collections::BTreeMap<usize, String>,
+    spans_cache: &mut std::collections::BTreeMap<usize, Vec<crate::interaction::TextSpan>>,
+) {
+    let Some(doc) = doc_opt else { return };
+    let (_, p_h) = doc.get_page_size(index).unwrap_or((595.0, 842.0));
+    let mut backend = VelloBackend::new(system_fonts);
+    let initial_transform = kurbo::Affine::new([scale, 0.0, 0.0, -scale, 0.0, p_h * scale]);
+
+    let text = get_or_extract_text(doc, index, text_cache);
+    let spans = get_or_extract_spans(doc, index, spans_cache);
 
     if let Ok(()) = doc.render_page(index, &mut backend, initial_transform) {
         let scene = Arc::new(backend.scene().clone());
