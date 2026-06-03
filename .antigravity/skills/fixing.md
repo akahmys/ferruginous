@@ -21,9 +21,9 @@
 - **Compliance Criterion**: The resulting diff must be focused solely on the bug's root cause.
 
 ## 4. Regression Verification
-- **Rule**: A fix is not complete until a reproduction test passes and all existing tests in the workspace pass.
-- **Purpose**: Prove the effectiveness of the fix and the stability of the entire system.
-- **Compliance Criterion**: `cargo test --workspace` must return success, and `walkthrough.md` must link to the passing reproduction test.
+- **Rule**: A fix is not complete until a reproduction test passes, all existing tests in the workspace pass, and the compliance audit passes with zero warnings.
+- **Purpose**: Prove the effectiveness of the fix, ensure idiomatic quality with clippy, and guarantee overall stability.
+- **Compliance Criterion**: `cargo test --workspace` and `./scripts/audit/verify_compliance.sh` (which runs `cargo clippy --workspace -- -D warnings`) must return success, and `walkthrough.md` must link to the passing test/audit results.
 
 ## 5. Knowledge Conversion
 - **Rule**: Record lessons learned and diagnostic patterns in `lessons_learned.md`.

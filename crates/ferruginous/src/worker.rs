@@ -136,7 +136,7 @@ fn parse_struct_tree_findings(
                 let str_root_key = arena.name("StructTreeRoot");
                 if let Some(str_root_obj) = dict.get(&str_root_key) {
                     if let Some(str_root_ref) = resolve_to_node_handle(arena, str_root_obj) {
-                        let mut visited = std::collections::HashSet::new();
+                        let mut visited = std::collections::BTreeSet::new();
                         ust_root = parse_struct_node(arena, str_root_ref, next_id, &mut visited);
 
                         let auditor = ferruginous_sdk::structure::MatterhornAuditor::new(arena);
@@ -161,7 +161,7 @@ fn resolve_struct_tree_root(doc: &PdfDocument, next_id: &mut usize) -> Option<cr
     let str_root_key = arena.name("StructTreeRoot");
     let str_root_obj = dict.get(&str_root_key)?;
     let str_root_ref = resolve_to_node_handle(arena, str_root_obj)?;
-    let mut visited = std::collections::HashSet::new();
+    let mut visited = std::collections::BTreeSet::new();
     parse_struct_node(arena, str_root_ref, next_id, &mut visited)
 }
 
@@ -221,7 +221,7 @@ fn parse_kids_helper(
     arena: &PdfArena,
     kids_obj: &Object,
     next_id: &mut usize,
-    visited: &mut std::collections::HashSet<Handle<Object>>,
+    visited: &mut std::collections::BTreeSet<Handle<Object>>,
     children: &mut Vec<crate::sidebar::USTNode>,
 ) {
     if let Some(kid_ref) = resolve_to_node_handle(arena, kids_obj) {
@@ -278,7 +278,7 @@ fn parse_struct_node(
     arena: &PdfArena,
     handle: Handle<Object>,
     next_id: &mut usize,
-    visited: &mut std::collections::HashSet<Handle<Object>>,
+    visited: &mut std::collections::BTreeSet<Handle<Object>>,
 ) -> Option<crate::sidebar::USTNode> {
     if !visited.insert(handle) {
         return None;

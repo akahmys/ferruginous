@@ -102,12 +102,12 @@ impl ArlingtonInspectorPanel {
         }
     }
 
-    pub fn show(&mut self, ui: &mut egui::Ui, selected_tag: Option<&str>) {
+    pub fn show(&mut self, ui: &mut egui::Ui, selected_tag: Option<&str>) { // RR-15 Limit: GUI - Arlington Dictionary Inspector panel show
         let tag = selected_tag.unwrap_or("Catalog");
         self.active_object_name = format!("Dictionary: <{}>", tag);
 
         ui.vertical(|ui| {
-            ui.style_mut().wrap = Some(true);
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
             ui.heading("🔍 Arlington Dictionary Inspector");
             ui.add_space(5.0);
 

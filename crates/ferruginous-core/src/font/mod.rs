@@ -1822,7 +1822,7 @@ impl FontResource {
         cid: u32,
         hint: Option<char>,
         glyph_name: Option<&str>,
-        _trace: Option<&mut TraceContext>,
+        mut _trace: Option<&mut TraceContext>,
     ) -> Option<u32> {
         // 0. Try code_to_gid (from font's non-Unicode cmaps) - VERY HIGH TRUST for Identity fonts
         if let Some(&gid) = self.code_to_gid.get(&cid)

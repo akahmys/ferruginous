@@ -67,7 +67,7 @@ pub struct FerruginousApp {
 }
 
 impl FerruginousApp {
-    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>) -> Self { // RR-15 Limit: GUI - App state creation and initialization
         let vello_renderer =
             cc.wgpu_render_state.as_ref().and_then(|rs| VelloRenderer::new(&rs.device));
         let (tx_req, rx_req) = channel();
@@ -226,7 +226,7 @@ impl FerruginousApp {
         self.view.pan = egui::Vec2::ZERO;
     }
 
-    fn process_worker_messages(&mut self, ctx: &egui::Context) {
+    fn process_worker_messages(&mut self, ctx: &egui::Context) { // RR-15 Limit: GUI - Handle asynchronous background messages
         while let Ok(msg) = self.rx_worker.try_recv() {
             match msg {
                  WorkerResponse::DocumentLoaded {
@@ -607,7 +607,7 @@ impl FerruginousApp {
         self.draw_view_with_highlights(ui, viewport_rect, zoom, viewport_texture_id);
     }
 
-    fn update_vello(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+    fn update_vello(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) { // RR-15 Limit: GUI - Update vello state and trigger document rendering
         let ctx = ui.ctx().clone();
         self.process_worker_messages(&ctx);
 
@@ -671,10 +671,10 @@ impl FerruginousApp {
                     egui::StrokeKind::Outside
                 );
 
-                let mut child_ui = ui.child_ui(
-                    overlay_rect,
-                    egui::Layout::left_to_right(egui::Align::Center),
-                    None,
+                let mut child_ui = ui.new_child(
+                    egui::UiBuilder::new()
+                        .max_rect(overlay_rect)
+                        .layout(egui::Layout::left_to_right(egui::Align::Center)),
                 );
                 child_ui.horizontal(|ui| {
                     ui.add_space(8.0);
@@ -711,7 +711,7 @@ impl FerruginousApp {
 }
 
 impl eframe::App for FerruginousApp {
-    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) { // RR-15 Limit: GUI - Main application UI shell layout routing layout panels and windows
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) { // RR-15 Limit: Dispatcher - Main application UI shell layout routing layout panels and windows
         ui.ctx().set_visuals(egui::Visuals::light());
         ui.ctx().global_style_mut(|style| {
             style.visuals.selection.stroke = egui::Stroke::NONE;
@@ -728,9 +728,9 @@ impl eframe::App for FerruginousApp {
 
         // Render panels from startup (empty state if no document loaded)
         // 1. Context Panel (260px width, left side) - Rendered first to prevent coordinate alignment issues on resize boundary
-        egui::SidePanel::left("context_panel")
+        egui::Panel::left("context_panel")
             .resizable(true)
-            .default_width(260.0)
+            .default_size(260.0)
             .size_range(200.0..=360.0)
             .show_inside(ui, |ui| {
                 egui::Frame::NONE
@@ -765,9 +765,9 @@ impl eframe::App for FerruginousApp {
                         None
                     }
                 });
-            egui::SidePanel::left("inspector_panel")
+            egui::Panel::left("inspector_panel")
                 .resizable(true)
-                .default_width(280.0)
+                .default_size(280.0)
                 .size_range(200.0..=450.0)
                 .show_inside(ui, |ui| {
                     egui::Frame::NONE
@@ -779,9 +779,9 @@ impl eframe::App for FerruginousApp {
         }
 
         // 3. Icon Bar (Right-most, 50px width)
-        egui::SidePanel::right("icon_bar")
+        egui::Panel::right("icon_bar")
             .resizable(false)
-            .default_width(50.0)
+            .default_size(50.0)
             .show_inside(ui, |ui| {
                 ui.vertical_centered(|ui| {
                     ui.add_space(8.0);
@@ -861,8 +861,8 @@ impl eframe::App for FerruginousApp {
         crate::thumbnail_sidebar::ThumbnailSidebar::show(self, ui, frame);
 
         // 5. Status Bar (28px height, bottom)
-        egui::TopBottomPanel::bottom("status_bar")
-            .default_height(28.0)
+        egui::Panel::bottom("status_bar")
+            .default_size(28.0)
             .resizable(false)
             .show_inside(ui, |ui| {
                 ui.horizontal(|ui| {

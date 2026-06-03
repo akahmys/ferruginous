@@ -78,23 +78,36 @@ impl PDFView {
         let grid_stroke = egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(0, 0, 0, 10));
         
         // Vertical grid lines
-        let mut x = viewport_rect.min.x + (self.pan.x % (grid_size * self.zoom));
-        while x < viewport_rect.max.x {
-            ui.painter().line_segment(
-                [egui::pos2(x, viewport_rect.min.y), egui::pos2(x, viewport_rect.max.y)],
-                grid_stroke,
-            );
-            x += grid_size * self.zoom;
+        let step = grid_size * self.zoom;
+        if step > 0.1 {
+            let start_x = viewport_rect.min.x + (self.pan.x % step);
+            let width = viewport_rect.max.x - start_x;
+            if width > 0.0 {
+                let count = (width / step).ceil() as usize;
+                for i in 0..count {
+                    let x = start_x + i as f32 * step;
+                    ui.painter().line_segment(
+                        [egui::pos2(x, viewport_rect.min.y), egui::pos2(x, viewport_rect.max.y)],
+                        grid_stroke,
+                    );
+                }
+            }
         }
         
         // Horizontal grid lines
-        let mut y = viewport_rect.min.y + (self.pan.y % (grid_size * self.zoom));
-        while y < viewport_rect.max.y {
-            ui.painter().line_segment(
-                [egui::pos2(viewport_rect.min.x, y), egui::pos2(viewport_rect.max.x, y)],
-                grid_stroke,
-            );
-            y += grid_size * self.zoom;
+        if step > 0.1 {
+            let start_y = viewport_rect.min.y + (self.pan.y % step);
+            let height = viewport_rect.max.y - start_y;
+            if height > 0.0 {
+                let count = (height / step).ceil() as usize;
+                for i in 0..count {
+                    let y = start_y + i as f32 * step;
+                    ui.painter().line_segment(
+                        [egui::pos2(viewport_rect.min.x, y), egui::pos2(viewport_rect.max.x, y)],
+                        grid_stroke,
+                    );
+                }
+            }
         }
 
         // 2. Draw page shadows and authoritatively paint solid pure-white backings under each visible page
@@ -179,7 +192,7 @@ impl PDFView {
 
                 if show_reading_order {
                     if let Some(ref root) = ust_registry.root {
-                        self.draw_semantic_borders(
+                        Self::draw_semantic_borders(
                             ui,
                             page_rect,
                             self.zoom,
@@ -331,7 +344,7 @@ impl PDFView {
 
     fn handle_input(&mut self, ui: &mut egui::Ui, response: &egui::Response, viewport_rect: egui::Rect) {
         let is_hovered = ui.ctx().input(|i| {
-            i.pointer.hover_pos().map_or(false, |pos| viewport_rect.contains(pos))
+            i.pointer.hover_pos().is_some_and(|pos| viewport_rect.contains(pos))
         });
         if is_hovered {
             ui.input(|i| {
@@ -354,7 +367,6 @@ impl PDFView {
     }
 
     fn draw_semantic_borders(
-        &self,
         ui: &mut egui::Ui,
         page_rect: egui::Rect,
         zoom: f32,
@@ -395,7 +407,7 @@ impl PDFView {
         }
 
         for child in &node.children {
-            self.draw_semantic_borders(ui, page_rect, zoom, unscaled_h, child, selected_id);
+            Self::draw_semantic_borders(ui, page_rect, zoom, unscaled_h, child, selected_id);
         }
     }
 

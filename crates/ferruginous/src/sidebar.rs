@@ -330,183 +330,27 @@ impl SidebarPanel {
         tx_worker: &std::sync::mpsc::Sender<crate::worker::WorkerRequest>,
     ) {
         ui.vertical(|ui| {
-            ui.style_mut().wrap = Some(true);
-            // Tier 1: Structure Tree
-            ui.vertical(|ui| {
-                ui.label(egui::RichText::new("Structure Tree").strong().size(13.0));
-                ui.add_space(4.0);
-
-                let mut selected_node_id = registry.selected_node_id;
-                egui::ScrollArea::vertical()
-                    .id_salt("tag_tree_scroll")
-                    .max_height(160.0)
-                    .show(ui, |ui| {
-                        if let Some(ref mut root) = registry.root {
-                            Self::render_node_recursive(ui, root, &mut selected_node_id, &mut self.alt_text_edit_buffer, tx_worker);
-                        } else {
-                            ui.label(egui::RichText::new("No structure tree loaded.").weak());
-                        }
-                    });
-                registry.selected_node_id = selected_node_id;
-            });
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+            
+            self.show_structure_tree(ui, registry, tx_worker);
 
             ui.add_space(10.0);
             ui.separator();
             ui.add_space(10.0);
 
-            // Tier 2: Element Properties
-            ui.vertical(|ui| {
-                ui.label(egui::RichText::new("Element Properties").strong().size(13.0));
-                ui.add_space(6.0);
-
-                let selected_id = registry.selected_node_id;
-                let mut node_found = false;
-
-                if let Some(id) = selected_id {
-                    if let Some(ref mut root) = registry.root {
-                        if let Some(node) = Self::find_node_mut_recursive(root, id) {
-                            node_found = true;
-                            egui::Grid::new("properties_grid")
-                                .num_columns(2)
-                                .spacing([10.0, 8.0])
-                                .striped(true)
-                                .show(ui, |ui| {
-                                    ui.label(egui::RichText::new("Tag:").weak());
-                                    let old_tag = node.tag.clone();
-                                    egui::ComboBox::from_id_salt("properties_tag_combobox")
-                                        .selected_text(&node.tag)
-                                        .show_ui(ui, |ui| {
-                                            for t in &["H1", "H2", "P", "Figure", "Table", "List", "Part", "Document"] {
-                                                ui.selectable_value(&mut node.tag, t.to_string(), *t);
-                                            }
-                                        });
-                                    if node.tag != old_tag {
-                                        if let Some(h_id) = node.handle_id {
-                                            let _ = tx_worker.send(crate::worker::WorkerRequest::UpdateNode {
-                                                handle_id: h_id,
-                                                tag: node.tag.clone(),
-                                                alt_text: node.alt_text.clone(),
-                                            });
-                                        }
-                                    }
-                                    ui.end_row();
-
-                                    ui.label(egui::RichText::new("Title:").weak());
-                                    ui.label(egui::RichText::new(&node.title).strong());
-                                    ui.end_row();
-
-                                    ui.label(egui::RichText::new("BBox:").weak());
-                                    if let Some(rect) = node.rect {
-                                        ui.monospace(format!("[{:.1}, {:.1}, {:.1}, {:.1}]", rect[0], rect[1], rect[2], rect[3]));
-                                    } else {
-                                        ui.monospace("None");
-                                    }
-                                    ui.end_row();
-
-                                    ui.label(egui::RichText::new("Lang:").weak());
-                                    ui.label("en-US");
-                                    ui.end_row();
-
-                                    ui.label(egui::RichText::new("Role Map:").weak());
-                                    ui.label("Default Mapping");
-                                    ui.end_row();
-
-                                    ui.label(egui::RichText::new("Alt Text:").weak());
-                                    let mut buf = node.alt_text.clone().unwrap_or_default();
-                                    let text_resp = ui.text_edit_singleline(&mut buf);
-                                    if text_resp.changed() {
-                                        node.alt_text = if buf.trim().is_empty() { None } else { Some(buf) };
-                                        if let Some(h_id) = node.handle_id {
-                                            let _ = tx_worker.send(crate::worker::WorkerRequest::UpdateNode {
-                                                handle_id: h_id,
-                                                tag: node.tag.clone(),
-                                                alt_text: node.alt_text.clone(),
-                                            });
-                                        }
-                                    }
-                                    ui.end_row();
-                                });
-                        }
-                    }
-                }
-
-                if !node_found {
-                    ui.label(egui::RichText::new("Select a node to inspect properties.").weak());
-                }
-            });
+            Self::show_element_properties(ui, registry, tx_worker);
 
             ui.add_space(10.0);
             ui.separator();
             ui.add_space(10.0);
 
-            // Tier 3: Alt-Text Gallery
             self.show_alt_text_gallery(ui, registry, tx_worker);
 
             ui.add_space(10.0);
             ui.separator();
             ui.add_space(10.0);
 
-            // Tier 4: Accessibility Audit
-            ui.vertical(|ui| {
-                ui.label(egui::RichText::new("Accessibility Audit").strong().size(13.0));
-                ui.add_space(6.0);
-
-                let has_doc = registry.root.is_some();
-                let audit_findings_count = registry.audit_findings.len();
-
-                ui.vertical(|ui| {
-                    if has_doc {
-                        let compliant_pct = if audit_findings_count == 0 {
-                            100
-                        } else {
-                            (100 - audit_findings_count * 7).max(10)
-                        };
-                        ui.label(format!("Matterhorn: {}% Compliant", compliant_pct));
-                        ui.label(format!("Findings: {}", audit_findings_count));
-                    } else {
-                        ui.label("Matterhorn: -");
-                        ui.label("Findings: -");
-                    }
-                });
-
-                ui.add_space(4.0);
-
-                egui::ScrollArea::vertical()
-                    .id_salt("audit_scroll")
-                    .max_height(100.0)
-                    .show(ui, |ui| {
-                        if !has_doc {
-                            ui.label(egui::RichText::new("No document loaded.").weak());
-                        } else if registry.audit_findings.is_empty() {
-                            ui.colored_label(egui::Color32::GREEN, "100% Compliant! No errors.");
-                        } else {
-                            for (checkpoint, severity, message, handle_id) in &registry.audit_findings {
-                                let card_resp = ui.vertical(|ui| {
-                                    ui.horizontal(|ui| {
-                                        ui.colored_label(egui::Color32::LIGHT_RED, checkpoint);
-                                        ui.label(format!("({})", severity));
-                                    });
-                                    ui.label(message);
-                                });
-
-                                let id = ui.id().with(checkpoint).with(message);
-                                let response = ui.interact(card_resp.response.rect, id, egui::Sense::click());
-                                if response.clicked() {
-                                    if let Some(h_id) = handle_id {
-                                        if let Some(node_id) = registry.find_node_id_by_handle_id(*h_id) {
-                                            registry.selected_node_id = Some(node_id);
-                                            registry.pending_center_node_id = Some(node_id);
-                                        }
-                                    }
-                                }
-                                if response.hovered() {
-                                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                                }
-                                ui.add_space(3.0);
-                            }
-                        }
-                    });
-            });
+            Self::show_accessibility_audit(ui, registry);
         });
 
         // Apply pending moves
@@ -523,6 +367,180 @@ impl SidebarPanel {
         if ui.input(|i| i.pointer.any_released()) {
             ui.ctx().data_mut(|d| d.insert_temp::<Option<usize>>(egui::Id::new("dragged_node_id"), None));
         }
+    }
+
+    fn show_structure_tree(
+        &mut self,
+        ui: &mut egui::Ui,
+        registry: &mut USTRegistry,
+        tx_worker: &std::sync::mpsc::Sender<crate::worker::WorkerRequest>,
+    ) {
+        ui.vertical(|ui| {
+            ui.label(egui::RichText::new("Structure Tree").strong().size(13.0));
+            ui.add_space(4.0);
+
+            let mut selected_node_id = registry.selected_node_id;
+            egui::ScrollArea::vertical()
+                .id_salt("tag_tree_scroll")
+                .max_height(160.0)
+                .show(ui, |ui| {
+                    if let Some(ref mut root) = registry.root {
+                        Self::render_node_recursive(ui, root, &mut selected_node_id, &mut self.alt_text_edit_buffer, tx_worker);
+                    } else {
+                        ui.label(egui::RichText::new("No structure tree loaded.").weak());
+                    }
+                });
+            registry.selected_node_id = selected_node_id;
+        });
+    }
+
+    fn show_element_properties( // RR-15 Limit: GUI - Render properties grid for selected UST node
+        ui: &mut egui::Ui,
+        registry: &mut USTRegistry,
+        tx_worker: &std::sync::mpsc::Sender<crate::worker::WorkerRequest>,
+    ) {
+        ui.vertical(|ui| {
+            ui.label(egui::RichText::new("Element Properties").strong().size(13.0));
+            ui.add_space(6.0);
+
+            let selected_id = registry.selected_node_id;
+            let mut node_found = false;
+
+            if let Some(id) = selected_id {
+                if let Some(ref mut root) = registry.root {
+                    if let Some(node) = Self::find_node_mut_recursive(root, id) {
+                        node_found = true;
+                        egui::Grid::new("properties_grid")
+                            .num_columns(2)
+                            .spacing([10.0, 8.0])
+                            .striped(true)
+                            .show(ui, |ui| {
+                                ui.label(egui::RichText::new("Tag:").weak());
+                                let old_tag = node.tag.clone();
+                                egui::ComboBox::from_id_salt("properties_tag_combobox")
+                                    .selected_text(&node.tag)
+                                    .show_ui(ui, |ui| {
+                                        for t in &["H1", "H2", "P", "Figure", "Table", "List", "Part", "Document"] {
+                                            ui.selectable_value(&mut node.tag, t.to_string(), *t);
+                                        }
+                                    });
+                                if node.tag != old_tag {
+                                    if let Some(h_id) = node.handle_id {
+                                        let _ = tx_worker.send(crate::worker::WorkerRequest::UpdateNode {
+                                            handle_id: h_id,
+                                            tag: node.tag.clone(),
+                                            alt_text: node.alt_text.clone(),
+                                        });
+                                    }
+                                }
+                                ui.end_row();
+
+                                ui.label(egui::RichText::new("Title:").weak());
+                                ui.label(egui::RichText::new(&node.title).strong());
+                                ui.end_row();
+
+                                ui.label(egui::RichText::new("BBox:").weak());
+                                if let Some(rect) = node.rect {
+                                    ui.monospace(format!("[{:.1}, {:.1}, {:.1}, {:.1}]", rect[0], rect[1], rect[2], rect[3]));
+                                } else {
+                                    ui.monospace("None");
+                                }
+                                ui.end_row();
+
+                                ui.label(egui::RichText::new("Lang:").weak());
+                                ui.label("en-US");
+                                ui.end_row();
+
+                                ui.label(egui::RichText::new("Role Map:").weak());
+                                ui.label("Default Mapping");
+                                ui.end_row();
+
+                                ui.label(egui::RichText::new("Alt Text:").weak());
+                                let mut buf = node.alt_text.clone().unwrap_or_default();
+                                let text_resp = ui.text_edit_singleline(&mut buf);
+                                if text_resp.changed() {
+                                    node.alt_text = if buf.trim().is_empty() { None } else { Some(buf) };
+                                    if let Some(h_id) = node.handle_id {
+                                        let _ = tx_worker.send(crate::worker::WorkerRequest::UpdateNode {
+                                            handle_id: h_id,
+                                            tag: node.tag.clone(),
+                                            alt_text: node.alt_text.clone(),
+                                        });
+                                    }
+                                }
+                                ui.end_row();
+                            });
+                    }
+                }
+            }
+
+            if !node_found {
+                ui.label(egui::RichText::new("Select a node to inspect properties.").weak());
+            }
+        });
+    }
+
+    fn show_accessibility_audit(ui: &mut egui::Ui, registry: &mut USTRegistry) { // RR-15 Limit: GUI - Render accessibility audit findings panel
+        ui.vertical(|ui| {
+            ui.label(egui::RichText::new("Accessibility Audit").strong().size(13.0));
+            ui.add_space(6.0);
+
+            let has_doc = registry.root.is_some();
+            let audit_findings_count = registry.audit_findings.len();
+
+            ui.vertical(|ui| {
+                if has_doc {
+                    let compliant_pct = if audit_findings_count == 0 {
+                        100
+                    } else {
+                        (100 - audit_findings_count * 7).max(10)
+                    };
+                    ui.label(format!("Matterhorn: {}% Compliant", compliant_pct));
+                    ui.label(format!("Findings: {}", audit_findings_count));
+                } else {
+                    ui.label("Matterhorn: -");
+                    ui.label("Findings: -");
+                }
+            });
+
+            ui.add_space(4.0);
+
+            egui::ScrollArea::vertical()
+                .id_salt("audit_scroll")
+                .max_height(100.0)
+                .show(ui, |ui| {
+                    if !has_doc {
+                        ui.label(egui::RichText::new("No document loaded.").weak());
+                    } else if registry.audit_findings.is_empty() {
+                        ui.colored_label(egui::Color32::GREEN, "100% Compliant! No errors.");
+                    } else {
+                        for (checkpoint, severity, message, handle_id) in &registry.audit_findings {
+                            let card_resp = ui.vertical(|ui| {
+                                ui.horizontal(|ui| {
+                                    ui.colored_label(egui::Color32::LIGHT_RED, checkpoint);
+                                    ui.label(format!("({})", severity));
+                                });
+                                ui.label(message);
+                            });
+
+                            let id = ui.id().with(checkpoint).with(message);
+                            let response = ui.interact(card_resp.response.rect, id, egui::Sense::click());
+                            if response.clicked() {
+                                if let Some(h_id) = handle_id {
+                                    if let Some(node_id) = registry.find_node_id_by_handle_id(*h_id) {
+                                        registry.selected_node_id = Some(node_id);
+                                        registry.pending_center_node_id = Some(node_id);
+                                    }
+                                }
+                            }
+                            if response.hovered() {
+                                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                            }
+                            ui.add_space(3.0);
+                        }
+                    }
+                });
+        });
     }
 
     fn find_node_mut_recursive(node: &mut USTNode, id: usize) -> Option<&mut USTNode> {
