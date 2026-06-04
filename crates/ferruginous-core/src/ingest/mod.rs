@@ -67,6 +67,8 @@ pub struct IngestedDocument {
     pub info: Option<Handle<Object>>,
     pub issues: Vec<String>,
     pub font_cache: BTreeMap<u32, Arc<FontResource>>,
+    pub security_method: String,
+    pub permissions: Option<i32>,
 }
 
 impl Ingestor {
@@ -150,7 +152,7 @@ impl Ingestor {
         let arena = PdfArena::new();
         let mut table = RemappingTable::new();
 
-        Self::perform_pass_0_decryption(doc, options)?;
+        let (security_method, permissions) = Self::perform_pass_0_decryption(doc, options)?;
 
         for &id in doc.objects.keys() {
             let handle = arena.alloc_object(Object::Null);
@@ -190,6 +192,8 @@ impl Ingestor {
             info: info_handle,
             issues: all_issues,
             font_cache: handle_font_cache,
+            security_method,
+            permissions,
         })
     }
 
@@ -246,10 +250,33 @@ impl Ingestor {
     fn perform_pass_0_decryption(
         doc: &mut lopdf::Document,
         options: &IngestionOptions,
-    ) -> crate::PdfResult<()> {
+    ) -> crate::PdfResult<(String, Option<i32>)> {
+        let mut security_method = "No Security".to_string();
+        let mut permissions = None;
+
         let security_handler = Self::parse_security_handler(doc, options);
 
-        if let Some(handler) = security_handler {
+        if let Some(handler) = &security_handler {
+            if let Some(encrypt_dict_obj) = doc.trailer.get(b"Encrypt").ok() {
+                let encrypt_obj = if let Ok(id) = encrypt_dict_obj.as_reference() {
+                    doc.objects.get(&id)
+                } else {
+                    Some(encrypt_dict_obj)
+                };
+                if let Some(lopdf::Object::Dictionary(dict)) = encrypt_obj {
+                    let v_val = dict.get(b"V").and_then(|o| o.as_i64()).unwrap_or(0);
+                    let _r_val = dict.get(b"R").and_then(|o| o.as_i64()).unwrap_or(0);
+                    security_method = if v_val == 5 {
+                        "Password Security (AES-256)".to_string()
+                    } else if v_val == 4 {
+                        "Password Security (AES-128)".to_string()
+                    } else {
+                        "Password Security (Standard)".to_string()
+                    };
+                    permissions = dict.get(b"P").and_then(|o| o.as_i64()).map(|p| p as i32).ok();
+                }
+            }
+
             let ids: Vec<lopdf::ObjectId> = doc.objects.keys().cloned().collect();
             for id in ids {
                 if let Some(obj) = doc.objects.get_mut(&id) {
@@ -258,7 +285,7 @@ impl Ingestor {
             }
             doc.trailer.remove(b"Encrypt");
         }
-        Ok(())
+        Ok((security_method, permissions))
     }
 
     /// Iteratively traverses a PDF object tree and decrypts all strings and streams.

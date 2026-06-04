@@ -80,7 +80,7 @@ impl ThumbnailSidebar {
             }
 
             let page_stroke = if is_selected {
-                egui::Stroke::new(2.5, egui::Color32::from_rgb(14, 165, 233))
+                egui::Stroke::new(2.5, egui::Color32::from_rgb(80, 90, 105))
             } else {
                 egui::Stroke::new(1.0, egui::Color32::from_rgb(200, 205, 212))
             };
@@ -161,7 +161,7 @@ impl ThumbnailSidebar {
                         ui.painter().rect_filled(
                             mask,
                             0.0,
-                            egui::Color32::from_rgba_unmultiplied(14, 165, 233, 40),
+                            egui::Color32::from_rgba_unmultiplied(120, 125, 135, 45),
                         );
                     }
                     ui.painter().rect_stroke(
@@ -181,7 +181,7 @@ impl ThumbnailSidebar {
                 ui.painter().rect_filled(
                     mask,
                     0.0,
-                    egui::Color32::from_rgba_unmultiplied(14, 165, 233, 40),
+                    egui::Color32::from_rgba_unmultiplied(120, 125, 135, 45),
                 );
             }
             ui.painter().rect_stroke(
@@ -201,11 +201,11 @@ impl ThumbnailSidebar {
 
         let font_id = egui::FontId::proportional(11.0);
         let text_color = if is_selected {
-            egui::Color32::from_rgb(3, 105, 161)
+            egui::Color32::from_rgb(50, 55, 65)
         } else if is_visible {
-            egui::Color32::from_rgb(0, 120, 215)
+            egui::Color32::from_rgb(90, 100, 110)
         } else {
-            egui::Color32::from_rgb(80, 90, 105)
+            egui::Color32::from_rgb(140, 145, 155)
         };
         ui.painter().text(
             egui::pos2(rect.center().x, rect.max.y - 8.0),

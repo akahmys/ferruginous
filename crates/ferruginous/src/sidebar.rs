@@ -304,8 +304,20 @@ fn update_alt_text(node: &mut USTNode, id: usize, new_alt: Option<String>) -> bo
     false
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum LeftTab {
+    DocumentInfo,
+    Bookmarks,
+    Attachments,
+    Structure,
+    Properties,
+    AltText,
+    Audit,
+}
+
 pub struct SidebarPanel {
     pub active_tab: usize, // Unused but kept for API compatibility
+    pub active_left_tab: LeftTab,
     pub alt_text_edit_buffer: String,
 }
 
@@ -319,8 +331,37 @@ impl SidebarPanel {
     pub fn new() -> Self {
         Self {
             active_tab: 0,
+            active_left_tab: LeftTab::DocumentInfo,
             alt_text_edit_buffer: String::new(),
         }
+    }
+    pub fn show_icon_bar(&mut self, ui: &mut egui::Ui, locale_mgr: &crate::locale::LocaleManager, active_lang: &str) {
+        ui.vertical_centered(|ui| {
+            ui.style_mut().spacing.item_spacing = egui::vec2(0.0, 8.0);
+            ui.add_space(8.0);
+
+            let tabs = [
+                (LeftTab::DocumentInfo, "\u{e0cc}", locale_mgr.tr(active_lang, "tab_doc_info")),
+                (LeftTab::Bookmarks, "\u{e060}", locale_mgr.tr(active_lang, "tab_bookmarks")),
+                (LeftTab::Attachments, "\u{e12d}", locale_mgr.tr(active_lang, "tab_attachments")),
+                (LeftTab::Structure, "\u{e33c}", locale_mgr.tr(active_lang, "tab_structure")),
+                (LeftTab::Properties, "\u{e29a}", locale_mgr.tr(active_lang, "tab_properties")),
+                (LeftTab::AltText, "\u{e0f6}", locale_mgr.tr(active_lang, "tab_alt_text")),
+                (LeftTab::Audit, "\u{e1fe}", locale_mgr.tr(active_lang, "tab_audit")),
+            ];
+
+            for (tab, icon, tooltip) in tabs {
+                let is_active = self.active_left_tab == tab;
+                let mut btn = egui::Button::new(egui::RichText::new(icon).size(16.0))
+                    .min_size(egui::vec2(36.0, 36.0));
+                if is_active {
+                    btn = btn.stroke(egui::Stroke::new(1.5, egui::Color32::from_gray(80)));
+                }
+                if ui.add(btn).on_hover_text(tooltip).clicked() {
+                    self.active_left_tab = tab;
+                }
+            }
+        });
     }
 
     pub fn show(
@@ -328,29 +369,55 @@ impl SidebarPanel {
         ui: &mut egui::Ui,
         registry: &mut USTRegistry,
         tx_worker: &std::sync::mpsc::Sender<crate::worker::WorkerRequest>,
+        pdf_name: &Option<String>,
+        total_pages: usize,
+        metadata: &Option<ferruginous_core::metadata::MetadataInfo>,
+        file_size: Option<usize>,
+        pdf_version: &Option<String>,
+        security_method: &Option<String>,
+        permissions: Option<i32>,
+        page_sizes: &[(f64, f64)],
+        fonts: &[ferruginous_core::font::FontSummary],
+        locale_mgr: &crate::locale::LocaleManager,
+        active_lang: &str,
     ) {
         ui.vertical(|ui| {
-            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
-            
-            self.show_structure_tree(ui, registry, tx_worker);
-
-            ui.add_space(10.0);
-            ui.separator();
-            ui.add_space(10.0);
-
-            Self::show_element_properties(ui, registry, tx_worker);
-
-            ui.add_space(10.0);
-            ui.separator();
-            ui.add_space(10.0);
-
-            self.show_alt_text_gallery(ui, registry, tx_worker);
-
-            ui.add_space(10.0);
-            ui.separator();
-            ui.add_space(10.0);
-
-            Self::show_accessibility_audit(ui, registry);
+            match self.active_left_tab {
+                LeftTab::DocumentInfo => {
+                    self.show_document_info(
+                        ui,
+                        pdf_name,
+                        total_pages,
+                        metadata,
+                        file_size,
+                        pdf_version,
+                        security_method,
+                        permissions,
+                        page_sizes,
+                        fonts,
+                        locale_mgr,
+                        active_lang,
+                    );
+                }
+                LeftTab::Bookmarks => {
+                    self.show_bookmarks(ui, total_pages, locale_mgr, active_lang);
+                }
+                LeftTab::Attachments => {
+                    self.show_attachments(ui, locale_mgr, active_lang);
+                }
+                LeftTab::Structure => {
+                    self.show_structure_tree(ui, registry, tx_worker, locale_mgr, active_lang);
+                }
+                LeftTab::Properties => {
+                    Self::show_element_properties(ui, registry, tx_worker, locale_mgr, active_lang);
+                }
+                LeftTab::AltText => {
+                    self.show_alt_text_gallery(ui, registry, tx_worker, locale_mgr, active_lang);
+                }
+                LeftTab::Audit => {
+                    Self::show_accessibility_audit(ui, registry, locale_mgr, active_lang);
+                }
+            }
         });
 
         // Apply pending moves
@@ -369,14 +436,377 @@ impl SidebarPanel {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn show_document_info(
+        &self,
+        ui: &mut egui::Ui,
+        pdf_name: &Option<String>,
+        total_pages: usize,
+        metadata: &Option<ferruginous_core::metadata::MetadataInfo>,
+        file_size: Option<usize>,
+        pdf_version: &Option<String>,
+        security_method: &Option<String>,
+        permissions: Option<i32>,
+        page_sizes: &[(f64, f64)],
+        fonts: &[ferruginous_core::font::FontSummary],
+        locale_mgr: &crate::locale::LocaleManager,
+        active_lang: &str,
+    ) {
+        fn format_pdf_date(date_str: &str) -> String {
+            if date_str.starts_with("D:") {
+                let clean = &date_str[2..];
+                if clean.len() >= 14 {
+                    let year = &clean[0..4];
+                    let month = &clean[4..6];
+                    let day = &clean[6..8];
+                    let hour = &clean[8..10];
+                    let min = &clean[10..12];
+                    let sec = &clean[12..14];
+                    return format!("{}/{}/{} {}:{}:{}", year, month, day, hour, min, sec);
+                }
+            }
+            date_str.to_string()
+        }
+
+        let format_file_size = |bytes: usize| -> String {
+            fn format_num(n: usize) -> String {
+                let s = n.to_string();
+                let mut result = String::new();
+                let len = s.len();
+                for (i, c) in s.chars().enumerate() {
+                    result.push(c);
+                    if (len - i - 1) % 3 == 0 && i != len - 1 {
+                        result.push(',');
+                    }
+                }
+                result
+            }
+
+            if bytes >= 1_048_576 {
+                let mb = format!("{:.2}", bytes as f64 / 1_048_576.0);
+                if active_lang == "ja" {
+                    format!("{} MB ({} バイト)", mb, format_num(bytes))
+                } else {
+                    format!("{} MB ({} bytes)", mb, format_num(bytes))
+                }
+            } else if bytes >= 1024 {
+                let kb = format!("{:.2}", bytes as f64 / 1024.0);
+                if active_lang == "ja" {
+                    format!("{} KB ({} バイト)", kb, format_num(bytes))
+                } else {
+                    format!("{} KB ({} bytes)", kb, format_num(bytes))
+                }
+            } else {
+                if active_lang == "ja" {
+                    format!("{} バイト", format_num(bytes))
+                } else {
+                    format!("{} bytes", format_num(bytes))
+                }
+            }
+        };
+
+        let format_page_size = |w: f64, h: f64| -> String {
+            let w_mm = w * 25.4 / 72.0;
+            let h_mm = h * 25.4 / 72.0;
+            
+            let is_a4 = (w_mm - 210.0).abs() < 2.0 && (h_mm - 297.0).abs() < 2.0;
+            let is_a4_landscape = (w_mm - 297.0).abs() < 2.0 && (h_mm - 210.0).abs() < 2.0;
+            let is_letter = (w_mm - 215.9).abs() < 2.0 && (h_mm - 279.4).abs() < 2.0;
+            let is_letter_landscape = (w_mm - 279.4).abs() < 2.0 && (h_mm - 215.9).abs() < 2.0;
+
+            let format_name = if is_a4 {
+                " (A4)"
+            } else if is_a4_landscape {
+                if active_lang == "ja" { " (A4 横)" } else { " (A4 Landscape)" }
+            } else if is_letter {
+                " (Letter)"
+            } else if is_letter_landscape {
+                if active_lang == "ja" { " (Letter 横)" } else { " (Letter Landscape)" }
+            } else {
+                ""
+            };
+
+            format!("{:.1} x {:.1} mm{}", w_mm, h_mm, format_name)
+        };
+
+        ui.vertical(|ui| {
+            ui.label(egui::RichText::new(locale_mgr.tr(active_lang, "info_title")).strong().size(16.0));
+            ui.add_space(8.0);
+
+            egui::ScrollArea::vertical()
+                .id_salt("doc_info_scroll")
+                .show(ui, |ui| {
+                    // 1. 概要 (Description)
+                    ui.group(|ui| {
+                        ui.set_width(ui.available_width());
+                        ui.label(egui::RichText::new(locale_mgr.tr(active_lang, "info_summary")).strong().size(13.0));
+                        ui.add_space(4.0);
+
+                        egui::Grid::new("description_grid")
+                            .num_columns(2)
+                            .spacing([12.0, 8.0])
+                            .striped(true)
+                            .show(ui, |ui| {
+                                ui.label(egui::RichText::new(locale_mgr.tr(active_lang, "info_filename")).weak());
+                                if let Some(name) = pdf_name {
+                                    ui.label(egui::RichText::new(name).strong());
+                                } else {
+                                    ui.label(egui::RichText::new(locale_mgr.tr(active_lang, "info_not_loaded")).weak());
+                                }
+                                ui.end_row();
+
+                                let empty = "-".to_string();
+                                let title = metadata.as_ref().and_then(|m| m.title.clone()).unwrap_or_else(|| empty.clone());
+                                let author = metadata.as_ref().and_then(|m| m.author.clone()).unwrap_or_else(|| empty.clone());
+                                let subject = metadata.as_ref().and_then(|m| m.subject.clone()).unwrap_or_else(|| empty.clone());
+                                let keywords = metadata.as_ref().and_then(|m| m.keywords.clone()).unwrap_or_else(|| empty.clone());
+                                let creator = metadata.as_ref().and_then(|m| m.creator.clone()).unwrap_or_else(|| empty.clone());
+                                let producer = metadata.as_ref().and_then(|m| m.producer.clone()).unwrap_or_else(|| empty.clone());
+                                let created = metadata.as_ref().and_then(|m| m.creation_date.as_ref().map(|d| format_pdf_date(d))).unwrap_or_else(|| empty.clone());
+                                let modified = metadata.as_ref().and_then(|m| m.mod_date.as_ref().map(|d| format_pdf_date(d))).unwrap_or_else(|| empty.clone());
+
+                                ui.label(egui::RichText::new(locale_mgr.tr(active_lang, "info_doc_title")).weak());
+                                ui.label(egui::RichText::new(title).strong());
+                                ui.end_row();
+
+                                ui.label(egui::RichText::new(locale_mgr.tr(active_lang, "info_author")).weak());
+                                ui.label(egui::RichText::new(author).strong());
+                                ui.end_row();
+
+                                ui.label(egui::RichText::new(locale_mgr.tr(active_lang, "info_subject")).weak());
+                                ui.label(egui::RichText::new(subject).strong());
+                                ui.end_row();
+
+                                ui.label(egui::RichText::new(locale_mgr.tr(active_lang, "info_keywords")).weak());
+                                ui.label(egui::RichText::new(keywords).strong());
+                                ui.end_row();
+
+                                ui.label(egui::RichText::new(locale_mgr.tr(active_lang, "info_created")).weak());
+                                ui.label(egui::RichText::new(created).strong());
+                                ui.end_row();
+
+                                ui.label(egui::RichText::new(locale_mgr.tr(active_lang, "info_modified")).weak());
+                                ui.label(egui::RichText::new(modified).strong());
+                                ui.end_row();
+
+                                ui.label(egui::RichText::new(locale_mgr.tr(active_lang, "info_application")).weak());
+                                ui.label(egui::RichText::new(creator).strong());
+                                ui.end_row();
+
+                                ui.label(egui::RichText::new(locale_mgr.tr(active_lang, "info_producer")).weak());
+                                ui.label(egui::RichText::new(producer).strong());
+                                ui.end_row();
+                            });
+                    });
+
+                    ui.add_space(8.0);
+
+                    // 2. ファイル仕様 (File Specification)
+                    ui.group(|ui| {
+                        ui.set_width(ui.available_width());
+                        ui.label(egui::RichText::new(locale_mgr.tr(active_lang, "info_file_spec")).strong().size(13.0));
+                        ui.add_space(4.0);
+
+                        egui::Grid::new("file_spec_grid")
+                            .num_columns(2)
+                            .spacing([12.0, 8.0])
+                            .striped(true)
+                            .show(ui, |ui| {
+                                ui.label(egui::RichText::new(locale_mgr.tr(active_lang, "info_pdf_version")).weak());
+                                let ver = pdf_version.as_deref().unwrap_or("1.7");
+                                ui.label(egui::RichText::new(ver).strong());
+                                ui.end_row();
+
+                                ui.label(egui::RichText::new(locale_mgr.tr(active_lang, "info_file_size")).weak());
+                                if let Some(size) = file_size {
+                                    ui.label(egui::RichText::new(format_file_size(size)).strong());
+                                } else {
+                                    ui.label(egui::RichText::new("-").weak());
+                                }
+                                ui.end_row();
+
+                                ui.label(egui::RichText::new(locale_mgr.tr(active_lang, "info_page_count")).weak());
+                                ui.label(egui::RichText::new(total_pages.to_string()).strong());
+                                ui.end_row();
+
+                                ui.label(egui::RichText::new(locale_mgr.tr(active_lang, "info_page_size")).weak());
+                                if let Some(first_size) = page_sizes.first() {
+                                    let formatted = format_page_size(first_size.0, first_size.1);
+                                    if page_sizes.len() > 1 {
+                                        ui.label(egui::RichText::new(format!("{} ({})", formatted, locale_mgr.tr(active_lang, "info_other_sizes"))).strong());
+                                    } else {
+                                        ui.label(egui::RichText::new(formatted).strong());
+                                    }
+                                } else {
+                                    ui.label(egui::RichText::new("-").weak());
+                                }
+                                ui.end_row();
+                            });
+                    });
+
+                    ui.add_space(8.0);
+
+                    // 3. セキュリティと制限事項 (Security & Restrictions)
+                    ui.group(|ui| {
+                        ui.set_width(ui.available_width());
+                        ui.label(egui::RichText::new(locale_mgr.tr(active_lang, "info_security")).strong().size(13.0));
+                        ui.add_space(4.0);
+
+                        egui::Grid::new("security_grid")
+                            .num_columns(2)
+                            .spacing([12.0, 8.0])
+                            .striped(true)
+                            .show(ui, |ui| {
+                                ui.label(egui::RichText::new(locale_mgr.tr(active_lang, "info_security_method")).weak());
+                                 let method_fallback;
+                                 let method = match security_method.as_deref() {
+                                     Some(m) => m,
+                                     None => {
+                                         method_fallback = locale_mgr.tr(active_lang, "info_sec_none");
+                                         &method_fallback
+                                     }
+                                 };
+                                 ui.label(egui::RichText::new(method).strong());
+                                 ui.end_row();
+
+                                // Permissions bits helper
+                                let has_perm = |bit: i32| -> String {
+                                    if permissions.is_none() {
+                                        locale_mgr.tr(active_lang, "info_perm_allowed")
+                                    } else {
+                                        let p = permissions.unwrap();
+                                        if (p & bit) != 0 {
+                                            locale_mgr.tr(active_lang, "info_perm_allowed")
+                                        } else {
+                                            locale_mgr.tr(active_lang, "info_perm_not_allowed")
+                                        }
+                                    }
+                                };
+
+                                ui.label(egui::RichText::new(locale_mgr.tr(active_lang, "info_print")).weak());
+                                ui.label(egui::RichText::new(has_perm(4)).strong());
+                                ui.end_row();
+
+                                ui.label(egui::RichText::new(locale_mgr.tr(active_lang, "info_modify")).weak());
+                                ui.label(egui::RichText::new(has_perm(8)).strong());
+                                ui.end_row();
+
+                                ui.label(egui::RichText::new(locale_mgr.tr(active_lang, "info_copy")).weak());
+                                ui.label(egui::RichText::new(has_perm(16)).strong());
+                                ui.end_row();
+
+                                ui.label(egui::RichText::new(locale_mgr.tr(active_lang, "info_accessibility_copy")).weak());
+                                ui.label(egui::RichText::new(has_perm(512)).strong());
+                                ui.end_row();
+
+                                ui.label(egui::RichText::new(locale_mgr.tr(active_lang, "info_extract")).weak());
+                                ui.label(egui::RichText::new(has_perm(16)).strong());
+                                ui.end_row();
+
+                                ui.label(egui::RichText::new(locale_mgr.tr(active_lang, "info_annotation")).weak());
+                                ui.label(egui::RichText::new(has_perm(32)).strong());
+                                ui.end_row();
+
+                                ui.label(egui::RichText::new(locale_mgr.tr(active_lang, "info_form")).weak());
+                                ui.label(egui::RichText::new(has_perm(256)).strong());
+                                ui.end_row();
+
+                                ui.label(egui::RichText::new(locale_mgr.tr(active_lang, "info_sign")).weak());
+                                ui.label(egui::RichText::new(has_perm(256)).strong());
+                                ui.end_row();
+
+                                ui.label(egui::RichText::new(locale_mgr.tr(active_lang, "info_assembly")).weak());
+                                ui.label(egui::RichText::new(has_perm(1024)).strong());
+                                ui.end_row();
+                            });
+                    });
+
+                    ui.add_space(8.0);
+
+                    // 4. フォント情報 (Fonts)
+                    ui.group(|ui| {
+                        ui.set_width(ui.available_width());
+                        let fonts_title = locale_mgr.tr(active_lang, "info_fonts_in_use").replace("{}", &fonts.len().to_string());
+                        egui::CollapsingHeader::new(egui::RichText::new(fonts_title).strong().size(13.0))
+                            .default_open(false)
+                            .show(ui, |ui| {
+                                if fonts.is_empty() {
+                                    ui.label(egui::RichText::new(locale_mgr.tr(active_lang, "info_no_fonts")).weak());
+                                } else {
+                                    for font in fonts {
+                                        ui.vertical(|ui| {
+                                            let embed_status = if font.is_embedded {
+                                                if font.is_subset {
+                                                    locale_mgr.tr(active_lang, "info_font_embedded_subset")
+                                                } else {
+                                                    locale_mgr.tr(active_lang, "info_font_embedded")
+                                                }
+                                            } else {
+                                                "".to_string()
+                                            };
+                                            ui.label(egui::RichText::new(format!("🔠 {}{}", font.name, embed_status)).strong());
+                                            ui.indent("font_details", |ui| {
+                                                ui.label(egui::RichText::new(locale_mgr.tr(active_lang, "info_font_type").replace("{}", &font.font_type)).weak());
+                                                ui.label(egui::RichText::new(locale_mgr.tr(active_lang, "info_font_encoding").replace("{}", &font.encoding)).weak());
+                                            });
+                                            ui.add_space(4.0);
+                                        });
+                                    }
+                                }
+                            });
+                    });
+                });
+        });
+    }
+
+    fn show_bookmarks(&self, ui: &mut egui::Ui, total_pages: usize, locale_mgr: &crate::locale::LocaleManager, active_lang: &str) {
+        ui.vertical(|ui| {
+            ui.label(egui::RichText::new(locale_mgr.tr(active_lang, "bookmarks_title")).strong().size(13.0));
+            ui.add_space(6.0);
+            
+            if total_pages == 0 {
+                ui.label(egui::RichText::new(locale_mgr.tr(active_lang, "no_doc_loaded")).weak());
+            } else {
+                egui::ScrollArea::vertical()
+                    .id_salt("bookmarks_scroll")
+                    .show(ui, |ui| {
+                        for i in 1..=total_pages.min(5) {
+                            if ui.selectable_label(false, format!("🔖 Chapter {}: Page {}", i, i)).clicked() {
+                                // Navigator target page trigger
+                            }
+                        }
+                        if total_pages > 5 {
+                            ui.label(egui::RichText::new("...").weak());
+                        }
+                    });
+            }
+        });
+    }
+
+    fn show_attachments(&self, ui: &mut egui::Ui, locale_mgr: &crate::locale::LocaleManager, active_lang: &str) {
+        ui.vertical(|ui| {
+            ui.label(egui::RichText::new(locale_mgr.tr(active_lang, "attachments_title")).strong().size(13.0));
+            ui.add_space(6.0);
+            
+            ui.label(egui::RichText::new(locale_mgr.tr(active_lang, "attachments_none")).weak());
+            ui.add_space(8.0);
+            if ui.button(locale_mgr.tr(active_lang, "attachments_add")).clicked() {
+                // Future file dialog attachment trigger
+            }
+        });
+    }
+
+
     fn show_structure_tree(
         &mut self,
         ui: &mut egui::Ui,
         registry: &mut USTRegistry,
         tx_worker: &std::sync::mpsc::Sender<crate::worker::WorkerRequest>,
+        locale_mgr: &crate::locale::LocaleManager,
+        active_lang: &str,
     ) {
         ui.vertical(|ui| {
-            ui.label(egui::RichText::new("Structure Tree").strong().size(13.0));
+            ui.label(egui::RichText::new(locale_mgr.tr(active_lang, "structure_tree_title")).strong().size(13.0));
             ui.add_space(4.0);
 
             let mut selected_node_id = registry.selected_node_id;
@@ -387,7 +817,7 @@ impl SidebarPanel {
                     if let Some(ref mut root) = registry.root {
                         Self::render_node_recursive(ui, root, &mut selected_node_id, &mut self.alt_text_edit_buffer, tx_worker);
                     } else {
-                        ui.label(egui::RichText::new("No structure tree loaded.").weak());
+                        ui.label(egui::RichText::new(locale_mgr.tr(active_lang, "structure_tree_none")).weak());
                     }
                 });
             registry.selected_node_id = selected_node_id;
@@ -398,9 +828,11 @@ impl SidebarPanel {
         ui: &mut egui::Ui,
         registry: &mut USTRegistry,
         tx_worker: &std::sync::mpsc::Sender<crate::worker::WorkerRequest>,
+        locale_mgr: &crate::locale::LocaleManager,
+        active_lang: &str,
     ) {
         ui.vertical(|ui| {
-            ui.label(egui::RichText::new("Element Properties").strong().size(13.0));
+            ui.label(egui::RichText::new(locale_mgr.tr(active_lang, "element_properties_title")).strong().size(13.0));
             ui.add_space(6.0);
 
             let selected_id = registry.selected_node_id;
@@ -415,7 +847,7 @@ impl SidebarPanel {
                             .spacing([10.0, 8.0])
                             .striped(true)
                             .show(ui, |ui| {
-                                ui.label(egui::RichText::new("Tag:").weak());
+                                ui.label(egui::RichText::new(locale_mgr.tr(active_lang, "element_prop_tag")).weak());
                                 let old_tag = node.tag.clone();
                                 egui::ComboBox::from_id_salt("properties_tag_combobox")
                                     .selected_text(&node.tag)
@@ -435,11 +867,11 @@ impl SidebarPanel {
                                 }
                                 ui.end_row();
 
-                                ui.label(egui::RichText::new("Title:").weak());
+                                ui.label(egui::RichText::new(locale_mgr.tr(active_lang, "element_prop_title")).weak());
                                 ui.label(egui::RichText::new(&node.title).strong());
                                 ui.end_row();
 
-                                ui.label(egui::RichText::new("BBox:").weak());
+                                ui.label(egui::RichText::new(locale_mgr.tr(active_lang, "element_prop_bbox")).weak());
                                 if let Some(rect) = node.rect {
                                     ui.monospace(format!("[{:.1}, {:.1}, {:.1}, {:.1}]", rect[0], rect[1], rect[2], rect[3]));
                                 } else {
@@ -447,15 +879,15 @@ impl SidebarPanel {
                                 }
                                 ui.end_row();
 
-                                ui.label(egui::RichText::new("Lang:").weak());
+                                ui.label(egui::RichText::new(locale_mgr.tr(active_lang, "element_prop_lang")).weak());
                                 ui.label("en-US");
                                 ui.end_row();
 
-                                ui.label(egui::RichText::new("Role Map:").weak());
+                                ui.label(egui::RichText::new(locale_mgr.tr(active_lang, "element_prop_role_map")).weak());
                                 ui.label("Default Mapping");
                                 ui.end_row();
 
-                                ui.label(egui::RichText::new("Alt Text:").weak());
+                                ui.label(egui::RichText::new(locale_mgr.tr(active_lang, "element_prop_alt_text")).weak());
                                 let mut buf = node.alt_text.clone().unwrap_or_default();
                                 let text_resp = ui.text_edit_singleline(&mut buf);
                                 if text_resp.changed() {
@@ -475,14 +907,14 @@ impl SidebarPanel {
             }
 
             if !node_found {
-                ui.label(egui::RichText::new("Select a node to inspect properties.").weak());
+                ui.label(egui::RichText::new(locale_mgr.tr(active_lang, "element_properties_none")).weak());
             }
         });
     }
 
-    fn show_accessibility_audit(ui: &mut egui::Ui, registry: &mut USTRegistry) { // RR-15 Limit: GUI - Render accessibility audit findings panel
+    fn show_accessibility_audit(ui: &mut egui::Ui, registry: &mut USTRegistry, locale_mgr: &crate::locale::LocaleManager, active_lang: &str) { // RR-15 Limit: GUI - Render accessibility audit findings panel
         ui.vertical(|ui| {
-            ui.label(egui::RichText::new("Accessibility Audit").strong().size(13.0));
+            ui.label(egui::RichText::new(locale_mgr.tr(active_lang, "audit_title")).strong().size(13.0));
             ui.add_space(6.0);
 
             let has_doc = registry.root.is_some();
@@ -495,11 +927,11 @@ impl SidebarPanel {
                     } else {
                         (100 - audit_findings_count * 7).max(10)
                     };
-                    ui.label(format!("Matterhorn: {}% Compliant", compliant_pct));
-                    ui.label(format!("Findings: {}", audit_findings_count));
+                    ui.label(locale_mgr.tr(active_lang, "audit_compliant").replace("{}", &compliant_pct.to_string()));
+                    ui.label(locale_mgr.tr(active_lang, "audit_findings").replace("{}", &audit_findings_count.to_string()));
                 } else {
-                    ui.label("Matterhorn: -");
-                    ui.label("Findings: -");
+                    ui.label(locale_mgr.tr(active_lang, "audit_compliant_none"));
+                    ui.label(locale_mgr.tr(active_lang, "audit_findings_none"));
                 }
             });
 
@@ -510,9 +942,9 @@ impl SidebarPanel {
                 .max_height(100.0)
                 .show(ui, |ui| {
                     if !has_doc {
-                        ui.label(egui::RichText::new("No document loaded.").weak());
+                        ui.label(egui::RichText::new(locale_mgr.tr(active_lang, "no_doc_loaded")).weak());
                     } else if registry.audit_findings.is_empty() {
-                        ui.colored_label(egui::Color32::GREEN, "100% Compliant! No errors.");
+                        ui.colored_label(egui::Color32::GREEN, locale_mgr.tr(active_lang, "audit_success_100"));
                     } else {
                         for (checkpoint, severity, message, handle_id) in &registry.audit_findings {
                             let card_resp = ui.vertical(|ui| {
@@ -663,9 +1095,11 @@ impl SidebarPanel {
         ui: &mut egui::Ui,
         registry: &mut USTRegistry,
         tx_worker: &std::sync::mpsc::Sender<crate::worker::WorkerRequest>,
+        locale_mgr: &crate::locale::LocaleManager,
+        active_lang: &str,
     ) {
         ui.vertical(|ui| {
-            ui.label(egui::RichText::new("Alt-Text Gallery").strong());
+            ui.label(egui::RichText::new(locale_mgr.tr(active_lang, "alt_text_gallery_title")).strong());
             ui.add_space(2.0);
 
             let mut figures = Vec::new();
@@ -674,18 +1108,20 @@ impl SidebarPanel {
             }
 
             if figures.is_empty() {
-                ui.label("No figures found.");
+                ui.label(locale_mgr.tr(active_lang, "alt_text_gallery_none"));
             } else {
                 egui::ScrollArea::horizontal().id_salt("figure_gallery_carousel").show(ui, |ui| {
                     ui.horizontal(|ui| {
                         for fig in &figures {
                             ui.vertical(|ui| {
-                                ui.set_min_width(120.0);
+                                ui.set_min_width(200.0);
                                 ui.vertical(|ui| {
-                                    ui.colored_label(egui::Color32::LIGHT_BLUE, fig.title.clone());
+                                    let fig_title = locale_mgr.tr(active_lang, "alt_text_card_fig").replace("{}", &fig.id.to_string());
+                                    ui.colored_label(egui::Color32::LIGHT_BLUE, fig_title);
                                     
                                     let mut buf = fig.alt_text.clone().unwrap_or_default();
-                                    let response = ui.add(egui::TextEdit::singleline(&mut buf).hint_text("Description..."));
+                                    let hint = locale_mgr.tr(active_lang, "alt_text_card_no_alt");
+                                    let response = ui.add(egui::TextEdit::singleline(&mut buf).hint_text(hint));
                                     
                                     if response.changed() {
                                         let new_alt = if buf.trim().is_empty() { None } else { Some(buf.clone()) };

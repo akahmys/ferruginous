@@ -55,6 +55,8 @@ pub struct Document {
     /// Parsed FontResource cache to prevent redundant parsing across pages.
     pub font_cache: Arc<RwLock<BTreeMap<Handle<Object>, Arc<FontResource>>>>,
     pub force_fallback: bool,
+    pub security_method: String,
+    pub permissions: Option<i32>,
 }
 
 impl Document {
@@ -69,6 +71,8 @@ impl Document {
             system_fonts: Arc::new(BTreeMap::new()),
             font_cache: Arc::new(RwLock::new(BTreeMap::new())),
             force_fallback: false,
+            security_method: "No Security".to_string(),
+            permissions: None,
         }
     }
 
@@ -88,6 +92,8 @@ impl Document {
             system_fonts: Arc::new(BTreeMap::new()),
             font_cache: Arc::new(RwLock::new(BTreeMap::new())),
             force_fallback: false,
+            security_method: "No Security".to_string(),
+            permissions: None,
         }
     }
 
@@ -110,6 +116,8 @@ impl Document {
         let mut doc =
             Self::with_issues(ingested.arena, ingested.root, ingested.info, ingested.issues);
         doc.force_fallback = options.force_fallback;
+        doc.security_method = ingested.security_method;
+        doc.permissions = ingested.permissions;
 
         // Populate font cache from ingestion
         {

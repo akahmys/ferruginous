@@ -65,6 +65,17 @@ pub struct FerruginousApp {
     pub show_command_palette: bool,
     pub command_palette_search: String,
     pub last_viewport_rect: Option<egui::Rect>,
+    pub show_about_modal: bool,
+    pub locale_mgr: crate::locale::LocaleManager,
+    pub active_language: String,
+    pub show_settings_modal: bool,
+    pub doc_metadata: Option<ferruginous_core::metadata::MetadataInfo>,
+    pub doc_file_size: Option<usize>,
+    pub doc_version: Option<String>,
+    pub doc_security_method: Option<String>,
+    pub doc_permissions: Option<i32>,
+    pub doc_page_sizes: Vec<(f64, f64)>,
+    pub doc_fonts: Vec<ferruginous_core::font::FontSummary>,
 }
 
 impl FerruginousApp {
@@ -176,6 +187,17 @@ impl FerruginousApp {
             show_command_palette: false,
             command_palette_search: String::new(),
             last_viewport_rect: None,
+            show_about_modal: false,
+            locale_mgr: crate::locale::LocaleManager::new(),
+            active_language: "ja".to_string(), // Defaulting to Japanese since the user requested in Japanese
+            show_settings_modal: false,
+            doc_metadata: None,
+            doc_file_size: None,
+            doc_version: None,
+            doc_security_method: None,
+            doc_permissions: None,
+            doc_page_sizes: Vec::new(),
+            doc_fonts: Vec::new(),
         }
     }
 
@@ -219,6 +241,13 @@ impl FerruginousApp {
         self.clear_thumbnails_pending = true;
         self.is_loading = true;
         self.loading_message = "1/4: Decrypting and normalizing document...".to_string();
+        self.doc_metadata = None;
+        self.doc_file_size = None;
+        self.doc_version = None;
+        self.doc_security_method = None;
+        self.doc_permissions = None;
+        self.doc_page_sizes.clear();
+        self.doc_fonts.clear();
         self.reset_view();
         let _ = self.tx_worker.send(WorkerRequest::Open { data, name });
         ctx.request_repaint();
@@ -241,10 +270,24 @@ impl FerruginousApp {
                     num_pages,
                     page_sizes,
                     ust_root,
+                    file_size,
+                    version,
+                    metadata,
+                    security_method,
+                    permissions,
+                    fonts,
                 } => {
                     self.pdf_name = name;
                     self.total_pages = num_pages;
                     self.compute_layouts(&page_sizes);
+                    self.doc_page_sizes = page_sizes;
+
+                    self.doc_file_size = Some(file_size);
+                    self.doc_version = Some(version);
+                    self.doc_metadata = Some(metadata);
+                    self.doc_security_method = Some(security_method);
+                    self.doc_permissions = permissions;
+                    self.doc_fonts = fonts;
 
                     // Load parsed accessibility tag tree
                     self.ust_registry.root = ust_root;
@@ -720,52 +763,59 @@ impl FerruginousApp {
     }
 }
 
-impl eframe::App for FerruginousApp {
-    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) { // RR-15 Limit: Dispatcher - Main application UI shell layout routing layout panels and windows
-        ui.ctx().set_visuals(egui::Visuals::light());
-        ui.ctx().global_style_mut(|style| {
+impl FerruginousApp {
+    fn apply_global_styles(&self, ctx: &egui::Context) {
+        ctx.set_visuals(egui::Visuals::light());
+        ctx.global_style_mut(|style| {
             style.visuals.selection.stroke = egui::Stroke::NONE;
             style.visuals.widgets.active.bg_stroke = egui::Stroke::NONE;
             style.visuals.widgets.hovered.bg_stroke = egui::Stroke::NONE;
             style.visuals.widgets.inactive.bg_stroke = egui::Stroke::NONE;
             style.visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, egui::Color32::from_gray(210));
         });
+    }
 
-        let entire_rect = ui.max_rect();
-        ui.painter().rect_filled(entire_rect, 0.0, ui.visuals().window_fill);
+    fn render_left_side_panels(&mut self, ui: &mut egui::Ui) {
+        // 1. Left Icon Bar (Vertical column, full height)
+        let locale_mgr = &self.locale_mgr;
+        let active_lang = &self.active_language;
 
-        let ctx = ui.ctx().clone();
+        egui::Panel::left("left_icon_bar")
+            .resizable(false)
+            .default_size(50.0)
+            .show_inside(ui, |ui| {
+                self.sidebar_panel.show_icon_bar(ui, locale_mgr, active_lang);
+            });
 
-        // Render panels from startup (empty state if no document loaded)
-        // 1. Context Panel (260px width, left side) - Rendered first to prevent coordinate alignment issues on resize boundary
-        egui::Panel::left("context_panel")
+        // 2. Context Panel (600px default width, left side, resizable)
+        egui::Panel::left("context_panel_v4")
             .resizable(true)
-            .default_size(260.0)
-            .size_range(200.0..=360.0)
+            .default_size(600.0)
+            .size_range(260.0..=900.0)
             .show_inside(ui, |ui| {
                 egui::Frame::NONE
                     .inner_margin(egui::Margin::same(12))
                     .show(ui, |ui| {
-                        ui.vertical(|ui| {
-                            ui.label(egui::RichText::new("File Information").strong().size(13.0));
-                            ui.add_space(6.0);
-                            ui.horizontal(|ui| {
-                                ui.label(egui::RichText::new("Name:").weak());
-                                if let Some(name) = &self.pdf_name {
-                                    ui.label(egui::RichText::new(name).strong());
-                                } else {
-                                    ui.label(egui::RichText::new("(No document loaded)").weak());
-                                }
-                            });
-                            ui.add_space(10.0);
-                            ui.separator();
-                            ui.add_space(10.0);
-                            self.sidebar_panel.show(ui, &mut self.ust_registry, &self.tx_worker);
-                        });
+                        self.sidebar_panel.show(
+                            ui,
+                            &mut self.ust_registry,
+                            &self.tx_worker,
+                            &self.pdf_name,
+                            self.total_pages,
+                            &self.doc_metadata,
+                            self.doc_file_size,
+                            &self.doc_version,
+                            &self.doc_security_method,
+                            self.doc_permissions,
+                            &self.doc_page_sizes,
+                            &self.doc_fonts,
+                            locale_mgr,
+                            active_lang,
+                        );
                     });
             });
 
-        // 2. Arlington Dictionary Inspector (Left side, next to context panel)
+        // 3. Arlington Dictionary Inspector (Left side, next to context panel)
         if self.show_inspector {
             let selected_tag = self.ust_registry.selected_node_id
                 .and_then(|id| {
@@ -783,36 +833,44 @@ impl eframe::App for FerruginousApp {
                     egui::Frame::NONE
                         .inner_margin(egui::Margin::same(12))
                         .show(ui, |ui| {
-                            self.arlington_inspector.show(ui, selected_tag);
+                            self.arlington_inspector.show(ui, selected_tag, locale_mgr, active_lang);
                         });
                 });
         }
+    }
 
-        // 3. Icon Bar (Right-most, 50px width)
+    fn render_right_side_panels(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+
+        // 1. Icon Bar (Right-most, 50px width)
         egui::Panel::right("icon_bar")
             .resizable(false)
             .default_size(50.0)
             .show_inside(ui, |ui| {
                 ui.vertical_centered(|ui| {
+                    ui.style_mut().spacing.item_spacing = egui::vec2(0.0, 8.0);
                     ui.add_space(8.0);
                     let load_btn = egui::Button::new(egui::RichText::new("\u{e247}").size(16.0))
                         .min_size(egui::vec2(36.0, 36.0));
-                    if ui.add(load_btn).on_hover_text("Load PDF").clicked()
+                    if ui.add(load_btn).on_hover_text(self.locale_mgr.tr(&self.active_language, "tooltip_load_pdf")).clicked()
                         && let Some(p) = rfd::FileDialog::new().add_filter("PDF", &["pdf"]).pick_file()
                     {
                         self.open_file(p, &ctx);
                     }
-                    ui.separator();
 
                     // Disable editing tools if no document loaded
                     let has_doc = self.total_pages > 0;
                     ui.add_enabled_ui(has_doc, |ui| {
+                        ui.style_mut().spacing.item_spacing = egui::vec2(0.0, 8.0);
+
                         // Redact Brush
                         let redact_is_active = self.redaction_manager.is_active;
-                        let redact_btn = egui::Button::new(egui::RichText::new("\u{e28f}").size(16.0))
-                            .min_size(egui::vec2(36.0, 36.0))
-                            .selected(redact_is_active);
-                        if ui.add(redact_btn).on_hover_text("Redact Brush").clicked() {
+                        let mut redact_btn = egui::Button::new(egui::RichText::new("\u{e28f}").size(16.0))
+                            .min_size(egui::vec2(36.0, 36.0));
+                        if redact_is_active {
+                            redact_btn = redact_btn.stroke(egui::Stroke::new(1.5, egui::Color32::from_gray(80)));
+                        }
+                        if ui.add(redact_btn).on_hover_text(self.locale_mgr.tr(&self.active_language, "tooltip_redact_brush")).clicked() {
                             self.redaction_manager.is_active = !redact_is_active;
                             if self.redaction_manager.is_active {
                                 self.selection_manager.clear();
@@ -823,10 +881,12 @@ impl eframe::App for FerruginousApp {
 
                         // Tagging Brush
                         let tagging_is_active = self.selection_manager.is_tagging_brush_active;
-                        let tagging_btn = egui::Button::new(egui::RichText::new("\u{e17f}").size(16.0))
-                            .min_size(egui::vec2(36.0, 36.0))
-                            .selected(tagging_is_active);
-                        if ui.add(tagging_btn).on_hover_text("Tagging Brush").clicked() {
+                        let mut tagging_btn = egui::Button::new(egui::RichText::new("\u{e17f}").size(16.0))
+                            .min_size(egui::vec2(36.0, 36.0));
+                        if tagging_is_active {
+                            tagging_btn = tagging_btn.stroke(egui::Stroke::new(1.5, egui::Color32::from_gray(80)));
+                        }
+                        if ui.add(tagging_btn).on_hover_text(self.locale_mgr.tr(&self.active_language, "tooltip_tagging_brush")).clicked() {
                             self.selection_manager.is_tagging_brush_active = !tagging_is_active;
                             if self.selection_manager.is_tagging_brush_active {
                                 self.selection_manager.clear();
@@ -837,10 +897,12 @@ impl eframe::App for FerruginousApp {
 
                         // Caliper Brush
                         let caliper_is_active = self.caliper_tool.is_active;
-                        let caliper_btn = egui::Button::new(egui::RichText::new("\u{e14b}").size(16.0))
-                            .min_size(egui::vec2(36.0, 36.0))
-                            .selected(caliper_is_active);
-                        if ui.add(caliper_btn).on_hover_text("Caliper Brush").clicked() {
+                        let mut caliper_btn = egui::Button::new(egui::RichText::new("\u{e14b}").size(16.0))
+                            .min_size(egui::vec2(36.0, 36.0));
+                        if caliper_is_active {
+                            caliper_btn = caliper_btn.stroke(egui::Stroke::new(1.5, egui::Color32::from_gray(80)));
+                        }
+                        if ui.add(caliper_btn).on_hover_text(self.locale_mgr.tr(&self.active_language, "tooltip_caliper_brush")).clicked() {
                             self.caliper_tool.is_active = !caliper_is_active;
                             if self.caliper_tool.is_active {
                                 self.selection_manager.clear();
@@ -849,73 +911,99 @@ impl eframe::App for FerruginousApp {
                             }
                         }
 
-                        ui.separator();
-                        let inspector_btn = egui::Button::new(egui::RichText::new("\u{e151}").size(16.0))
-                            .min_size(egui::vec2(36.0, 36.0))
-                            .selected(self.show_inspector);
-                        if ui.add(inspector_btn).on_hover_text("Inspector").clicked() {
+                        // Inspector
+                        let mut inspector_btn = egui::Button::new(egui::RichText::new("\u{e151}").size(16.0))
+                            .min_size(egui::vec2(36.0, 36.0));
+                        if self.show_inspector {
+                            inspector_btn = inspector_btn.stroke(egui::Stroke::new(1.5, egui::Color32::from_gray(80)));
+                        }
+                        if ui.add(inspector_btn).on_hover_text(self.locale_mgr.tr(&self.active_language, "tooltip_inspector")).clicked() {
                             self.show_inspector = !self.show_inspector;
                         }
 
-                        ui.separator();
+                        // Export PDF
                         let export_btn = egui::Button::new(egui::RichText::new("\u{e14d}").size(16.0))
                             .min_size(egui::vec2(36.0, 36.0));
-                        if ui.add(export_btn).on_hover_text("Export PDF").clicked() {
+                        if ui.add(export_btn).on_hover_text(self.locale_mgr.tr(&self.active_language, "tooltip_export_pdf")).clicked() {
                             self.show_export_wizard = true;
                         }
                     });
+
+                    let current_height = ui.available_height();
+                    if current_height > 100.0 {
+                        ui.add_space(current_height - 90.0);
+                    }
+
+                    // Settings Button
+                    let settings_btn = egui::Button::new(egui::RichText::new("\u{e30b}").size(16.0))
+                        .min_size(egui::vec2(36.0, 36.0));
+                    if ui.add(settings_btn).on_hover_text(self.locale_mgr.tr(&self.active_language, "tooltip_settings")).clicked() {
+                        self.show_settings_modal = true;
+                    }
+
+                    // About Button
+                    let about_btn = egui::Button::new(egui::RichText::new("\u{e082}").size(16.0))
+                        .min_size(egui::vec2(36.0, 36.0));
+                    if ui.add(about_btn).on_hover_text(self.locale_mgr.tr(&self.active_language, "tooltip_about")).clicked() {
+                        self.show_about_modal = true;
+                    }
                 });
             });
 
-        // 4. Thumbnails Panel (200px width, inner-right)
+        // 2. Thumbnails Panel (200px width, inner-right)
         crate::thumbnail_sidebar::ThumbnailSidebar::show(self, ui, frame);
+    }
 
-        // 5. Status Bar (28px height, bottom)
+    fn render_status_bar(&self, ui: &mut egui::Ui) {
         egui::Panel::bottom("status_bar")
             .default_size(28.0)
             .resizable(false)
             .show_inside(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label("Status: Ready");
+                    ui.label(self.locale_mgr.tr(&self.active_language, "status_ready"));
                     ui.separator();
                     if self.total_pages > 0 {
                         let current_page = self.view.visible_pages.first().cloned().unwrap_or(0);
-                        ui.label(format!("Page {} of {}", current_page + 1, self.total_pages));
+                        let indicator = self.locale_mgr.tr(&self.active_language, "page_indicator")
+                            .replacen("{}", &(current_page + 1).to_string(), 1)
+                            .replacen("{}", &self.total_pages.to_string(), 1);
+                        ui.label(indicator);
                     } else {
-                        ui.label("No document loaded");
+                        ui.label(self.locale_mgr.tr(&self.active_language, "no_doc_loaded"));
                     }
                     ui.separator();
                     if self.show_reading_order {
-                        ui.label("Reading Order Overlay: Enabled");
+                        ui.label(self.locale_mgr.tr(&self.active_language, "reading_order_enabled"));
                     } else {
-                        ui.label("Reading Order Overlay: Disabled");
+                        ui.label(self.locale_mgr.tr(&self.active_language, "reading_order_disabled"));
                     }
                 });
             });
+    }
 
-        self.update_vello(ui, frame);
-
+    fn render_overlay_windows(&mut self, ctx: &egui::Context) {
         if self.show_export_wizard {
-            self.show_export_wizard_window(ui.ctx());
+            self.show_export_wizard_window(ctx);
         }
 
         // Show Command Palette window overlay
-        crate::command_palette::CommandPalette::show(self, ui.ctx());
+        crate::command_palette::CommandPalette::show(self, ctx);
 
         // Show interactive Create Semantic Tag popup dialog on visual tag selector brush highlights
         if let Some(req) = self.selection_manager.pending_tag_request.clone() {
             let mut show_popup = true;
-            egui::Window::new("🏷️ Create Semantic Tag")
+            let popup_title = self.locale_mgr.tr(&self.active_language, "tag_popup_title");
+            egui::Window::new(popup_title)
                 .open(&mut show_popup)
                 .resizable(false)
                 .collapsible(false)
-                .show(ui.ctx(), |ui| {
-                    ui.label("Selected Text:");
+                .show(ctx, |ui| {
+                    ui.label(self.locale_mgr.tr(&self.active_language, "tag_popup_selected"));
                     ui.group(|ui| {
                         ui.label(&req.text);
                     });
                     ui.add_space(5.0);
-                    ui.label("Select tag level to assign to structure tree:");
+                    ui.label(self.locale_mgr.tr(&self.active_language, "tag_popup_instruction"));
 
                     ui.horizontal(|ui| {
                         if ui.button("H1").clicked() {
@@ -936,7 +1024,7 @@ impl eframe::App for FerruginousApp {
                         }
                     });
 
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(self.locale_mgr.tr(&self.active_language, "tag_popup_cancel")).clicked() {
                         self.selection_manager.pending_tag_request = None;
                     }
                 });
@@ -944,5 +1032,117 @@ impl eframe::App for FerruginousApp {
                 self.selection_manager.pending_tag_request = None;
             }
         }
+
+        // Show Settings Modal
+        if self.show_settings_modal {
+            let mut show_settings = true;
+            let title = self.locale_mgr.tr(&self.active_language, "settings_title");
+            egui::Window::new(title)
+                .open(&mut show_settings)
+                .resizable(false)
+                .collapsible(false)
+                .default_width(280.0)
+                .show(ctx, |ui| {
+                    ui.vertical(|ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(self.locale_mgr.tr(&self.active_language, "settings_language_label"));
+                            let current_lang = self.active_language.clone();
+                            egui::ComboBox::from_id_salt("settings_lang_combobox")
+                                .selected_text(&current_lang)
+                                .show_ui(ui, |ui| {
+                                    for lang in self.locale_mgr.available_languages() {
+                                        ui.selectable_value(&mut self.active_language, lang.clone(), lang);
+                                    }
+                                });
+                        });
+                        
+                        ui.add_space(12.0);
+                        ui.separator();
+                        ui.add_space(8.0);
+                        ui.vertical_centered(|ui| {
+                            if ui.button(self.locale_mgr.tr(&self.active_language, "settings_close")).clicked() {
+                                self.show_settings_modal = false;
+                            }
+                        });
+                    });
+                });
+            if !show_settings {
+                self.show_settings_modal = false;
+            }
+        }
+
+        // Show About Modal
+        if self.show_about_modal {
+            let mut show_about = true;
+            let about_title = self.locale_mgr.tr(&self.active_language, "about_title");
+            egui::Window::new(about_title)
+                .open(&mut show_about)
+                .resizable(false)
+                .collapsible(false)
+                .default_width(320.0)
+                .show(ctx, |ui| {
+                    ui.vertical_centered(|ui| {
+                        ui.label(egui::RichText::new(self.locale_mgr.tr(&self.active_language, "about_app_name")).strong().size(18.0));
+                        ui.label(egui::RichText::new(format!("{} 0.1.0", self.locale_mgr.tr(&self.active_language, "about_version"))).weak());
+                        ui.add_space(8.0);
+                        ui.label(self.locale_mgr.tr(&self.active_language, "about_description"));
+                        ui.add_space(12.0);
+                        ui.separator();
+                        ui.add_space(8.0);
+                        ui.label(egui::RichText::new(self.locale_mgr.tr(&self.active_language, "about_third_party")).strong());
+                        ui.add_space(4.0);
+                    });
+
+                    egui::ScrollArea::vertical()
+                        .max_height(150.0)
+                        .show(ui, |ui| {
+                            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+                            let credits = [
+                                ("lopdf", "MIT License", "Low-level PDF parsing"),
+                                ("pdf-writer", "Apache-2.0 License", "PDF object serialization"),
+                                ("vello", "Apache-2.0 / MIT", "GPU vector graphics"),
+                                ("egui / eframe", "MIT / Apache-2.0", "GUI library"),
+                                ("Lucide Icons", "ISC License", "Icon font asset"),
+                            ];
+                            for (name, license, purpose) in credits {
+                                ui.horizontal(|ui| {
+                                    ui.label(egui::RichText::new(name).strong());
+                                    ui.label(format!("({})", license));
+                                });
+                                ui.label(egui::RichText::new(purpose).weak());
+                                ui.add_space(4.0);
+                            }
+                        });
+
+                    ui.add_space(8.0);
+                    ui.separator();
+                    ui.add_space(8.0);
+                    ui.vertical_centered(|ui| {
+                        if ui.button(self.locale_mgr.tr(&self.active_language, "about_close")).clicked() {
+                            self.show_about_modal = false;
+                        }
+                    });
+                });
+            if !show_about {
+                self.show_about_modal = false;
+            }
+        }
+    }
+}
+
+impl eframe::App for FerruginousApp {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) { // RR-15 Limit: Dispatcher - Main application UI shell layout routing layout panels and windows
+        let ctx = ui.ctx().clone();
+        self.apply_global_styles(&ctx);
+
+        let entire_rect = ui.max_rect();
+        ui.painter().rect_filled(entire_rect, 0.0, ui.visuals().window_fill);
+
+        self.render_left_side_panels(ui);
+        self.render_right_side_panels(ui, frame);
+        self.render_status_bar(ui);
+
+        self.update_vello(ui, frame);
+        self.render_overlay_windows(&ctx);
     }
 }

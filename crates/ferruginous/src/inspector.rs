@@ -102,20 +102,20 @@ impl ArlingtonInspectorPanel {
         }
     }
 
-    pub fn show(&mut self, ui: &mut egui::Ui, selected_tag: Option<&str>) { // RR-15 Limit: GUI - Arlington Dictionary Inspector panel show
+    pub fn show(&mut self, ui: &mut egui::Ui, selected_tag: Option<&str>, locale_mgr: &crate::locale::LocaleManager, active_lang: &str) { // RR-15 Limit: GUI - Arlington Dictionary Inspector panel show
         let tag = selected_tag.unwrap_or("Catalog");
         self.active_object_name = format!("Dictionary: <{}>", tag);
 
         ui.vertical(|ui| {
             ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
-            ui.heading("🔍 Arlington Dictionary Inspector");
+            ui.heading(locale_mgr.tr(active_lang, "inspector_title"));
             ui.add_space(5.0);
 
             // Filter search input
             ui.horizontal(|ui| {
-                ui.label("Filter:");
+                ui.label(locale_mgr.tr(active_lang, "inspector_filter"));
                 ui.text_edit_singleline(&mut self.search_query);
-                if ui.button("Clear").clicked() {
+                if ui.button(locale_mgr.tr(active_lang, "inspector_clear")).clicked() {
                     self.search_query.clear();
                 }
             });

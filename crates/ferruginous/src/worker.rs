@@ -31,6 +31,12 @@ pub enum WorkerResponse {
         num_pages: usize,
         page_sizes: Vec<(f64, f64)>, // (width, height)
         ust_root: Option<crate::sidebar::USTNode>,
+        file_size: usize,
+        version: String,
+        metadata: ferruginous_core::metadata::MetadataInfo,
+        security_method: String,
+        permissions: Option<i32>,
+        fonts: Vec<ferruginous_core::font::FontSummary>,
     },
     LoadingProgress {
         message: String,
@@ -169,6 +175,7 @@ fn resolve_struct_tree_root(doc: &PdfDocument, next_id: &mut usize) -> Option<cr
 }
 
 fn handle_open(data: Bytes, name: Option<String>, tx: &Sender<WorkerResponse>) -> Option<PdfDocument> {
+    let file_size = data.len();
     let tx_clone = tx.clone();
     let options = ferruginous_core::ingest::IngestionOptions {
         progress_callback: Some(Arc::new(move |msg| {
@@ -199,11 +206,23 @@ fn handle_open(data: Bytes, name: Option<String>, tx: &Sender<WorkerResponse>) -
                 });
             }
 
+            let version = doc.get_summary().ok().map(|s| s.version).unwrap_or_else(|| "1.7".to_string());
+            let metadata = doc.inner().metadata();
+            let security_method = doc.inner().security_method.clone();
+            let permissions = doc.inner().permissions;
+            let fonts = doc.inner().fonts();
+
             let _ = tx.send(WorkerResponse::DocumentLoaded {
                 name,
                 num_pages,
                 page_sizes,
                 ust_root,
+                file_size,
+                version,
+                metadata,
+                security_method,
+                permissions,
+                fonts,
             });
             Some(doc)
         }

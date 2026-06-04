@@ -12,7 +12,9 @@ impl ExportWizard {
         }
 
         let mut should_close = false;
-        egui::Window::new("💾 Production Studio Export Wizard")
+        let window_title = app.locale_mgr.tr(&app.active_language, "export_title");
+        let confirm_text = app.locale_mgr.tr(&app.active_language, "export_confirm_btn");
+        egui::Window::new(window_title)
             .open(&mut open)
             .resizable(false)
             .default_width(360.0)
@@ -24,7 +26,7 @@ impl ExportWizard {
                 ui.separator();
 
                 ui.vertical_centered_justified(|ui| {
-                    if ui.button("🚀 Confirm & Export PDF").clicked() {
+                    if ui.button(confirm_text).clicked() {
                         should_close = Self::handle_confirm_export_pdf(app);
                     }
                 });
@@ -34,24 +36,24 @@ impl ExportWizard {
     }
 
     fn render_compliance_checkboxes(app: &mut crate::app::FerruginousApp, ui: &mut egui::Ui) {
-        ui.heading("Export & Compliance Options");
+        ui.heading(app.locale_mgr.tr(&app.active_language, "export_options_heading"));
         ui.add_space(5.0);
 
-        ui.checkbox(&mut app.export_upgrade_pdf20, "Upgrade to PDF 2.0 (ISO 32000-2)");
-        ui.checkbox(&mut app.export_linearize, "Hint Table Linearization (Fast Web View)");
-        ui.checkbox(&mut app.export_vacuum, "Vacuum Pass (Remove orphan/unreachable objects)");
-        ui.checkbox(&mut app.export_compress, "Flate-Compress Content Streams");
-        ui.checkbox(&mut app.export_apply_tags, "Compile & Inject USTRegistry Tags (PDF/UA-2)");
-        ui.checkbox(&mut app.export_burn_redactions, "Burn Physical Redactions (Atomic Stream Sanitization)");
+        ui.checkbox(&mut app.export_upgrade_pdf20, app.locale_mgr.tr(&app.active_language, "export_opt_upgrade"));
+        ui.checkbox(&mut app.export_linearize, app.locale_mgr.tr(&app.active_language, "export_opt_linearize"));
+        ui.checkbox(&mut app.export_vacuum, app.locale_mgr.tr(&app.active_language, "export_opt_vacuum"));
+        ui.checkbox(&mut app.export_compress, app.locale_mgr.tr(&app.active_language, "export_opt_compress"));
+        ui.checkbox(&mut app.export_apply_tags, app.locale_mgr.tr(&app.active_language, "export_opt_apply_tags"));
+        ui.checkbox(&mut app.export_burn_redactions, app.locale_mgr.tr(&app.active_language, "export_opt_burn_redactions"));
     }
 
     fn render_signature_section(app: &mut crate::app::FerruginousApp, ui: &mut egui::Ui) {
         ui.separator();
-        ui.heading("Digital Signature (PAdES)");
+        ui.heading(app.locale_mgr.tr(&app.active_language, "export_signature_heading"));
         ui.add_space(5.0);
 
         ui.horizontal(|ui| {
-            if ui.button("Select Certificate (.pfx/.p12)").clicked() {
+            if ui.button(app.locale_mgr.tr(&app.active_language, "export_sig_select_cert")).clicked() {
                 if let Some(p) = rfd::FileDialog::new()
                     .add_filter("PKCS#12", &["pfx", "p12"])
                     .pick_file()
@@ -62,26 +64,29 @@ impl ExportWizard {
             if let Some(path) = &app.cert_path {
                 ui.label(path.file_name().unwrap_or(&path.as_os_str()).to_string_lossy());
             } else {
-                ui.label("No certificate loaded");
+                ui.label(app.locale_mgr.tr(&app.active_language, "export_sig_no_cert"));
             }
         });
 
         if app.cert_path.is_some() {
             ui.horizontal(|ui| {
-                ui.label("Password:");
+                ui.label(app.locale_mgr.tr(&app.active_language, "export_sig_password"));
                 ui.add(egui::TextEdit::singleline(&mut app.cert_password).password(true));
             });
 
             ui.horizontal(|ui| {
-                if ui.toggle_value(&mut app.is_placing_signature, "Place Signature Field").clicked() {
+                if ui.toggle_value(&mut app.is_placing_signature, app.locale_mgr.tr(&app.active_language, "export_sig_place_field")).clicked() {
                     if app.is_placing_signature {
                         app.show_export_wizard = false;
                     }
                 }
                 if let Some((page, rect)) = &app.signature_position {
-                    ui.label(format!("Placed: Page {}, Pos ({:.1}, {:.1})", page + 1, rect.min.x, rect.min.y));
+                    ui.label(app.locale_mgr.tr(&app.active_language, "export_sig_placed")
+                        .replace("{}", &(page + 1).to_string())
+                        .replace("{:.1}", &format!("{:.1}", rect.min.x)) // simple replacement workaround
+                        .replace("{:.1}", &format!("{:.1}", rect.min.y)));
                 } else {
-                    ui.label("Not placed yet");
+                    ui.label(app.locale_mgr.tr(&app.active_language, "export_sig_not_placed"));
                 }
             });
         }
@@ -89,11 +94,11 @@ impl ExportWizard {
 
     fn render_draft_management_section(app: &mut crate::app::FerruginousApp, ui: &mut egui::Ui) {
         ui.separator();
-        ui.heading("Draft Management");
+        ui.heading(app.locale_mgr.tr(&app.active_language, "export_draft_heading"));
         ui.add_space(5.0);
 
         ui.horizontal(|ui| {
-            if ui.button("Save UST Draft JSON").clicked() {
+            if ui.button(app.locale_mgr.tr(&app.active_language, "export_draft_save")).clicked() {
                 if let Some(p) = rfd::FileDialog::new()
                     .add_filter("JSON", &["json"])
                     .set_file_name("ust_draft.json")
@@ -101,22 +106,24 @@ impl ExportWizard {
                 {
                     if let Ok(json_str) = serde_json::to_string_pretty(&app.ust_registry) {
                         if std::fs::write(&p, json_str).is_ok() {
-                            app.error = Some(format!("Draft JSON saved to {:?}", p.file_name().unwrap_or(&p.as_os_str())));
+                            let msg = app.locale_mgr.tr(&app.active_language, "export_draft_saved")
+                                .replace("{:?}", &format!("{:?}", p.file_name().unwrap_or(&p.as_os_str())));
+                            app.error = Some(msg);
                         } else {
-                            app.error = Some("Failed to write draft JSON file".to_string());
+                            app.error = Some(app.locale_mgr.tr(&app.active_language, "export_draft_save_fail"));
                         }
                     }
                 }
             }
 
-            if ui.button("Load UST Draft JSON").clicked() {
+            if ui.button(app.locale_mgr.tr(&app.active_language, "export_draft_load")).clicked() {
                 if let Some(p) = rfd::FileDialog::new().add_filter("JSON", &["json"]).pick_file() {
                     if let Ok(bytes) = std::fs::read(&p) {
                         if let Ok(draft) = serde_json::from_slice::<USTRegistry>(&bytes) {
                             app.ust_registry = draft;
-                            app.error = Some("Draft JSON loaded successfully".to_string());
+                            app.error = Some(app.locale_mgr.tr(&app.active_language, "export_draft_loaded"));
                         } else {
-                            app.error = Some("Invalid draft JSON structure".to_string());
+                            app.error = Some(app.locale_mgr.tr(&app.active_language, "export_draft_load_fail"));
                         }
                     }
                 }

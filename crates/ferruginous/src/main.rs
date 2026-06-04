@@ -37,6 +37,7 @@ mod command_palette;
 mod export_wizard;
 mod inspector;
 mod interaction;
+mod locale;
 mod redaction;
 mod redaction_studio;
 mod sidebar;
@@ -44,6 +45,7 @@ mod thumbnail_sidebar;
 mod vello_egui;
 mod view;
 mod worker;
+
 
 use app::FerruginousApp;
 use std::path::PathBuf;
@@ -55,7 +57,7 @@ fn main() -> eframe::Result<()> {
 
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1200.0, 800.0])
+            .with_inner_size([1600.0, 900.0])
             .with_title("Ferruginous"),
         renderer: eframe::Renderer::Wgpu,
         ..Default::default()

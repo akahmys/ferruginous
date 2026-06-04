@@ -9,7 +9,8 @@ impl CommandPalette {
         }
 
         let mut close_palette = false;
-        egui::Window::new("⌨️ Command Palette")
+        let title = app.locale_mgr.tr(&app.active_language, "cmd_palette_title");
+        egui::Window::new(title)
             .open(&mut show_palette)
             .resizable(false)
             .collapsible(false)
@@ -24,24 +25,43 @@ impl CommandPalette {
                 ui.separator();
 
                 let query = app.command_palette_search.to_lowercase();
+                
+                // Get localized command names and descriptions
+                let cmd_load_pdf = app.locale_mgr.tr(&app.active_language, "cmd_load_pdf");
+                let cmd_load_pdf_desc = app.locale_mgr.tr(&app.active_language, "cmd_load_pdf_desc");
+                let cmd_reset_view = app.locale_mgr.tr(&app.active_language, "cmd_reset_view");
+                let cmd_reset_view_desc = app.locale_mgr.tr(&app.active_language, "cmd_reset_view_desc");
+                let cmd_redact_brush = app.locale_mgr.tr(&app.active_language, "cmd_redact_brush");
+                let cmd_redact_brush_desc = app.locale_mgr.tr(&app.active_language, "cmd_redact_brush_desc");
+                let cmd_tagging_brush = app.locale_mgr.tr(&app.active_language, "cmd_tagging_brush");
+                let cmd_tagging_brush_desc = app.locale_mgr.tr(&app.active_language, "cmd_tagging_brush_desc");
+                let cmd_caliper_brush = app.locale_mgr.tr(&app.active_language, "cmd_caliper_brush");
+                let cmd_caliper_brush_desc = app.locale_mgr.tr(&app.active_language, "cmd_caliper_brush_desc");
+                let cmd_inspector = app.locale_mgr.tr(&app.active_language, "cmd_inspector");
+                let cmd_inspector_desc = app.locale_mgr.tr(&app.active_language, "cmd_inspector_desc");
+                let cmd_export_pdf = app.locale_mgr.tr(&app.active_language, "cmd_export_pdf");
+                let cmd_export_pdf_desc = app.locale_mgr.tr(&app.active_language, "cmd_export_pdf_desc");
+                let cmd_reading_order = app.locale_mgr.tr(&app.active_language, "cmd_reading_order");
+                let cmd_reading_order_desc = app.locale_mgr.tr(&app.active_language, "cmd_reading_order_desc");
+
                 let commands = vec![
-                    ("Load PDF", "Load a new PDF document"),
-                    ("Reset View", "Reset zoom and pan"),
-                    ("Redact Brush", "Toggle Redact Brush tool"),
-                    ("Tagging Brush", "Toggle Tagging Brush tool"),
-                    ("Caliper Brush", "Toggle Caliper Brush tool"),
-                    ("Inspector", "Toggle Arlington PDF Inspector"),
-                    ("Export PDF", "Open production export wizard"),
-                    ("Reading Order", "Toggle reading order bar overlay"),
+                    (&cmd_load_pdf, &cmd_load_pdf_desc, "Load PDF"),
+                    (&cmd_reset_view, &cmd_reset_view_desc, "Reset View"),
+                    (&cmd_redact_brush, &cmd_redact_brush_desc, "Redact Brush"),
+                    (&cmd_tagging_brush, &cmd_tagging_brush_desc, "Tagging Brush"),
+                    (&cmd_caliper_brush, &cmd_caliper_brush_desc, "Caliper Brush"),
+                    (&cmd_inspector, &cmd_inspector_desc, "Inspector"),
+                    (&cmd_export_pdf, &cmd_export_pdf_desc, "Export PDF"),
+                    (&cmd_reading_order, &cmd_reading_order_desc, "Reading Order"),
                 ];
 
-                for (cmd_name, cmd_desc) in commands {
+                for (cmd_name, cmd_desc, cmd_action) in commands {
                     if query.is_empty()
                         || cmd_name.to_lowercase().contains(&query)
                         || cmd_desc.to_lowercase().contains(&query)
                     {
                         if ui.selectable_label(false, format!("{} — {}", cmd_name, cmd_desc)).clicked() {
-                            match cmd_name {
+                            match cmd_action {
                                 "Load PDF" => {
                                     if let Some(p) = rfd::FileDialog::new().add_filter("PDF", &["pdf"]).pick_file() {
                                         app.open_file(p, ctx);
