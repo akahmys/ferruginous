@@ -65,7 +65,10 @@ impl PDFView {
         visuals.widgets.inactive.bg_stroke = egui::Stroke::NONE;
         visuals.widgets.noninteractive.bg_stroke = egui::Stroke::NONE;
 
-        let response = ui.allocate_rect(viewport_rect, egui::Sense::drag());
+        let mut drag_rect = viewport_rect;
+        drag_rect.min.x += 8.0;
+        drag_rect.max.x -= 8.0;
+        let response = ui.allocate_rect(drag_rect, egui::Sense::drag());
         self.handle_input(ui, &response, viewport_rect);
         self.clamp_pan(viewport_rect, layouts);
 

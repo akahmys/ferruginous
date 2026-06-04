@@ -4,7 +4,7 @@
 
 The project strictly adheres to the **RR-15 (Reliable Rust-15)** hardening protocol—a mission-critical safety standard derived from aerospace principles to ensure memory safety, bit-perfect determinism, and absolute reliability.
 
-**🚀 Status: Rendering Pipeline Stabilized** — As of May 2026, the core engine has achieved stable rendering parity for complex CJK layouts, advanced path construction, and high-fidelity color management (Intel SDM baseline).
+**🚀 Status: Interactive GUI Editor & Multi-Language Support Fully Operational** — As of June 2026, the platform features a GPU-accelerated egui + wgpu + Vello interactive workspace supporting real-time CJK/Japanese text selection, accessibility tagging, CAD-grade path snapping/measurement (Caliper Tool), secure permanent redaction (Atomic Redaction Studio), and built-in English/Japanese UI localization.
 
 ---
 
@@ -60,7 +60,7 @@ Ferruginous utilizes a multi-pass "Sublimation" pipeline to transform volatile p
 
 - **`ferruginous`**: 
     - The flagship desktop interface.
-    - Integrated **egui** and **wgpu** for 120fps canvas interaction and asynchronous document streaming.
+    - Integrated **egui** and **wgpu** for 120fps canvas interaction, asynchronous document streaming, CAD measurement, Accessibility Tagging, and Atomic Redaction Studio.
 - **`fepdf`**: 
     - The universal CLI toolkit for structural auditing, repair, and production-grade PDF 2.0 output.
 - **`ferruginous-sdk`**: 
@@ -71,6 +71,10 @@ Ferruginous utilizes a multi-pass "Sublimation" pipeline to transform volatile p
     - The GPU-accelerated rendering backend utilizing **Vello** for compute-shader-based path rasterization.
 - **`ferruginous-mcp`**: 
     - The bridge for AI agents, implementing MCP servers for autonomous document diagnostics.
+- **`ferruginous-wasm`**: 
+    - WebAssembly bindings for running the Ferruginous engine in browser environments.
+- **`ferruginous-macros`**: 
+    - Internal procedural macros for compile-time generation and RR-15 validation helpers.
 
 ---
 

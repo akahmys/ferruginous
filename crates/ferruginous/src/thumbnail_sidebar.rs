@@ -8,6 +8,7 @@ impl ThumbnailSidebar {
 
         egui::Panel::right("thumbnail_sidebar")
             .resizable(true)
+            .show_separator_line(true)
             .default_size(200.0)
             .size_range(160.0..=300.0)
             .frame(panel_frame)

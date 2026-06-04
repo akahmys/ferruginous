@@ -328,7 +328,6 @@ impl FerruginousApp {
                         "Successfully exported compliant PDF to {:?}",
                         path.file_name().unwrap_or(&path.as_os_str())
                     ));
-                    self.show_export_wizard = false;
                     ctx.request_repaint();
                 }
                 WorkerResponse::Error(err) => {
@@ -787,33 +786,36 @@ impl FerruginousApp {
                 self.sidebar_panel.show_icon_bar(ui, locale_mgr, active_lang);
             });
 
-        // 2. Context Panel (600px default width, left side, resizable)
-        egui::Panel::left("context_panel_v4")
-            .resizable(true)
-            .default_size(600.0)
-            .size_range(260.0..=900.0)
-            .show_inside(ui, |ui| {
-                egui::Frame::NONE
-                    .inner_margin(egui::Margin::same(12))
-                    .show(ui, |ui| {
-                        self.sidebar_panel.show(
-                            ui,
-                            &mut self.ust_registry,
-                            &self.tx_worker,
-                            &self.pdf_name,
-                            self.total_pages,
-                            &self.doc_metadata,
-                            self.doc_file_size,
-                            &self.doc_version,
-                            &self.doc_security_method,
-                            self.doc_permissions,
-                            &self.doc_page_sizes,
-                            &self.doc_fonts,
-                            locale_mgr,
-                            active_lang,
-                        );
-                    });
-            });
+        // 2. Context Panel (resizable, automatic size adjusting)
+        if self.sidebar_panel.context_panel_open {
+            egui::Panel::left("context_panel")
+                .resizable(true)
+                .show_separator_line(true)
+                .size_range(260.0..=900.0)
+                .show_inside(ui, |ui| {
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+                    egui::Frame::NONE
+                        .inner_margin(egui::Margin::same(12))
+                        .show(ui, |ui| {
+                            self.sidebar_panel.show(
+                                ui,
+                                &mut self.ust_registry,
+                                &self.tx_worker,
+                                &self.pdf_name,
+                                self.total_pages,
+                                &self.doc_metadata,
+                                self.doc_file_size,
+                                &self.doc_version,
+                                &self.doc_security_method,
+                                self.doc_permissions,
+                                &self.doc_page_sizes,
+                                &self.doc_fonts,
+                                locale_mgr,
+                                active_lang,
+                            );
+                        });
+                });
+        }
 
         // 3. Arlington Dictionary Inspector (Left side, next to context panel)
         if self.show_inspector {
@@ -827,6 +829,7 @@ impl FerruginousApp {
                 });
             egui::Panel::left("inspector_panel")
                 .resizable(true)
+                .show_separator_line(true)
                 .default_size(280.0)
                 .size_range(200.0..=450.0)
                 .show_inside(ui, |ui| {
