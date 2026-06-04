@@ -35,8 +35,7 @@ impl RedactionStudioPanel {
         }
     }
 
-    pub fn show(
-        // RR-15 Limit: GUI - Sequential egui declarations for Redaction Studio window layout
+    pub fn show( // RR-15 Limit: GUI - Sequential egui declarations for Redaction Studio window layout
         &mut self,
         ui: &mut egui::Ui,
         raw_texts: &BTreeMap<usize, String>,

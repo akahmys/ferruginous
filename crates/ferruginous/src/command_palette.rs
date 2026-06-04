@@ -2,8 +2,7 @@
 pub struct CommandPalette;
 
 impl CommandPalette {
-    pub fn show(app: &mut crate::app::FerruginousApp, ctx: &egui::Context) {
-        // RR-15 Limit: GUI - Command Palette window declaration and dispatch
+    pub fn show(app: &mut crate::app::FerruginousApp, ctx: &egui::Context) { // RR-15 Limit: GUI - Command Palette window declaration and dispatch
         let mut show_palette = app.show_command_palette;
         if !show_palette {
             return;

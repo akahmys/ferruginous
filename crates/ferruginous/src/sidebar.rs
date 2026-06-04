@@ -378,7 +378,7 @@ impl SidebarPanel {
         });
     }
 
-    pub fn show(
+    pub fn show( // RR-15 Limit: GUI - sidebar main routing and sub-panel egui layout tree
         &mut self,
         ui: &mut egui::Ui,
         registry: &mut USTRegistry,
@@ -964,8 +964,7 @@ impl SidebarPanel {
         });
     }
 
-    fn show_element_properties(
-        // RR-15 Limit: GUI - Render properties grid for selected UST node
+    fn show_element_properties( // RR-15 Limit: GUI - Render properties grid for selected UST node
         ui: &mut egui::Ui,
         registry: &mut USTRegistry,
         tx_worker: &std::sync::mpsc::Sender<crate::worker::WorkerRequest>,
@@ -1101,13 +1100,12 @@ impl SidebarPanel {
         });
     }
 
-    fn show_accessibility_audit(
+    fn show_accessibility_audit( // RR-15 Limit: GUI - Render accessibility audit findings panel
         ui: &mut egui::Ui,
         registry: &mut USTRegistry,
         locale_mgr: &crate::locale::LocaleManager,
         active_lang: &str,
     ) {
-        // RR-15 Limit: GUI - Render accessibility audit findings panel
         ui.vertical(|ui| {
             ui.label(
                 egui::RichText::new(locale_mgr.tr(active_lang, "audit_title")).strong().size(13.0),
@@ -1271,7 +1269,7 @@ impl SidebarPanel {
         }
     }
 
-    fn render_node_recursive(
+    fn render_node_recursive( // RR-15 Limit: GUI - Renders accessibility tag node tree recursively
         ui: &mut egui::Ui,
         node: &mut USTNode,
         selected_node_id: &mut Option<usize>,
@@ -1340,7 +1338,7 @@ impl SidebarPanel {
         });
     }
 
-    fn show_alt_text_gallery(
+    fn show_alt_text_gallery( // RR-15 Limit: GUI - Renders a carousel list of figure elements and their Alt text cards
         &mut self,
         ui: &mut egui::Ui,
         registry: &mut USTRegistry,

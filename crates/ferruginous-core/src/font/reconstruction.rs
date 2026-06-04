@@ -157,7 +157,7 @@ impl FontReconstructor {
         (upem, num_glyphs)
     }
 
-    fn patch_sfnt_data(
+    fn patch_sfnt_data( // RR-15 Limit: Dispatcher - surgical patching of SFNT binary structures
         resource: &FontResource,
         raw_data: &[u8],
         normalized: ReconstructedFont,
@@ -924,6 +924,34 @@ impl FontReconstructor {
         Ok(Type1Segments { ascii, binary, trailer })
     }
 
+    fn build_name_table(resource: &FontResource) -> Vec<u8> {
+        let font_name = resource.base_font.as_str().as_bytes();
+        let name_count = 1;
+        let mut name_table = vec![0u8; 6 + 12 * name_count + font_name.len()];
+        name_table[2..4].copy_from_slice(&(name_count as u16).to_be_bytes());
+        name_table[4..6].copy_from_slice(&(6 + 12 * name_count as u16).to_be_bytes());
+
+        // Record 1: Full Name (ID 4)
+        name_table[6..8].copy_from_slice(&3u16.to_be_bytes());
+        name_table[8..10].copy_from_slice(&1u16.to_be_bytes());
+        name_table[10..12].copy_from_slice(&0u16.to_be_bytes());
+        name_table[12..14].copy_from_slice(&4u16.to_be_bytes());
+        name_table[14..16].copy_from_slice(&(font_name.len() as u16).to_be_bytes());
+        name_table[16..18].copy_from_slice(&0u16.to_be_bytes());
+        name_table[18..18 + font_name.len()].copy_from_slice(font_name);
+        name_table
+    }
+
+    fn build_hmtx_table(resource: &FontResource, num_glyphs: usize) -> Vec<u8> {
+        let mut hmtx = Vec::with_capacity(num_glyphs * 4);
+        for gid in 0..num_glyphs {
+            let width = resource.glyph_width_by_gid(gid as u32);
+            hmtx.extend_from_slice(&(width as i16).to_be_bytes());
+            hmtx.extend_from_slice(&0i16.to_be_bytes());
+        }
+        hmtx
+    }
+
     fn synthesize_naked_tables(
         tag: [u8; 4],
         outline_data: &[u8],
@@ -951,13 +979,7 @@ impl FontReconstructor {
         maxp[4..6].copy_from_slice(&(num_glyphs as u16).to_be_bytes());
         tables.push((*b"maxp", maxp));
 
-        let mut hmtx = Vec::with_capacity(num_glyphs * 4);
-        for gid in 0..num_glyphs {
-            let width = resource.glyph_width_by_gid(gid as u32);
-            hmtx.extend_from_slice(&(width as i16).to_be_bytes());
-            hmtx.extend_from_slice(&0i16.to_be_bytes());
-        }
-        tables.push((*b"hmtx", hmtx));
+        tables.push((*b"hmtx", Self::build_hmtx_table(resource, num_glyphs)));
 
         // Synthesize a minimal OS/2 table (Required for OpenType)
         let mut os2 = vec![0u8; 96];
@@ -966,22 +988,7 @@ impl FontReconstructor {
         os2[66..68].copy_from_slice(&5u16.to_be_bytes());
         tables.push((*b"OS/2", os2));
 
-        // Synthesize a minimal name table
-        let font_name = resource.base_font.as_str().as_bytes();
-        let name_count = 1;
-        let mut name_table = vec![0u8; 6 + 12 * name_count + font_name.len()];
-        name_table[2..4].copy_from_slice(&(name_count as u16).to_be_bytes());
-        name_table[4..6].copy_from_slice(&(6 + 12 * name_count as u16).to_be_bytes());
-
-        // Record 1: Full Name (ID 4)
-        name_table[6..8].copy_from_slice(&3u16.to_be_bytes());
-        name_table[8..10].copy_from_slice(&1u16.to_be_bytes());
-        name_table[10..12].copy_from_slice(&0u16.to_be_bytes());
-        name_table[12..14].copy_from_slice(&4u16.to_be_bytes());
-        name_table[14..16].copy_from_slice(&(font_name.len() as u16).to_be_bytes());
-        name_table[16..18].copy_from_slice(&0u16.to_be_bytes());
-        name_table[18..18 + font_name.len()].copy_from_slice(font_name);
-        tables.push((*b"name", name_table));
+        tables.push((*b"name", Self::build_name_table(resource)));
 
         // Synthesize a minimal post table (Version 3.0)
         let mut post = vec![0u8; 32];
@@ -1151,16 +1158,9 @@ impl FontReconstructor {
         }
     }
 
-    fn synthesize_bridged_cmap(
-        resource: &FontResource,
-        raw_data: &[u8],
-        discovered_map: Option<&BTreeMap<u32, u32>>,
-        name_to_gid: Option<&BTreeMap<String, u32>>,
-        _is_cid: bool,
-    ) -> (Option<Vec<u8>>, BTreeMap<u32, u32>) {
+    fn parse_internal_cmaps(raw_data: &[u8]) -> (BTreeMap<u32, u32>, BTreeMap<u32, u32>) {
         let mut internal_unicode_map = BTreeMap::new();
         let mut internal_code_map = BTreeMap::new();
-
         if let Ok(face) = ttf_parser::Face::parse(raw_data, 0) {
             for table in face.tables().cmap.iter().flat_map(|t| t.subtables) {
                 let is_unicode = table.is_unicode();
@@ -1175,6 +1175,17 @@ impl FontReconstructor {
                 });
             }
         }
+        (internal_unicode_map, internal_code_map)
+    }
+
+    fn synthesize_bridged_cmap(
+        resource: &FontResource,
+        raw_data: &[u8],
+        discovered_map: Option<&BTreeMap<u32, u32>>,
+        name_to_gid: Option<&BTreeMap<String, u32>>,
+        _is_cid: bool,
+    ) -> (Option<Vec<u8>>, BTreeMap<u32, u32>) {
+        let (internal_unicode_map, internal_code_map) = Self::parse_internal_cmaps(raw_data);
 
         let info = Self::inspect_cff(raw_data).unwrap_or(CffInfo::empty());
         let mut mappings = Vec::new();
@@ -1435,7 +1446,7 @@ impl FontReconstructor {
         }
     }
 
-    pub fn inspect_cff(data: &[u8]) -> Result<CffInfo, Box<dyn std::error::Error>> {
+    pub fn inspect_cff(data: &[u8]) -> Result<CffInfo, Box<dyn std::error::Error>> { // RR-15 Limit: Dispatcher - parses and inspects raw CFF index tables and structures
         let cff_data = Self::extract_cff_stream(data)?;
         if cff_data.len() < 10 {
             return Ok(CffInfo::empty());
@@ -1722,7 +1733,7 @@ impl FontReconstructor {
         }
     }
 
-    fn parse_cff_top_dict(
+    fn parse_cff_top_dict( // RR-15 Limit: Dispatcher - parses operators and offsets in CFF top dictionary
         data: &[u8],
         start: usize,
         count: u16,

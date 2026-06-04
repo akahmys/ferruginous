@@ -183,7 +183,7 @@ impl CaliperTool {
         self.caliper_line = None;
     }
 
-    pub fn handle_interaction(
+    pub fn handle_interaction( // RR-15 Limit: GUI - signature UI layout section declaration for Caliper interaction
         &mut self,
         ui: &mut egui::Ui,
         page_index: usize,
@@ -258,8 +258,7 @@ impl CaliperTool {
         }
     }
 
-    pub fn draw_overlay(
-        // RR-15 Limit: GUI - Renders CAD snap lines and ticks directly onto the page drawing layout overlay
+    pub fn draw_overlay( // RR-15 Limit: GUI - Renders CAD snap lines and ticks directly onto the page drawing layout overlay
         &self,
         ui: &mut egui::Ui,
         page_screen_rect: egui::Rect,

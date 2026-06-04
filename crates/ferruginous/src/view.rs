@@ -48,8 +48,7 @@ impl PDFView {
             - page_local_pos.to_vec2() * self.zoom;
     }
 
-    pub fn show_virtual(
-        // RR-15 Limit: GUI - Renders a virtualized grid layout of PDF pages and overlays highlights/signals
+    pub fn show_virtual( // RR-15 Limit: GUI - Renders a virtualized grid layout of PDF pages and overlays highlights/signals
         &mut self,
         ui: &mut egui::Ui,
         layouts: &[PageLayout],

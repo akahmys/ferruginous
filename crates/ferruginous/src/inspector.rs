@@ -18,8 +18,7 @@ impl ArlingtonInspectorPanel {
     }
 
     /// Simulates PDF dictionary structures for the selected tag/node.
-    fn get_mock_dictionary_for_node(&self, tag: &str) -> Vec<InspectorEntry> {
-        // RR-15 Limit: Dispatcher - Flat mapping of node types to mock dictionary elements
+    fn get_mock_dictionary_for_node(&self, tag: &str) -> Vec<InspectorEntry> { // RR-15 Limit: Dispatcher - Flat mapping of node types to mock dictionary elements
         match tag {
             "Catalog" | "Document" => vec![
                 InspectorEntry {
@@ -104,14 +103,13 @@ impl ArlingtonInspectorPanel {
         }
     }
 
-    pub fn show(
+    pub fn show( // RR-15 Limit: GUI - Arlington Dictionary Inspector panel show
         &mut self,
         ui: &mut egui::Ui,
         selected_tag: Option<&str>,
         locale_mgr: &crate::locale::LocaleManager,
         active_lang: &str,
     ) {
-        // RR-15 Limit: GUI - Arlington Dictionary Inspector panel show
         let tag = selected_tag.unwrap_or("Catalog");
         self.active_object_name = format!("Dictionary: <{}>", tag);
 

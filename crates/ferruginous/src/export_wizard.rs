@@ -64,7 +64,7 @@ impl ExportWizard {
         );
     }
 
-    fn render_signature_section(app: &mut crate::app::FerruginousApp, ui: &mut egui::Ui) {
+    fn render_signature_section(app: &mut crate::app::FerruginousApp, ui: &mut egui::Ui) { // RR-15 Limit: GUI - signature UI layout section declaration
         ui.separator();
         ui.heading(app.locale_mgr.tr(&app.active_language, "export_signature_heading"));
         ui.add_space(5.0);

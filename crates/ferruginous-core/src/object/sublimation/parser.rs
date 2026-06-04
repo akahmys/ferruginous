@@ -152,8 +152,7 @@ impl<'a> Sublimator<'a> {
     }
 
     #[allow(clippy::collapsible_if)]
-    fn handle_graphics_op(&mut self, op: &str, prev_commands: &[Command]) -> Vec<Command> {
-        // RR-15 Limit: Dispatcher - Flat non-nested PDF graphics instruction parsing dispatcher routing ops to Commands
+    fn handle_graphics_op(&mut self, op: &str, prev_commands: &[Command]) -> Vec<Command> { // RR-15 Limit: Dispatcher - Flat non-nested PDF graphics instruction parsing dispatcher routing ops to Commands
         match op {
             "q" => vec![Command::PushState],
             "Q" => vec![Command::PopState],
@@ -488,7 +487,6 @@ impl<'a> Sublimator<'a> {
     }
 
     fn sublimate_sc(&mut self, op: &str) -> Vec<Command> {
-        use crate::graphics::ColorSpaceKind;
         let is_fill = op == "sc" || op == "scn";
         let current_cs = if is_fill { self.fill_color_space } else { self.stroke_color_space };
 
@@ -499,39 +497,7 @@ impl<'a> Sublimator<'a> {
             .take_while(|o| matches!(o, IrObject::Integer(_) | IrObject::Real(_)))
             .count();
 
-        // Rule 5: Exhaustive matching
-        let color = match current_cs {
-            ColorSpaceKind::DeviceGray => {
-                if count >= 1 {
-                    self.pop_f64().map(Color::Gray)
-                } else {
-                    None
-                }
-            }
-            ColorSpaceKind::DeviceRGB => {
-                if count >= 3 {
-                    self.pop_rgb()
-                } else {
-                    None
-                }
-            }
-            ColorSpaceKind::DeviceCMYK => {
-                if count >= 4 {
-                    self.pop_cmyk()
-                } else {
-                    None
-                }
-            }
-            ColorSpaceKind::CalGray
-            | ColorSpaceKind::CalRGB
-            | ColorSpaceKind::Lab
-            | ColorSpaceKind::ICCBased
-            | ColorSpaceKind::Pattern
-            | ColorSpaceKind::Indexed
-            | ColorSpaceKind::Separation
-            | ColorSpaceKind::DeviceN
-            | ColorSpaceKind::Unknown => None,
-        };
+        let color = self.pop_color_helper(current_cs, count);
 
         if let Some(c) = color {
             if is_fill { vec![Command::SetFillColor(c)] } else { vec![Command::SetStrokeColor(c)] }
@@ -541,6 +507,22 @@ impl<'a> Sublimator<'a> {
                 operands.insert(0, o);
             }
             vec![Command::RawOperator { name: op.to_string(), operands }]
+        }
+    }
+
+    fn pop_color_helper(&mut self, cs: crate::graphics::ColorSpaceKind, count: usize) -> Option<Color> {
+        use crate::graphics::ColorSpaceKind;
+        match cs {
+            ColorSpaceKind::DeviceGray => {
+                if count >= 1 { self.pop_f64().map(Color::Gray) } else { None }
+            }
+            ColorSpaceKind::DeviceRGB => {
+                if count >= 3 { self.pop_rgb() } else { None }
+            }
+            ColorSpaceKind::DeviceCMYK => {
+                if count >= 4 { self.pop_cmyk() } else { None }
+            }
+            _ => None,
         }
     }
 

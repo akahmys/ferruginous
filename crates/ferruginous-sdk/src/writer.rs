@@ -253,6 +253,35 @@ impl<'a, W: Write> PdfWriter<'a, W> {
         Ok(())
     }
 
+    fn finalize_stream_data(
+        &self,
+        d: &BTreeMap<Handle<PdfName>, Object>,
+        is_sublimated: bool,
+        stream_bytes: &bytes::Bytes,
+    ) -> PdfResult<(Vec<u8>, bool, bool)> {
+        let filter_key = self.arena.name("Filter");
+        let (stream_data, already_filtered) =
+            self.resolve_stream_bytes(d, filter_key, is_sublimated, stream_bytes);
+
+        let mut final_data = stream_data.to_vec();
+        let applied_new_compression = self.try_compress_stream(&mut final_data, already_filtered);
+
+        let type_key = self.arena.get_name_by_str("Type");
+        let is_metadata = type_key
+            .and_then(|tk| d.get(&tk))
+            .and_then(|o| o.as_name())
+            .and_then(|nh| self.arena.get_name_str(nh))
+            .as_deref()
+            == Some("Metadata");
+        if let Some(sh) = &self.security_handler
+            && (!is_metadata || sh.should_decrypt_metadata())
+        {
+            final_data =
+                sh.encrypt_stream(&final_data, self.current_obj_id, self.current_obj_gen)?;
+        }
+        Ok((final_data, applied_new_compression, already_filtered))
+    }
+
     fn write_stream_obj(
         &mut self,
         dh: Handle<BTreeMap<Handle<PdfName>, Object>>,
@@ -272,17 +301,15 @@ impl<'a, W: Write> PdfWriter<'a, W> {
             .arena
             .get_dict(dh)
             .ok_or_else(|| PdfError::Other("Dictionary not found".into()))?;
-        let filter_key = self.arena.name("Filter");
-        let length_key = self.arena.name("Length");
 
         let is_sublimated = !matches!(**data, ferruginous_core::object::SublimatedData::Raw(_));
         let stream_bytes = self.arena.get_stream_bytes(data)?;
 
-        let (stream_data, already_filtered) =
-            self.resolve_stream_bytes(&d, filter_key, is_sublimated, &stream_bytes);
+        let (final_data, applied_new_compression, already_filtered) =
+            self.finalize_stream_data(&d, is_sublimated, &stream_bytes)?;
 
-        let mut final_data = stream_data.to_vec();
-        let applied_new_compression = self.try_compress_stream(&mut final_data, already_filtered);
+        let length_key = self.arena.name("Length");
+        let filter_key = self.arena.name("Filter");
 
         self.write_all(b"<<")?;
         self.write_stream_dictionary_keys(
@@ -295,20 +322,6 @@ impl<'a, W: Write> PdfWriter<'a, W> {
 
         if applied_new_compression {
             self.write_all(b"\r\n/Filter /FlateDecode")?;
-        }
-
-        let type_key = self.arena.get_name_by_str("Type");
-        let is_metadata = type_key
-            .and_then(|tk| d.get(&tk))
-            .and_then(|o| o.as_name())
-            .and_then(|nh| self.arena.get_name_str(nh))
-            .as_deref()
-            == Some("Metadata");
-        if let Some(sh) = &self.security_handler
-            && (!is_metadata || sh.should_decrypt_metadata())
-        {
-            final_data =
-                sh.encrypt_stream(&final_data, self.current_obj_id, self.current_obj_gen)?;
         }
 
         self.write_all(format!("\r\n/Length {}", final_data.len()).as_bytes())?;
@@ -595,9 +608,75 @@ impl<'a, W: Write> PdfWriter<'a, W> {
         Ok(())
     }
 
+    fn partition_and_collect_shared(
+        &self,
+        others: &[Handle<Object>],
+        shared_objs: &BTreeSet<Handle<Object>>,
+        page_reachables_0: &BTreeSet<Handle<Object>>,
+    ) -> (Vec<Handle<Object>>, Vec<Handle<Object>>, Vec<u32>) {
+        let mut others_shared = Vec::new();
+        let mut others_private = Vec::new();
+        for &h in others {
+            if shared_objs.contains(&h) {
+                others_shared.push(h);
+            } else {
+                others_private.push(h);
+            }
+        }
+
+        let mut first_page_shared_set = BTreeSet::new();
+        for &h in page_reachables_0 {
+            if shared_objs.contains(&h) {
+                first_page_shared_set.insert(h);
+            }
+        }
+
+        let mut shared_ids: Vec<u32> = Vec::new();
+        for &h in &others_shared {
+            if !first_page_shared_set.contains(&h) {
+                shared_ids.push(self.id_map[&h]);
+            }
+        }
+        shared_ids.sort_unstable();
+        shared_ids.dedup();
+
+        (others_shared, others_private, shared_ids)
+    }
+
+    fn calculate_worst_case_hint_size(
+        &self,
+        num_pages: usize,
+        dummy_groups_len: usize,
+        shared_ids_len: usize,
+    ) -> usize {
+        let total_shared = dummy_groups_len + shared_ids_len;
+        let max_shared_per_page = total_shared;
+        let bits_idx = if max_shared_per_page > 0 {
+            32 - (max_shared_per_page as u32).leading_zeros()
+        } else {
+            0
+        };
+        let worst_page_bits =
+            num_pages * (16 + 32 + 16 + (bits_idx as usize + 16) * max_shared_per_page);
+        let worst_shared_bits = total_shared * (32 + 1 + 16);
+        let worst_header_bits = 13 * 32 + 7 * 32;
+        let worst_bits = worst_header_bits + worst_page_bits + worst_shared_bits;
+        worst_bits.div_ceil(8)
+    }
+
+    fn pre_populate_obj_sizes(&mut self) {
+        for (&h, &id) in &self.id_map.clone() {
+            if let Ok(bytes) = self.write_object_to_bytes(h) {
+                let header_len = format!("{id} 0 obj\r\n").len();
+                let footer_len = 10;
+                let sz = bytes.len() + header_len + footer_len;
+                self.obj_sizes.insert(id, sz);
+            }
+        }
+    }
+
     #[allow(clippy::cast_possible_truncation)]
-    fn finish_linearized(
-        // RR-15 Limit: Dispatcher - Sequential PDF linearization generator routing and sorting object tables, hint table, and headers
+    fn finish_linearized( // RR-15 Limit: Dispatcher - Sequential PDF linearization generator routing and sorting object tables, hint table, and headers
         &mut self,
         root: Handle<Object>,
         info: Option<Handle<Object>>,
@@ -644,55 +723,12 @@ impl<'a, W: Write> PdfWriter<'a, W> {
             );
         total_size += 1; // ACCOUNT FOR MAIN XREF STREAM
 
-        // Pre-populate obj_sizes for all objects using the assigned IDs in id_map, including indirect object header and footer sizes
-        for (&h, &id) in &self.id_map.clone() {
-            match self.write_object_to_bytes(h) {
-                Ok(bytes) => {
-                    let header_len = format!("{id} 0 obj\r\n").len();
-                    let footer_len = 10; // "\r\nendobj\r\n"
-                    let sz = bytes.len() + header_len + footer_len;
-                    self.obj_sizes.insert(id, sz);
-                    log::debug!("DEBUG_PRE_POPULATE: Registered ID {id} size {sz}");
-                }
-                Err(e) => {
-                    log::debug!(
-                        "DEBUG_PRE_POPULATE: Failed to write object ID {id} to bytes: {e:?}"
-                    );
-                }
-            }
-        }
+        // Pre-populate obj_sizes for all objects using the assigned IDs in id_map
+        self.pre_populate_obj_sizes();
 
-        // Partition others into shared and private (outlines are already inside s2, so they are not in others)
-        let mut others_shared = Vec::new();
-        let mut others_private = Vec::new();
-        for &h in &others {
-            if shared_objs.contains(&h) {
-                others_shared.push(h);
-            } else {
-                others_private.push(h);
-            }
-        }
-
-        // Collect shared_ids (must include only Part 8 shared objects).
-        // First-page shared objects (referenced on Page 1) are physically written
-        // in Section 2 (Part 6) and must be excluded from Sequence 2 (Part 8) to avoid
-        // offset/index mismatches and QPDF errors.
-        let mut first_page_shared_set = BTreeSet::new();
-        for &h in &page_reachables[0] {
-            if shared_objs.contains(&h) {
-                first_page_shared_set.insert(h);
-            }
-        }
-
-        let mut shared_ids: Vec<u32> = Vec::new();
-        // Remaining shared objects (Part 8)
-        for &h in &others_shared {
-            if !first_page_shared_set.contains(&h) {
-                shared_ids.push(self.id_map[&h]);
-            }
-        }
-        shared_ids.sort_unstable();
-        shared_ids.dedup();
+        // Partition others into shared and private, collect shared IDs
+        let (others_shared, others_private, shared_ids) =
+            self.partition_and_collect_shared(&others, &shared_objs, &page_reachables[0]);
 
         // Build dummy structures to determine exact hint table size
         let _outline_count = outline_exclusive.len() as u32;
@@ -732,27 +768,11 @@ impl<'a, W: Write> PdfWriter<'a, W> {
             &dummy_refs,
             0,
             0,
-            0, // hint_obj_total_size: dummy pass uses zero offsets, value irrelevant
+            0,
         );
-        // The dummy hint size underestimates because arena-based reachability
-        // misses some transitive references. The real hint (buffer-scanned) will be larger.
-        // Use a generous upper bound: each page can reference at most all shared objects.
-        // Hint table size = header(~60 bytes) + per-page entries + shared entries
-        let total_shared = dummy_groups.len() + shared_ids.len();
-        let max_shared_per_page = total_shared;
-        let bits_idx = if max_shared_per_page > 0 {
-            32 - (max_shared_per_page as u32).leading_zeros()
-        } else {
-            0
-        };
-        // Worst-case hint size: header + page entries + shared entries + padding
-        // Include (bits_idx + 16) for both Item 4 (idx) and Item 5 (16-bit numerator)
-        let worst_page_bits =
-            pgs.len() * (16 + 32 + 16 + (bits_idx as usize + 16) * max_shared_per_page);
-        let worst_shared_bits = total_shared * (32 + 1 + 16);
-        let worst_header_bits = 13 * 32 + 7 * 32; // page + shared headers
-        let worst_bits = worst_header_bits + worst_page_bits + worst_shared_bits;
-        let exact_hint_size = worst_bits.div_ceil(8); // zero-margin to ensure perfect byte-level convergence between passes
+
+        let exact_hint_size =
+            self.calculate_worst_case_hint_size(pgs.len(), dummy_groups.len(), shared_ids.len());
 
         // 2. Section 1: Linearization Dictionary and First Xref (Reserved)
         let (dict_pos, p_xref_pos) = self.reserve_lin_headers(primary_count, total_size);
@@ -965,8 +985,7 @@ impl<'a, W: Write> PdfWriter<'a, W> {
         Ok((hint_pos, s2_end, s7_start, s8_start))
     }
 
-    fn collect_lin_objects(
-        // RR-15 Limit: Dispatcher - Sequential PDF linearization generator routing and sorting object tables, hint table, and headers
+    fn collect_lin_objects( // RR-15 Limit: Dispatcher - Sequential PDF linearization generator routing and sorting object tables, hint table, and headers
         &self,
         root: Handle<Object>,
         info: Option<Handle<Object>>,
@@ -1266,7 +1285,34 @@ impl<'a, W: Write> PdfWriter<'a, W> {
         shared_objs
     }
 
-    fn trace_reachable_selective(
+    fn trace_dict_keys(
+        &self,
+        dh: Handle<BTreeMap<Handle<PdfName>, Object>>,
+        reachable: &mut BTreeSet<Handle<Object>>,
+        assigned: &BTreeSet<Handle<Object>>,
+        stack: &mut Vec<Handle<Object>>,
+        exclude_keys: &[&str],
+        exclude_objects: &BTreeSet<Handle<Object>>,
+    ) {
+        if let Some(d) = self.arena.get_dict(dh) {
+            for (k, v) in d {
+                let k_str = self.arena.get_name_str(k).unwrap_or_default();
+                if exclude_keys.contains(&k_str.as_str()) {
+                    continue;
+                }
+                self.trace_reachable_inline(
+                    &v,
+                    reachable,
+                    assigned,
+                    stack,
+                    exclude_keys,
+                    exclude_objects,
+                );
+            }
+        }
+    }
+
+    fn trace_reachable_selective( // RR-15 Limit: Dispatcher - trace reachable object tree selectively
         &self,
         h: Handle<Object>,
         reachable: &mut BTreeSet<Handle<Object>>,
@@ -1310,29 +1356,21 @@ impl<'a, W: Write> PdfWriter<'a, W> {
                     }
                 }
                 Object::Dictionary(dh) | Object::Stream(dh, _) => {
-                    if let Some(d) = self.arena.get_dict(dh) {
-                        for (k, v) in d {
-                            let k_str = self.arena.get_name_str(k).unwrap_or_default();
-                            if exclude_keys.contains(&k_str.as_str()) {
-                                continue;
-                            }
-                            self.trace_reachable_inline(
-                                &v,
-                                reachable,
-                                assigned,
-                                &mut stack,
-                                exclude_keys,
-                                exclude_objects,
-                            );
-                        }
-                    }
+                    self.trace_dict_keys(
+                        dh,
+                        reachable,
+                        assigned,
+                        &mut stack,
+                        exclude_keys,
+                        exclude_objects,
+                    );
                 }
                 _ => {}
             }
         }
     }
 
-    fn trace_reachable_inline(
+    fn trace_reachable_inline( // RR-15 Limit: Dispatcher - trace reachable inline objects recursively
         &self,
         obj: &Object,
         reachable: &mut BTreeSet<Handle<Object>>,
@@ -1400,8 +1438,7 @@ impl<'a, W: Write> PdfWriter<'a, W> {
         );
     }
 
-    fn assign_lin_ids(
-        // RR-15 Limit: Dispatcher - Assigns physical IDs to linearized PDF components
+    fn assign_lin_ids( // RR-15 Limit: Dispatcher - Assigns physical IDs to linearized PDF components
         &mut self,
         root: Handle<Object>,
         info: Option<Handle<Object>>,
@@ -1651,8 +1688,85 @@ impl<'a, W: Write> PdfWriter<'a, W> {
         Ok(off)
     }
 
+    fn build_xref_stream_data(
+        &self,
+        total_size: u32,
+        xref_id: u32,
+        actual_off: usize,
+        primary_count: u32,
+        first_shared_id: u32,
+        first_page_shared_count: u32,
+    ) -> Vec<u8> {
+        let mut stream_data = Vec::with_capacity(total_size as usize * 7);
+        for id in 0..total_size {
+            let mut b = [0u8; 7];
+            if id == 0 {
+                b[0] = 0;
+                b[1..5].copy_from_slice(&0u32.to_be_bytes());
+                b[5..7].copy_from_slice(&65535u16.to_be_bytes());
+            } else if id == xref_id {
+                b[0] = 1;
+                b[1..5].copy_from_slice(&(actual_off as u32).to_be_bytes());
+                b[5..7].copy_from_slice(&0u16.to_be_bytes());
+            } else if id >= primary_count && id < first_shared_id + first_page_shared_count {
+                b[0] = 0;
+                b[1..5].copy_from_slice(&0u32.to_be_bytes());
+                b[5..7].copy_from_slice(&0u16.to_be_bytes());
+            } else {
+                b[5..7].copy_from_slice(&0u16.to_be_bytes());
+                if let Some(&offset) = self.xref.get(&id) {
+                    b[0] = 1;
+                    b[1..5].copy_from_slice(&(offset as u32).to_be_bytes());
+                } else {
+                    b[0] = 0;
+                    b[1..5].copy_from_slice(&0u32.to_be_bytes());
+                }
+            }
+            stream_data.extend_from_slice(&b);
+        }
+        stream_data
+    }
+
+    fn build_xref_stream_dict(
+        &mut self,
+        total_size: u32,
+        root: Handle<Object>,
+        info: Option<Handle<Object>>,
+    ) -> BTreeMap<Handle<PdfName>, Object> {
+        let mut dict = BTreeMap::new();
+        dict.insert(self.arena.name("Type"), Object::Name(self.arena.name("XRef")));
+        dict.insert(self.arena.name("Size"), Object::Integer(i64::from(total_size)));
+        dict.insert(
+            self.arena.name("Index"),
+            Object::Array(self.arena.alloc_array(vec![
+                Object::Integer(0),
+                Object::Integer(i64::from(total_size)),
+            ])),
+        );
+        dict.insert(
+            self.arena.name("W"),
+            Object::Array(self.arena.alloc_array(vec![
+                Object::Integer(1),
+                Object::Integer(4),
+                Object::Integer(2),
+            ])),
+        );
+        dict.insert(self.arena.name("Root"), Object::Reference(root));
+        if let Some(ih) = info {
+            dict.insert(self.arena.name("Info"), Object::Reference(ih));
+        }
+        let id_bytes = self.generate_file_id(info);
+        dict.insert(
+            self.arena.name("ID"),
+            Object::Array(self.arena.alloc_array(vec![
+                Object::Hex(id_bytes.clone().into()),
+                Object::Hex(id_bytes.into()),
+            ])),
+        );
+        dict
+    }
+
     fn write_lin_main_xref_stream(
-        // RR-15 Limit: Dispatcher - Serializes and formats main linearization cross-reference stream
         &mut self,
         root: Handle<Object>,
         info: Option<Handle<Object>>,
@@ -1666,85 +1780,16 @@ impl<'a, W: Write> PdfWriter<'a, W> {
         let xref_id = total_size - 1;
         let actual_off = self.current_offset();
 
-        // Fix C: We cover the full 0..total_size range as one contiguous /Index sub-section.
-        // This guarantees that qpdf finds every object ID, even those at non-primary-section
-        // positions (e.g., Part 6 objects with low IDs), eliminating "no xref table entry" warnings.
-        let mut stream_data = Vec::new();
-
-        for id in 0..total_size {
-            let mut b = [0u8; 7];
-            if id == 0 {
-                b[0] = 0;
-                b[1..5].copy_from_slice(&0u32.to_be_bytes());
-                b[5..7].copy_from_slice(&65535u16.to_be_bytes());
-            } else if id == xref_id {
-                b[0] = 1;
-                b[1..5].copy_from_slice(&(actual_off as u32).to_be_bytes());
-                b[5..7].copy_from_slice(&0u16.to_be_bytes());
-            // In a linearized PDF, the main XRef stream indexes only objects in the second group (IDs < primary_count).
-            // Objects in the first-page region (primary_count <= id < first_shared_id + first_page_shared_count)
-            // must be marked as free (type-0) in the main XRef stream to maintain strict mutual exclusivity with the first-page XRef table.
-            } else if id >= primary_count && id < first_shared_id + first_page_shared_count {
-                b[0] = 0;
-                b[1..5].copy_from_slice(&0u32.to_be_bytes());
-                b[5..7].copy_from_slice(&0u16.to_be_bytes());
-            } else {
-                // Main objects (including Part 8 shared objects with high IDs!)
-                b[5..7].copy_from_slice(&0u16.to_be_bytes());
-                if let Some(&offset) = self.xref.get(&id) {
-                    b[0] = 1;
-                    b[1..5].copy_from_slice(&(offset as u32).to_be_bytes());
-                } else {
-                    b[0] = 0;
-                    b[1..5].copy_from_slice(&0u32.to_be_bytes());
-                }
-            }
-            let entry_bytes = b;
-            stream_data.extend_from_slice(&entry_bytes);
-        }
-        // /Index: single contiguous range covering the entire ID space
-        let index_pairs: [(u32, u32); 1] = [(0, total_size)];
-
-        let mut dict = BTreeMap::new();
-        dict.insert(self.arena.name("Type"), Object::Name(self.arena.name("XRef")));
-        dict.insert(self.arena.name("Size"), Object::Integer(i64::from(total_size)));
-        // /Index: one sub-section covering the full range
-        dict.insert(
-            self.arena.name("Index"),
-            Object::Array(
-                self.arena.alloc_array(
-                    index_pairs
-                        .iter()
-                        .flat_map(|&(first, count)| {
-                            [Object::Integer(i64::from(first)), Object::Integer(i64::from(count))]
-                        })
-                        .collect(),
-                ),
-            ),
+        let stream_data = self.build_xref_stream_data(
+            total_size,
+            xref_id,
+            actual_off,
+            primary_count,
+            first_shared_id,
+            first_page_shared_count,
         );
 
-        dict.insert(
-            self.arena.name("W"),
-            Object::Array(self.arena.alloc_array(vec![
-                Object::Integer(1),
-                Object::Integer(4),
-                Object::Integer(2),
-            ])),
-        );
-        dict.insert(self.arena.name("Root"), Object::Reference(root));
-        if let Some(ih) = info {
-            dict.insert(self.arena.name("Info"), Object::Reference(ih));
-        }
-
-        let id_bytes = self.generate_file_id(info);
-        dict.insert(
-            self.arena.name("ID"),
-            Object::Array(self.arena.alloc_array(vec![
-                Object::Hex(id_bytes.clone().into()),
-                Object::Hex(id_bytes.into()),
-            ])),
-        );
-
+        let dict = self.build_xref_stream_dict(total_size, root, info);
         let dict_h = self.arena.alloc_dict(dict);
         let stream_obj = Object::Stream(
             dict_h,
@@ -1756,8 +1801,7 @@ impl<'a, W: Write> PdfWriter<'a, W> {
         Ok(actual_off)
     }
 
-    fn finalize_lin_headers(
-        // RR-15 Limit: Dispatcher - Sequentially finalizes and writes linearized PDF headers, trailers, and file IDs
+    fn finalize_lin_headers( // RR-15 Limit: Dispatcher - Sequentially finalizes and writes linearized PDF headers, trailers, and file IDs
         &mut self,
         s: LinState,
     ) -> PdfResult<()> {
@@ -1929,8 +1973,7 @@ impl<'a, W: Write> PdfWriter<'a, W> {
         Ok(())
     }
 
-    fn build_lin_structures(
-        // RR-15 Limit: Dispatcher - Assembles and structures physical state maps for PDF linearization
+    fn build_lin_structures( // RR-15 Limit: Dispatcher - Assembles and structures physical state maps for PDF linearization
         &self,
         _root: Handle<Object>,
         _info: Option<Handle<Object>>,
@@ -2075,8 +2118,7 @@ struct LinState {
 
 impl<W: std::io::Write> PdfWriter<'_, W> {
     #[allow(clippy::cast_possible_truncation)]
-    fn generate_hint_tables(
-        // RR-15 Limit: Dispatcher - Sequentially synthesizes and formats linearization hint tables
+    fn generate_hint_tables( // RR-15 Limit: Dispatcher - Sequentially synthesizes and formats linearization hint tables
         &self,
         page_handles: &[Handle<Object>],
         shared_ids: &[u32],

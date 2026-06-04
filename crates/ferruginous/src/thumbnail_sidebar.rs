@@ -31,13 +31,12 @@ impl ThumbnailSidebar {
             });
     }
 
-    fn show_thumbnail_item(
+    fn show_thumbnail_item( // RR-15 Limit: GUI - Render individual page thumbnail item and handle click interaction
         app: &mut crate::app::FerruginousApp,
         ui: &mut egui::Ui,
         frame: &mut eframe::Frame,
         i: usize,
     ) {
-        // RR-15 Limit: GUI - Render individual page thumbnail item and handle click interaction
         let (size, layout_rect) = {
             let Some(layout) = app.page_layouts.get(i) else {
                 return;
@@ -152,8 +151,7 @@ impl ThumbnailSidebar {
         });
     }
 
-    fn render_thumbnail_graphics(
-        // RR-15 Limit: GUI - Render actual thumbnail image or loader on sidebar
+    fn render_thumbnail_graphics( // RR-15 Limit: GUI - Render actual thumbnail image or loader on sidebar
         app: &mut crate::app::FerruginousApp,
         ui: &mut egui::Ui,
         frame: &mut eframe::Frame,

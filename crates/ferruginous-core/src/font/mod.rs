@@ -345,7 +345,7 @@ impl FontResource {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn new_initial(
+    fn new_initial( // RR-15 Limit: Dispatcher - constructs initial state of a PDF Font resource mapping tables and cmap configurations
         subtype: PdfName,
         base_font: PdfName,
         metrics: FontMetrics,
@@ -490,6 +490,31 @@ impl FontResource {
         FallbackFontType::Default
     }
 
+    fn update_physical_widths_from_reconstructed(&mut self) {
+        if let Some(ref d) = self.reconstructed_data
+            && let Ok(face) = ttf_parser::Face::parse(d, 0)
+        {
+            self.num_glyphs = face.number_of_glyphs() as u32;
+                let units_per_em = face.units_per_em() as f32;
+                let scale = if units_per_em > 0.0 { 1000.0 / units_per_em } else { 1.0 };
+
+                self.physical_widths.clear();
+                self.physical_names.clear();
+                for gid in 0..self.num_glyphs {
+                    if let Some(w) = face.glyph_hor_advance(ttf_parser::GlyphId(gid as u16)) {
+                        self.physical_widths.insert(gid, w as f32 * scale);
+                    }
+                    if let Some(name) = face.glyph_name(ttf_parser::GlyphId(gid as u16)) {
+                        self.physical_names.insert(gid, name.to_string());
+                    }
+                }
+                log::debug!(
+                    "[FONT] Updated num_glyphs to {}, physical widths and names after reconstruction",
+                    self.num_glyphs
+                );
+            }
+    }
+
     /// Surgically patches the embedded font data with PDF metrics.
     pub fn perform_reconstruction(&mut self) -> PdfResult<()> {
         if let Some(ref raw_data) = self.data {
@@ -528,30 +553,7 @@ impl FontResource {
                 self.num_glyphs = n;
             }
 
-            // Update physical widths from the reconstructed SFNT
-            #[allow(clippy::collapsible_if)]
-            if let Some(ref d) = self.reconstructed_data {
-                if let Ok(face) = ttf_parser::Face::parse(d, 0) {
-                    self.num_glyphs = face.number_of_glyphs() as u32;
-                    let units_per_em = face.units_per_em() as f32;
-                    let scale = if units_per_em > 0.0 { 1000.0 / units_per_em } else { 1.0 };
-
-                    self.physical_widths.clear();
-                    self.physical_names.clear();
-                    for gid in 0..self.num_glyphs {
-                        if let Some(w) = face.glyph_hor_advance(ttf_parser::GlyphId(gid as u16)) {
-                            self.physical_widths.insert(gid, w as f32 * scale);
-                        }
-                        if let Some(name) = face.glyph_name(ttf_parser::GlyphId(gid as u16)) {
-                            self.physical_names.insert(gid, name.to_string());
-                        }
-                    }
-                    log::debug!(
-                        "[FONT] Updated num_glyphs to {}, physical widths and names after reconstruction",
-                        self.num_glyphs
-                    );
-                }
-            }
+            self.update_physical_widths_from_reconstructed();
         }
         Ok(())
     }
@@ -754,9 +756,34 @@ impl FontResource {
         }
     }
 
+    fn map_cmap_codepoints(
+        &mut self,
+        cmap_table: ttf_parser::cmap::Table<'_>,
+        u2g: &mut BTreeMap<char, u32>,
+    ) -> usize {
+        let mut count = 0;
+        for table in cmap_table.subtables {
+            table.codepoints(|cp: u32| {
+                if let Some(gid) = table.glyph_index(cp) {
+                    let gid_u32 = gid.0 as u32;
+                    if gid_u32 != 0 {
+                        self.code_to_gid.insert(cp, gid_u32);
+                        if table.is_unicode()
+                            && let Some(c) = std::char::from_u32(cp)
+                        {
+                            u2g.entry(c).or_insert(gid_u32);
+                            count += 1;
+                        }
+                    }
+                }
+            });
+        }
+        count
+    }
+
     fn populate_u2g_from_font_file(&mut self, u2g: &mut BTreeMap<char, u32>) {
-        let font_data = self.reconstructed_data.as_ref().or(self.data.as_ref());
-        let font_name = self.base_font.as_str();
+        let font_data = self.reconstructed_data.clone().or_else(|| self.data.clone());
+        let font_name = self.base_font.as_str().to_string();
 
         if let Some(arc_data) = font_data {
             let sig = if arc_data.len() >= 4 {
@@ -774,7 +801,7 @@ impl FontResource {
                 sig,
                 self.reconstructed_data.is_some()
             );
-            match ttf_parser::Face::parse(arc_data, 0) {
+            match ttf_parser::Face::parse(&arc_data, 0) {
                 Ok(face) => {
                     log::debug!(
                         "[FONT] Parsing embedded font file for: {}. cmap present: {}",
@@ -783,26 +810,7 @@ impl FontResource {
                     );
                     let mut count = 0;
                     if let Some(cmap_table) = face.tables().cmap {
-                        for table in cmap_table.subtables {
-                            table.codepoints(|cp| {
-                                if let Some(gid) = table.glyph_index(cp) {
-                                    let gid_u32 = gid.0 as u32;
-                                    // GID 0 is .notdef.
-                                    if gid_u32 != 0 {
-                                        // Store raw character code to GID mapping
-                                        self.code_to_gid.insert(cp, gid_u32);
-
-                                        // If this is a Unicode subtable, also populate u2g
-                                        if table.is_unicode()
-                                            && let Some(c) = std::char::from_u32(cp)
-                                        {
-                                            u2g.entry(c).or_insert(gid_u32);
-                                            count += 1;
-                                        }
-                                    }
-                                }
-                            });
-                        }
+                        count = self.map_cmap_codepoints(cmap_table, u2g);
                     }
                     log::debug!(
                         "[FONT] Mapped {} Unicode characters from embedded file for {}",
@@ -1840,6 +1848,20 @@ impl FontResource {
             + Self::score_source_intent(source, self.is_cid_keyed, is_cjk, is_identity, phys_width)
     }
 
+    fn resolve_gid_font(&self, hint: Option<char>) -> Option<u32> {
+        let c = hint?;
+        if let Some(ref d) = self.reconstructed_data {
+            if let Ok(face) = ttf_parser::Face::parse(d, 0) {
+                return face.glyph_index(c).map(|id| id.0 as u32);
+            }
+        } else if let Some(ref d) = self.data
+            && let Ok(face) = ttf_parser::Face::parse(d, 0)
+        {
+            return face.glyph_index(c).map(|id| id.0 as u32);
+        }
+        None
+    }
+
     fn gather_candidates(
         &self,
         cid: u32,
@@ -1859,18 +1881,7 @@ impl FontResource {
         if let Some(name) = glyph_name_resolved {
             gid_name = self.glyph_name_to_gid.get(name).copied();
         }
-        let mut gid_font = None;
-        if let Some(c) = hint {
-            if let Some(ref d) = self.reconstructed_data {
-                if let Ok(face) = ttf_parser::Face::parse(d, 0) {
-                    gid_font = face.glyph_index(c).map(|id| id.0 as u32);
-                }
-            } else if let Some(ref d) = self.data
-                && let Ok(face) = ttf_parser::Face::parse(d, 0)
-            {
-                gid_font = face.glyph_index(c).map(|id| id.0 as u32);
-            }
-        }
+        let gid_font = self.resolve_gid_font(hint);
         let mut gid_unified = None;
         if let Some(c) = hint
             && let Some(&cid_mapped) = self.unified_map.get(&c.to_string())
@@ -1897,6 +1908,37 @@ impl FontResource {
             candidates.push((gid, "Unified"));
         }
         candidates
+    }
+
+    fn resolve_fallback_gid(
+        &self,
+        cid: u32,
+        hint: Option<char>,
+        mut _trace: Option<&mut TraceContext>,
+    ) -> Option<u32> {
+        if self.is_embedded() {
+            return None;
+        }
+
+        if let Some(c) = hint {
+            log::debug!("[FONT] Falling back to system font for: U+{:04X} ({:?})", c as u32, c);
+            return Some(1_000_000 + c as u32);
+        }
+
+        if cid != 0 {
+            log::warn!(
+                "[FONT] CID {} failed to resolve to any GID for {}. Hint: {:?}",
+                cid,
+                self.base_font.as_str(),
+                hint
+            );
+        }
+        #[cfg(feature = "debug-tools")]
+        if let Some(ref mut t) = _trace {
+            t.finish(None);
+        }
+        log::debug!("[FONT] resolve_gid result: cid {} -> gid None", cid);
+        None
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1944,90 +1986,18 @@ impl FontResource {
             return None;
         }
 
-        if self.is_embedded() {
-            return None;
-        }
-
-        if let Some(c) = hint {
-            log::debug!("[FONT] Falling back to system font for: U+{:04X} ({:?})", c as u32, c);
-            return Some(1_000_000 + c as u32);
-        }
-
-        if cid != 0 {
-            log::warn!(
-                "[FONT] CID {} failed to resolve to any GID for {}. Hint: {:?}",
-                cid,
-                self.base_font.as_str(),
-                hint
-            );
-        }
-        #[cfg(feature = "debug-tools")]
-        if let Some(ref mut t) = _trace {
-            t.finish(None);
-        }
-        log::debug!("[FONT] resolve_gid result: cid {} -> gid None", cid);
-        None
+        self.resolve_fallback_gid(cid, hint, _trace)
     }
 
-    pub fn resolve_gid(
+    fn find_best_candidate(
         &self,
-        cid: u32,
-        unicode_hint: Option<char>,
-        mut _trace: Option<&mut TraceContext>,
-    ) -> Option<u32> {
-        if !self.is_embedded()
-            && let Some(c) = unicode_hint
-        {
-            return Some(1_000_000 + c as u32);
-        }
-        let mut hint = unicode_hint;
-        let mut glyph_name_resolved = None;
-
-        let is_suspicious = if let Some(c) = hint {
-            let u = c as u32;
-            let is_pua = (0xE000..=0xF8FF).contains(&u)
-                || (0xF0000..=0xFFFFD).contains(&u)
-                || (0x100000..=0x10FFFD).contains(&u);
-            let is_artifact = u == 0x24EA;
-            let is_control = (u <= 0x1F) || (0x7F..=0x9F).contains(&u);
-            is_pua || is_artifact || is_control
-        } else {
-            !self.is_cid_keyed
-        };
-
-        if let Some(c) = hint
-            && (c as u32 <= 0x1F || (c as u32 >= 0x7F && c as u32 <= 0x9F))
-            && !self.is_cid_keyed
-        {
-            return None;
-        }
-
-        if let Some(ref _enc) = self.encoding
-            && let Some((name, agl_hint)) = self.resolve_name_from_encoding(cid)
-        {
-            glyph_name_resolved = Some(name);
-            if hint.is_none() {
-                hint = agl_hint;
-            }
-        }
-
-        if let Some(ref map) = self.cid_to_gid_map
-            && let Some(&gid) = map.get(&cid)
-            && self.is_gid_valid(gid)
-        {
-            return Some(gid);
-        }
-
-        let is_cjk = self.is_cjk();
-        let pdf_width = if self.wmode() == 1 {
-            self.glyph_vertical_metrics(cid).0
-        } else {
-            self.glyph_width_by_cid(cid)
-        };
-        let is_identity = self.cid_ordering.as_deref().is_none_or(|o| o == "Identity");
-
-        let candidates =
-            self.gather_candidates(cid, hint, glyph_name_resolved.as_deref(), is_identity);
+        candidates: Vec<(u32, &'static str)>,
+        hint: Option<char>,
+        glyph_name_resolved: Option<&str>,
+        pdf_width: f32,
+        is_cjk: bool,
+        is_identity: bool,
+    ) -> (Option<u32>, i32) {
         let mut best_gid = None;
         let mut best_score = i32::MIN;
 
@@ -2039,7 +2009,7 @@ impl FontResource {
                 gid,
                 source,
                 hint,
-                glyph_name_resolved.as_deref(),
+                glyph_name_resolved,
                 pdf_width,
                 is_cjk,
                 is_identity,
@@ -2058,6 +2028,94 @@ impl FontResource {
                 best_gid = Some(gid);
             }
         }
+        (best_gid, best_score)
+    }
+
+    fn is_suspicious_hint(&self, hint: Option<char>) -> bool {
+        if let Some(c) = hint {
+            let u = c as u32;
+            let is_pua = (0xE000..=0xF8FF).contains(&u)
+                || (0xF0000..=0xFFFFD).contains(&u)
+                || (0x100000..=0x10FFFD).contains(&u);
+            let is_artifact = u == 0x24EA;
+            let is_control = (u <= 0x1F) || (0x7F..=0x9F).contains(&u);
+            is_pua || is_artifact || is_control
+        } else {
+            !self.is_cid_keyed
+        }
+    }
+
+    fn check_immediate_resolve(
+        &self,
+        cid: u32,
+        unicode_hint: Option<char>,
+    ) -> Result<Option<u32>, (Option<char>, Option<String>, bool)> {
+        if !self.is_embedded()
+            && let Some(c) = unicode_hint
+        {
+            return Ok(Some(1_000_000 + c as u32));
+        }
+        let mut hint = unicode_hint;
+        let mut glyph_name_resolved = None;
+
+        let is_suspicious = self.is_suspicious_hint(hint);
+
+        if let Some(c) = hint
+            && (c as u32 <= 0x1F || (c as u32 >= 0x7F && c as u32 <= 0x9F))
+            && !self.is_cid_keyed
+        {
+            return Ok(None);
+        }
+
+        if let Some(ref _enc) = self.encoding
+            && let Some((name, agl_hint)) = self.resolve_name_from_encoding(cid)
+        {
+            glyph_name_resolved = Some(name);
+            if hint.is_none() {
+                hint = agl_hint;
+            }
+        }
+
+        if let Some(ref map) = self.cid_to_gid_map
+            && let Some(&gid) = map.get(&cid)
+            && self.is_gid_valid(gid)
+        {
+            return Ok(Some(gid));
+        }
+
+        Err((hint, glyph_name_resolved, is_suspicious))
+    }
+
+    pub fn resolve_gid(
+        &self,
+        cid: u32,
+        unicode_hint: Option<char>,
+        mut _trace: Option<&mut TraceContext>,
+    ) -> Option<u32> {
+        let (hint, glyph_name_resolved, is_suspicious) = match self.check_immediate_resolve(cid, unicode_hint) {
+            Ok(res) => return res,
+            Err(ctx) => ctx,
+        };
+
+        let is_cjk = self.is_cjk();
+        let pdf_width = if self.wmode() == 1 {
+            self.glyph_vertical_metrics(cid).0
+        } else {
+            self.glyph_width_by_cid(cid)
+        };
+        let is_identity = self.cid_ordering.as_deref().is_none_or(|o| o == "Identity");
+
+        let candidates =
+            self.gather_candidates(cid, hint, glyph_name_resolved.as_deref(), is_identity);
+
+        let (best_gid, best_score) = self.find_best_candidate(
+            candidates,
+            hint,
+            glyph_name_resolved.as_deref(),
+            pdf_width,
+            is_cjk,
+            is_identity,
+        );
 
         self.apply_threshold_and_fallback(
             best_gid,
@@ -2068,6 +2126,37 @@ impl FontResource {
             cid,
             _trace,
         )
+    }
+
+    fn find_gid_by_fallback_unicode(
+        &self,
+        c: char,
+        glyph_name: Option<&str>,
+        mut _trace: Option<&mut TraceContext>,
+    ) -> Option<u32> {
+        if let Some(&gid) = self.unicode_to_gid.get(&c)
+            && gid != 0
+        {
+            #[cfg(feature = "debug-tools")]
+            if let Some(ref mut t) = _trace {
+                t.push_step(format!(
+                    "Matched in Unicode-to-GID map: U+{:04X} -> GID {}",
+                    c as u32, gid
+                ));
+            }
+            return Some(gid);
+        }
+
+        // 3. Heuristic: If hint is 'e', also try name "e" if not already tried
+        let mut name_buf = [0u8; 4];
+        let c_name = c.encode_utf8(&mut name_buf);
+        if glyph_name != Some(c_name)
+            && let Some(&gid) = self.glyph_name_to_gid.get(c_name)
+            && gid != 0
+        {
+            return Some(gid);
+        }
+        None
     }
 
     #[allow(dead_code)]
@@ -2104,30 +2193,11 @@ impl FontResource {
             return Some(gid);
         }
 
-        // 2. Try Unicode-to-GID (from cmap) - Fallback
-        if let Some(c) = hint {
-            if let Some(&gid) = self.unicode_to_gid.get(&c)
-                && gid != 0
-            {
-                #[cfg(feature = "debug-tools")]
-                if let Some(ref mut t) = _trace {
-                    t.push_step(format!(
-                        "Matched in Unicode-to-GID map: U+{:04X} -> GID {}",
-                        c as u32, gid
-                    ));
-                }
-                return Some(gid);
-            }
-
-            // 3. Heuristic: If hint is 'e', also try name "e" if not already tried
-            let mut name_buf = [0u8; 4];
-            let c_name = c.encode_utf8(&mut name_buf);
-            if glyph_name != Some(c_name)
-                && let Some(&gid) = self.glyph_name_to_gid.get(c_name)
-                && gid != 0
-            {
-                return Some(gid);
-            }
+        // 2. Try Unicode-to-GID & heuristic fallback (from cmap)
+        if let Some(c) = hint
+            && let Some(gid) = self.find_gid_by_fallback_unicode(c, glyph_name, _trace)
+        {
+            return Some(gid);
         }
 
         None

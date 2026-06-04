@@ -79,8 +79,7 @@ pub struct FerruginousApp {
 }
 
 impl FerruginousApp {
-    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        // RR-15 Limit: GUI - App state creation and initialization
+    pub fn new(cc: &eframe::CreationContext<'_>) -> Self { // RR-15 Limit: GUI - App state creation and initialization
         let vello_renderer =
             cc.wgpu_render_state.as_ref().and_then(|rs| VelloRenderer::new(&rs.device));
         let (tx_req, rx_req) = channel();
@@ -272,8 +271,7 @@ impl FerruginousApp {
         self.view.pan = egui::Vec2::ZERO;
     }
 
-    fn process_worker_messages(&mut self, ctx: &egui::Context) {
-        // RR-15 Limit: GUI - Handle asynchronous background messages
+    fn process_worker_messages(&mut self, ctx: &egui::Context) { // RR-15 Limit: GUI - Handle asynchronous background messages
         while let Ok(msg) = self.rx_worker.try_recv() {
             match msg {
                 WorkerResponse::LoadingProgress { message } => {
@@ -456,13 +454,12 @@ impl FerruginousApp {
         }
     }
 
-    fn handle_page_interactions(
+    fn handle_page_interactions( // RR-15 Limit: GUI - Unified egui pointer and canvas coordinate interaction loop
         &mut self,
         ui: &mut egui::Ui,
         viewport_rect: egui::Rect,
         zoom: f32,
     ) {
-        // RR-15 Limit: GUI - Unified egui pointer and canvas coordinate interaction loop
         let visible_pages = self.view.visible_pages.clone();
         for &visible_index in &visible_pages {
             if let Some(layout) = self.page_layouts.get(visible_index) {
@@ -649,7 +646,7 @@ impl FerruginousApp {
         );
     }
 
-    fn render_document_panel(
+    fn render_document_panel( // RR-15 Limit: GUI - Renders document panel, handles centering, page layouts, and vello texture projection
         &mut self,
         ui: &mut egui::Ui,
         rs: &egui_wgpu::RenderState,
@@ -709,8 +706,7 @@ impl FerruginousApp {
         self.draw_view_with_highlights(ui, viewport_rect, zoom, viewport_texture_id);
     }
 
-    fn update_vello(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
-        // RR-15 Limit: GUI - Update vello state and trigger document rendering
+    fn update_vello(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) { // RR-15 Limit: GUI - Update vello state and trigger document rendering
         let ctx = ui.ctx().clone();
         self.process_worker_messages(&ctx);
 
@@ -827,7 +823,7 @@ impl FerruginousApp {
         });
     }
 
-    fn render_left_side_panels(&mut self, ui: &mut egui::Ui) {
+    fn render_left_side_panels(&mut self, ui: &mut egui::Ui) { // RR-15 Limit: GUI - Renders left sidebar icon bar, context panels, and inspector panel
         // 1. Left Icon Bar (Vertical column, full height)
         let locale_mgr = &self.locale_mgr;
         let active_lang = &self.active_language;
@@ -891,7 +887,7 @@ impl FerruginousApp {
         }
     }
 
-    fn render_right_side_panels(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+    fn render_right_side_panels(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) { // RR-15 Limit: GUI - Renders right-side toolbar icons and interactive tool toggles
         let ctx = ui.ctx().clone();
 
         // 1. Icon Bar (Right-most, 50px width)
@@ -1085,7 +1081,83 @@ impl FerruginousApp {
         );
     }
 
-    fn render_overlay_windows(&mut self, ctx: &egui::Context) {
+    fn show_about_modal_window(&mut self, ctx: &egui::Context) { // RR-15 Limit: GUI - Displays the application metadata/about modal
+        if self.show_about_modal {
+            let mut show_about = true;
+            let about_title = self.locale_mgr.tr(&self.active_language, "about_title");
+            egui::Window::new(about_title)
+                .open(&mut show_about)
+                .resizable(false)
+                .collapsible(false)
+                .default_width(320.0)
+                .show(ctx, |ui| {
+                    ui.vertical_centered(|ui| {
+                        ui.label(
+                            egui::RichText::new(
+                                self.locale_mgr.tr(&self.active_language, "about_app_name"),
+                            )
+                            .strong()
+                            .size(18.0),
+                        );
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "{} 0.1.0",
+                                self.locale_mgr.tr(&self.active_language, "about_version")
+                            ))
+                            .weak(),
+                        );
+                        ui.add_space(8.0);
+                        ui.label(self.locale_mgr.tr(&self.active_language, "about_description"));
+                        ui.add_space(12.0);
+                        ui.separator();
+                        ui.add_space(8.0);
+                        ui.label(
+                            egui::RichText::new(
+                                self.locale_mgr.tr(&self.active_language, "about_third_party"),
+                            )
+                            .strong(),
+                        );
+                        ui.add_space(4.0);
+                    });
+
+                    egui::ScrollArea::vertical().max_height(150.0).show(ui, |ui| {
+                        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+                        let credits = [
+                            ("lopdf", "MIT License", "Low-level PDF parsing"),
+                            ("pdf-writer", "Apache-2.0 License", "PDF object serialization"),
+                            ("vello", "Apache-2.0 / MIT", "GPU vector graphics"),
+                            ("egui / eframe", "MIT / Apache-2.0", "GUI library"),
+                            ("Lucide Icons", "ISC License", "Icon font asset"),
+                        ];
+                        for (name, license, purpose) in credits {
+                            ui.horizontal(|ui| {
+                                ui.label(egui::RichText::new(name).strong());
+                                ui.label(format!("({})", license));
+                            });
+                            ui.label(egui::RichText::new(purpose).weak());
+                            ui.add_space(4.0);
+                        }
+                    });
+
+                    ui.add_space(8.0);
+                    ui.separator();
+                    ui.add_space(8.0);
+                    ui.vertical_centered(|ui| {
+                        if ui
+                            .button(self.locale_mgr.tr(&self.active_language, "about_close"))
+                            .clicked()
+                        {
+                            self.show_about_modal = false;
+                        }
+                    });
+                });
+            if !show_about {
+                self.show_about_modal = false;
+            }
+        }
+    }
+
+    fn render_overlay_windows(&mut self, ctx: &egui::Context) { // RR-15 Limit: GUI - Renders various overlay windows, tool wizards, and popup alerts
         if self.show_export_wizard {
             self.show_export_wizard_window(ctx);
         }
@@ -1189,79 +1261,7 @@ impl FerruginousApp {
         }
 
         // Show About Modal
-        if self.show_about_modal {
-            let mut show_about = true;
-            let about_title = self.locale_mgr.tr(&self.active_language, "about_title");
-            egui::Window::new(about_title)
-                .open(&mut show_about)
-                .resizable(false)
-                .collapsible(false)
-                .default_width(320.0)
-                .show(ctx, |ui| {
-                    ui.vertical_centered(|ui| {
-                        ui.label(
-                            egui::RichText::new(
-                                self.locale_mgr.tr(&self.active_language, "about_app_name"),
-                            )
-                            .strong()
-                            .size(18.0),
-                        );
-                        ui.label(
-                            egui::RichText::new(format!(
-                                "{} 0.1.0",
-                                self.locale_mgr.tr(&self.active_language, "about_version")
-                            ))
-                            .weak(),
-                        );
-                        ui.add_space(8.0);
-                        ui.label(self.locale_mgr.tr(&self.active_language, "about_description"));
-                        ui.add_space(12.0);
-                        ui.separator();
-                        ui.add_space(8.0);
-                        ui.label(
-                            egui::RichText::new(
-                                self.locale_mgr.tr(&self.active_language, "about_third_party"),
-                            )
-                            .strong(),
-                        );
-                        ui.add_space(4.0);
-                    });
-
-                    egui::ScrollArea::vertical().max_height(150.0).show(ui, |ui| {
-                        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
-                        let credits = [
-                            ("lopdf", "MIT License", "Low-level PDF parsing"),
-                            ("pdf-writer", "Apache-2.0 License", "PDF object serialization"),
-                            ("vello", "Apache-2.0 / MIT", "GPU vector graphics"),
-                            ("egui / eframe", "MIT / Apache-2.0", "GUI library"),
-                            ("Lucide Icons", "ISC License", "Icon font asset"),
-                        ];
-                        for (name, license, purpose) in credits {
-                            ui.horizontal(|ui| {
-                                ui.label(egui::RichText::new(name).strong());
-                                ui.label(format!("({})", license));
-                            });
-                            ui.label(egui::RichText::new(purpose).weak());
-                            ui.add_space(4.0);
-                        }
-                    });
-
-                    ui.add_space(8.0);
-                    ui.separator();
-                    ui.add_space(8.0);
-                    ui.vertical_centered(|ui| {
-                        if ui
-                            .button(self.locale_mgr.tr(&self.active_language, "about_close"))
-                            .clicked()
-                        {
-                            self.show_about_modal = false;
-                        }
-                    });
-                });
-            if !show_about {
-                self.show_about_modal = false;
-            }
-        }
+        self.show_about_modal_window(ctx);
     }
 }
 

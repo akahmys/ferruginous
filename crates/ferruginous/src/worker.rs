@@ -72,7 +72,7 @@ pub enum WorkerResponse {
     Error(String),
 }
 
-pub fn run_worker(rx: Receiver<WorkerRequest>, tx: Sender<WorkerResponse>, ctx: egui::Context) {
+pub fn run_worker(rx: Receiver<WorkerRequest>, tx: Sender<WorkerResponse>, ctx: egui::Context) { // RR-15 Limit: GUI - main routing message loop dispatcher for background worker thread
     let mut current_doc: Option<PdfDocument> = None;
     let system_fonts = VelloBackend::load_system_fonts();
     let mut text_cache = std::collections::BTreeMap::new();
@@ -219,7 +219,7 @@ fn resolve_struct_tree_root(
     parse_struct_node(arena, str_root_ref, next_id, &mut visited)
 }
 
-fn handle_open(
+fn handle_open( // RR-15 Limit: Dispatcher - handles open document worker requests and packages file properties
     data: Bytes,
     name: Option<String>,
     tx: &Sender<WorkerResponse>,
@@ -549,8 +549,7 @@ fn handle_update_node(
     let _ = tx.send(WorkerResponse::AuditFindings { findings });
 }
 
-fn handle_save(
-    // RR-15 Limit: Dispatcher - Thread pool worker saving request routing dispatcher handling signatures, redactions and compression saving options
+fn handle_save( // RR-15 Limit: Dispatcher - Thread pool worker saving request routing dispatcher handling signatures, redactions and compression saving options
     doc_opt: &Option<PdfDocument>,
     path: std::path::PathBuf,
     compress: bool,

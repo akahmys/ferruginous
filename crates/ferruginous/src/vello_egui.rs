@@ -68,8 +68,7 @@ impl VelloRenderer {
     pub fn next_frame(&mut self, _render_state: &RenderState) {}
 
     /// Renders all visible pages directly onto the single viewport render target texture.
-    pub fn render_viewport(
-        // RR-15 Limit: GUI - Performs sequential scene assembly and rendering to the single viewport target
+    pub fn render_viewport( // RR-15 Limit: GUI - Performs sequential scene assembly and rendering to the single viewport target
         &mut self,
         render_state: &RenderState,
         visible_pages: &[(usize, Arc<Scene>, egui::Rect, egui::Vec2)], // (page_index, scene, page_screen_rect, page_unscaled_size)
@@ -201,8 +200,7 @@ impl VelloRenderer {
             Some(ViewportTexture { _texture: texture, view, egui_texture: tid, width, height });
     }
 
-    pub fn render_thumbnail(
-        // RR-15 Limit: GUI - Performs rendering of page scenes to thumbnail textures
+    pub fn render_thumbnail( // RR-15 Limit: GUI - Performs rendering of page scenes to thumbnail textures
         &mut self,
         render_state: &RenderState,
         page_index: usize,
