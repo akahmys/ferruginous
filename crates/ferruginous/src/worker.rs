@@ -32,6 +32,9 @@ pub enum WorkerResponse {
         page_sizes: Vec<(f64, f64)>, // (width, height)
         ust_root: Option<crate::sidebar::USTNode>,
     },
+    LoadingProgress {
+        message: String,
+    },
     PageRendered {
         index: usize,
         _scale: f64,
@@ -166,7 +169,14 @@ fn resolve_struct_tree_root(doc: &PdfDocument, next_id: &mut usize) -> Option<cr
 }
 
 fn handle_open(data: Bytes, name: Option<String>, tx: &Sender<WorkerResponse>) -> Option<PdfDocument> {
-    match PdfDocument::open(data) {
+    let tx_clone = tx.clone();
+    let options = ferruginous_core::ingest::IngestionOptions {
+        progress_callback: Some(Arc::new(move |msg| {
+            let _ = tx_clone.send(WorkerResponse::LoadingProgress { message: msg });
+        })),
+        ..ferruginous_core::ingest::IngestionOptions::default()
+    };
+    match PdfDocument::open_with_options(data, &options) {
         Ok(doc) => {
             let num_pages = doc.page_count().unwrap_or(0);
             let mut page_sizes = Vec::with_capacity(num_pages);

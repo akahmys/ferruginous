@@ -3,20 +3,20 @@ pub struct ThumbnailSidebar;
 
 impl ThumbnailSidebar {
     pub fn show(app: &mut crate::app::FerruginousApp, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        let panel_frame = egui::Frame::side_top_panel(ui.style())
+            .fill(egui::Color32::from_rgb(235, 237, 240));
+
         egui::Panel::right("thumbnail_sidebar")
             .resizable(true)
             .default_size(200.0)
             .size_range(160.0..=300.0)
+            .frame(panel_frame)
             .show_inside(ui, |ui| {
                 egui::ScrollArea::vertical()
                     .id_salt("thumbnail_scroll_area")
                     .hscroll(false)
                     .show(ui, |ui| {
-                        if app.total_pages == 0 {
-                            ui.centered_and_justified(|ui| {
-                                ui.label("No document");
-                            });
-                        } else {
+                        if app.total_pages > 0 {
                             for i in 0..app.total_pages {
                                 Self::show_thumbnail_item(app, ui, frame, i);
                             }

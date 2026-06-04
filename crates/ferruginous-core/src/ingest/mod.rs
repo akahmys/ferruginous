@@ -22,13 +22,27 @@ pub enum ColorPolicy {
 }
 
 /// Options for document ingestion.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct IngestionOptions {
     pub active_refinement: bool,
     pub sublime_metadata: bool,
     pub color_policy: ColorPolicy,
     pub force_fallback: bool,
     pub password: Option<String>,
+    pub progress_callback: Option<std::sync::Arc<dyn Fn(String) + Send + Sync>>,
+}
+
+impl std::fmt::Debug for IngestionOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IngestionOptions")
+            .field("active_refinement", &self.active_refinement)
+            .field("sublime_metadata", &self.sublime_metadata)
+            .field("color_policy", &self.color_policy)
+            .field("force_fallback", &self.force_fallback)
+            .field("password", &self.password)
+            .field("progress_callback", &self.progress_callback.is_some())
+            .finish()
+    }
 }
 
 impl Default for IngestionOptions {
@@ -39,6 +53,7 @@ impl Default for IngestionOptions {
             color_policy: ColorPolicy::Strict,
             force_fallback: false,
             password: None,
+            progress_callback: None,
         }
     }
 }
@@ -128,6 +143,10 @@ impl Ingestor {
         doc: &mut lopdf::Document,
         options: &IngestionOptions,
     ) -> crate::PdfResult<IngestedDocument> {
+        let report = |msg: &str| {
+            if let Some(c) = &options.progress_callback { c(msg.to_string()); }
+        };
+        report("1/4: Decrypting and normalizing document...");
         let arena = PdfArena::new();
         let mut table = RemappingTable::new();
 
@@ -138,31 +157,22 @@ impl Ingestor {
             table.insert(id, handle);
         }
 
-        for (&id, obj) in &doc.objects {
-            let handle = table.get(&id).cloned().ok_or_else(|| PdfError::Ingestion {
-                context: "Pass 1 Inhalation".into(),
-                message: format!("Missing handle for object {:?}", id).into(),
-            })?;
-            let raw_obj = Object::from_lopdf(obj, &arena, &table);
-            arena.set_object(handle, raw_obj);
-        }
+        report("2/4: Mapping objects and loading structure...");
+        inhale_objects(doc, &arena, &table)?;
 
         let (root_handle, info_handle) = Self::resolve_root_info(doc, &table);
         let temp_doc = Document::new(arena.clone(), root_handle, info_handle);
-        let handle_font_cache = discover_fonts(&arena, &temp_doc);
+        
+        report("3/4: Discovering font resources and stream contexts...");
+        let (font_indices, page_and_form_indices) = scan_ingested_objects(&arena);
+        let handle_font_cache = discover_fonts(&arena, &temp_doc, Some(&font_indices));
 
         let global_font_registry = Self::build_global_font_registry(&arena, &handle_font_cache);
-        let mut stream_contexts = map_stream_contexts(&arena, &handle_font_cache);
+        let mut stream_contexts = map_stream_contexts(&arena, &handle_font_cache, Some(&page_and_form_indices));
 
-        for context in stream_contexts.values_mut() {
-            for (name, res) in global_font_registry.iter() {
-                let name_string: &String = name;
-                if !context.contains_key(name_string) {
-                    context.insert(name_string.clone(), Arc::clone(res));
-                }
-            }
-        }
+        merge_global_fonts_into_contexts(&mut stream_contexts, &global_font_registry);
 
+        report("4/4: Performing active refinement and layout optimization...");
         let mut all_issues = Vec::new();
         if options.active_refinement {
             all_issues = Self::perform_active_refinement(
@@ -288,4 +298,71 @@ impl Ingestor {
         }
         Ok(())
     }
+}
+
+fn scan_ingested_objects(
+    arena: &PdfArena,
+) -> (Vec<u32>, Vec<u32>) {
+    let mut font_indices = Vec::new();
+    let mut page_and_form_indices = Vec::new();
+
+    let type_key = arena.name("Type");
+    let font_val = arena.name("Font");
+    let base_font_key = arena.name("BaseFont");
+    let subtype_key = arena.name("Subtype");
+    let page_val = arena.name("Page");
+    let form_val = arena.name("Form");
+
+    for i in 0..arena.object_count() {
+        let obj_h = Handle::new(i);
+        if let Some(Object::Dictionary(handle) | Object::Stream(handle, _)) = arena.get_object(obj_h)
+            && let Some(dict) = arena.get_dict(handle)
+        {
+            let type_val_resolved = dict.get(&type_key).and_then(|o| o.resolve(arena).as_name());
+            let subtype_val_resolved = dict.get(&subtype_key).and_then(|o| o.resolve(arena).as_name());
+
+            if type_val_resolved == Some(page_val) || subtype_val_resolved == Some(form_val) {
+                page_and_form_indices.push(i);
+            }
+
+            let is_font = if let Some(tv) = type_val_resolved {
+                tv == font_val
+            } else {
+                dict.contains_key(&base_font_key) && dict.contains_key(&subtype_key)
+            };
+            if is_font {
+                font_indices.push(i);
+            }
+        }
+    }
+    (font_indices, page_and_form_indices)
+}
+
+fn merge_global_fonts_into_contexts(
+    stream_contexts: &mut BTreeMap<u32, BTreeMap<String, Arc<FontResource>>>,
+    global_font_registry: &BTreeMap<String, Arc<FontResource>>,
+) {
+    for context in stream_contexts.values_mut() {
+        for (name, res) in global_font_registry {
+            if !context.contains_key(name) {
+                context.insert(name.clone(), Arc::clone(res));
+            }
+        }
+    }
+}
+
+fn inhale_objects(
+    doc: &lopdf::Document,
+    arena: &PdfArena,
+    table: &RemappingTable,
+) -> crate::PdfResult<()> {
+    for (&id, obj) in &doc.objects {
+        let handle = table.get(&id).cloned().ok_or_else(|| PdfError::Ingestion {
+            context: "Pass 1 Inhalation".into(),
+            message: format!("Missing handle for object {:?}", id).into(),
+        })?;
+        let raw_obj = Object::from_lopdf(obj, arena, table);
+        arena.set_object(handle, raw_obj);
+    }
+    Ok(())
 }

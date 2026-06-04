@@ -60,6 +60,7 @@ pub struct FerruginousApp {
     pub clear_thumbnails_pending: bool,
     pub invalidated_thumbnails: BTreeSet<usize>,
     pub is_loading: bool,
+    pub loading_message: String,
     pub show_reading_order: bool,
     pub show_command_palette: bool,
     pub command_palette_search: String,
@@ -170,6 +171,7 @@ impl FerruginousApp {
             clear_thumbnails_pending: false,
             invalidated_thumbnails: BTreeSet::new(),
             is_loading: false,
+            loading_message: String::new(),
             show_reading_order: true,
             show_command_palette: false,
             command_palette_search: String::new(),
@@ -216,6 +218,7 @@ impl FerruginousApp {
         self.last_selected_page = None;
         self.clear_thumbnails_pending = true;
         self.is_loading = true;
+        self.loading_message = "1/4: Decrypting and normalizing document...".to_string();
         self.reset_view();
         let _ = self.tx_worker.send(WorkerRequest::Open { data, name });
         ctx.request_repaint();
@@ -229,6 +232,10 @@ impl FerruginousApp {
     fn process_worker_messages(&mut self, ctx: &egui::Context) { // RR-15 Limit: GUI - Handle asynchronous background messages
         while let Ok(msg) = self.rx_worker.try_recv() {
             match msg {
+                 WorkerResponse::LoadingProgress { message } => {
+                    self.loading_message = message;
+                    ctx.request_repaint();
+                }
                  WorkerResponse::DocumentLoaded {
                     name,
                     num_pages,
@@ -638,6 +645,9 @@ impl FerruginousApp {
         self.queue_visible_pages();
 
         egui::CentralPanel::default().frame(egui::Frame::NONE).show_inside(ui, |ui| {
+            let bg_color = egui::Color32::from_rgb(235, 237, 240);
+            ui.painter().rect_filled(ui.max_rect(), 0.0, bg_color);
+
             if let Some(err) = &self.error {
                 ui.centered_and_justified(|ui| {
                     ui.colored_label(egui::Color32::RED, err);
@@ -695,7 +705,7 @@ impl FerruginousApp {
                 });
             } else if self.is_loading {
                 ui.centered_and_justified(|ui| {
-                    ui.label("Loading document...");
+                    ui.label(&self.loading_message);
                 });
             } else {
                 // Keep the central panel blank at startup as requested

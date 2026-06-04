@@ -7,35 +7,72 @@ use crate::object::Object;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-pub fn discover_fonts(arena: &PdfArena, doc: &Document) -> BTreeMap<u32, Arc<FontResource>> {
+#[allow(clippy::too_many_arguments)]
+fn process_font_object(
+    arena: &PdfArena,
+    doc: &Document,
+    i: u32,
+    type_key: Handle<PdfName>,
+    font_val: Handle<PdfName>,
+    base_font_key: Handle<PdfName>,
+    subtype_key: Handle<PdfName>,
+    cache: &mut BTreeMap<u32, Arc<FontResource>>,
+) {
+    let obj_handle = Handle::new(i);
+    if let Some(Object::Dictionary(dict_handle)) = arena.get_object(obj_handle)
+        && let Some(dict) = arena.get_dict(dict_handle)
+    {
+        let type_val = dict.get(&type_key).and_then(|o| o.resolve(arena).as_name());
+        let is_font = if let Some(tv) = type_val {
+            tv == font_val
+        } else {
+            dict.contains_key(&base_font_key) && dict.contains_key(&subtype_key)
+        };
+
+        if is_font
+            && let Ok(font_res) = FontResource::load(&dict, doc)
+        {
+            cache.insert(obj_handle.index(), Arc::new(font_res));
+        }
+    }
+}
+
+pub fn discover_fonts(
+    arena: &PdfArena,
+    doc: &Document,
+    font_objects: Option<&[u32]>,
+) -> BTreeMap<u32, Arc<FontResource>> {
     let mut cache = BTreeMap::new();
     let type_key = arena.name("Type");
     let font_val = arena.name("Font");
     let base_font_key = arena.name("BaseFont");
     let subtype_key = arena.name("Subtype");
 
-    for i in 0..arena.object_count() {
-        let obj_handle = Handle::new(i);
-        if let Some(Object::Dictionary(dict_handle)) = arena.get_object(obj_handle)
-            && let Some(dict) = arena.get_dict(dict_handle)
-        {
-            let type_val = dict.get(&type_key).and_then(|o| o.resolve(arena).as_name());
-            let is_font = if let Some(tv) = type_val {
-                tv == font_val
-            } else {
-                dict.contains_key(&base_font_key) && dict.contains_key(&subtype_key)
-            };
-
-            if is_font {
-                match FontResource::load(&dict, doc) {
-                    Ok(font_res) => {
-                        cache.insert(obj_handle.index(), Arc::new(font_res));
-                    }
-                    Err(_e) => {
-                        // Identified as font but failed to load
-                    }
-                }
-            }
+    if let Some(indices) = font_objects {
+        for &i in indices {
+            process_font_object(
+                arena,
+                doc,
+                i,
+                type_key,
+                font_val,
+                base_font_key,
+                subtype_key,
+                &mut cache,
+            );
+        }
+    } else {
+        for i in 0..arena.object_count() {
+            process_font_object(
+                arena,
+                doc,
+                i,
+                type_key,
+                font_val,
+                base_font_key,
+                subtype_key,
+                &mut cache,
+            );
         }
     }
     cache
@@ -103,9 +140,53 @@ fn extract_context_fonts(
     context_fonts
 }
 
+#[allow(clippy::too_many_arguments)]
+fn process_stream_context(
+    arena: &PdfArena,
+    fonts: &BTreeMap<u32, Arc<FontResource>>,
+    i: u32,
+    type_key: Handle<PdfName>,
+    page_val: Handle<PdfName>,
+    subtype_key: Handle<PdfName>,
+    form_val: Handle<PdfName>,
+    resources_key: Handle<PdfName>,
+    font_key: Handle<PdfName>,
+    contents_key: Handle<PdfName>,
+    contexts: &mut BTreeMap<u32, BTreeMap<String, Arc<FontResource>>>,
+) {
+    let obj_h = Handle::new(i);
+    if let Some(Object::Dictionary(handle)) | Some(Object::Stream(handle, _)) =
+        arena.get_object(obj_h)
+        && let Some(dict) = arena.get_dict(handle)
+    {
+        let is_page =
+            dict.get(&type_key).and_then(|o| o.resolve(arena).as_name()) == Some(page_val);
+        let is_form =
+            dict.get(&subtype_key).and_then(|o| o.resolve(arena).as_name()) == Some(form_val);
+
+        if is_page || is_form {
+            let resource_nodes = accumulate_resources(arena, &dict, is_form, &resources_key);
+            let context_fonts = extract_context_fonts(arena, resource_nodes, &font_key, fonts);
+
+            if is_page {
+                associate_page_streams(
+                    arena,
+                    &dict,
+                    &contents_key,
+                    context_fonts,
+                    contexts,
+                );
+            } else {
+                contexts.insert(obj_h.index(), context_fonts);
+            }
+        }
+    }
+}
+
 pub fn map_stream_contexts(
     arena: &PdfArena,
     fonts: &BTreeMap<u32, Arc<FontResource>>,
+    page_and_form_objects: Option<&[u32]>,
 ) -> BTreeMap<u32, BTreeMap<String, Arc<FontResource>>> {
     let mut contexts = BTreeMap::new();
     let type_key = arena.name("Type");
@@ -116,33 +197,37 @@ pub fn map_stream_contexts(
     let font_key = arena.name("Font");
     let contents_key = arena.name("Contents");
 
-    for i in 0..arena.object_count() {
-        let obj_h = Handle::new(i);
-        if let Some(Object::Dictionary(handle)) | Some(Object::Stream(handle, _)) =
-            arena.get_object(obj_h)
-            && let Some(dict) = arena.get_dict(handle)
-        {
-            let is_page =
-                dict.get(&type_key).and_then(|o| o.resolve(arena).as_name()) == Some(page_val);
-            let is_form =
-                dict.get(&subtype_key).and_then(|o| o.resolve(arena).as_name()) == Some(form_val);
-
-            if is_page || is_form {
-                let resource_nodes = accumulate_resources(arena, &dict, is_form, &resources_key);
-                let context_fonts = extract_context_fonts(arena, resource_nodes, &font_key, fonts);
-
-                if is_page {
-                    associate_page_streams(
-                        arena,
-                        &dict,
-                        &contents_key,
-                        context_fonts,
-                        &mut contexts,
-                    );
-                } else {
-                    contexts.insert(obj_h.index(), context_fonts);
-                }
-            }
+    if let Some(indices) = page_and_form_objects {
+        for &i in indices {
+            process_stream_context(
+                arena,
+                fonts,
+                i,
+                type_key,
+                page_val,
+                subtype_key,
+                form_val,
+                resources_key,
+                font_key,
+                contents_key,
+                &mut contexts,
+            );
+        }
+    } else {
+        for i in 0..arena.object_count() {
+            process_stream_context(
+                arena,
+                fonts,
+                i,
+                type_key,
+                page_val,
+                subtype_key,
+                form_val,
+                resources_key,
+                font_key,
+                contents_key,
+                &mut contexts,
+            );
         }
     }
     contexts

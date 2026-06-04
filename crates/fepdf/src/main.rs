@@ -39,6 +39,7 @@ impl From<IngestArgs> for ferruginous_core::ingest::IngestionOptions {
             },
             force_fallback: args.force_fallback,
             password: None,
+            progress_callback: None,
         }
     }
 }

@@ -30,6 +30,7 @@ MAPPINGS=$(grep -rn "$OLD_MSRV" . \
     --exclude-dir=target \
     --exclude-dir=.gemini \
     --exclude-dir=.agent \
+    --exclude-dir=.cocoindex_code \
     --exclude-dir=node_modules \
     --exclude="*.pdf" \
     --exclude="*.log" \
