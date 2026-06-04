@@ -100,12 +100,28 @@ impl FerruginousApp {
             families.push("lucide".to_owned());
         }
 
-        let paths = [
-            "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
-            "/System/Library/Fonts/Hiragino Sans GB.ttc",
-            "/Library/Fonts/Arial Unicode.ttf",
+        let mut paths = vec![
+            "/System/Library/Fonts/Supplemental/Arial Unicode.ttf".to_owned(),
+            "/System/Library/Fonts/Hiragino Sans GB.ttc".to_owned(),
+            "/Library/Fonts/Arial Unicode.ttf".to_owned(),
         ];
-        for path in paths {
+
+        if let Ok(win_dir) = std::env::var("windir") {
+            paths.push(format!(r"{}\Fonts\msgothic.ttc", win_dir));
+            paths.push(format!(r"{}\Fonts\yugothm.ttc", win_dir));
+            paths.push(format!(r"{}\Fonts\meiryo.ttc", win_dir));
+        } else {
+            paths.push(r"C:\Windows\Fonts\msgothic.ttc".to_owned());
+            paths.push(r"C:\Windows\Fonts\yugothm.ttc".to_owned());
+            paths.push(r"C:\Windows\Fonts\meiryo.ttc".to_owned());
+        }
+
+        paths.push("/usr/share/fonts/truetype/fonts-japanese-gothic.ttf".to_owned());
+        paths.push("/usr/share/fonts/opentype/ipafont-gothic/ipag.otf".to_owned());
+        paths.push("/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc".to_owned());
+        paths.push("/usr/share/fonts/TTF/NotoSansCJK-Regular.ttc".to_owned());
+
+        for path in &paths {
             if let Ok(font_data) = std::fs::read(path) {
                 log::info!("Successfully loaded CJK font from {}", path);
                 fonts
