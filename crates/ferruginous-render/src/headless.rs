@@ -19,7 +19,10 @@ fn create_renderer(device: &vello::wgpu::Device) -> Result<Renderer, Box<dyn std
         },
     )
     .or_else(|e| {
-        log::warn!("[RENDER] GPU renderer initialization failed ({:?}), falling back to CPU renderer...", e);
+        log::warn!(
+            "[RENDER] GPU renderer initialization failed ({:?}), falling back to CPU renderer...",
+            e
+        );
         Renderer::new(
             device,
             RendererOptions {

@@ -2,7 +2,8 @@
 pub struct CommandPalette;
 
 impl CommandPalette {
-    pub fn show(app: &mut crate::app::FerruginousApp, ctx: &egui::Context) { // RR-15 Limit: GUI - Command Palette window declaration and dispatch
+    pub fn show(app: &mut crate::app::FerruginousApp, ctx: &egui::Context) {
+        // RR-15 Limit: GUI - Command Palette window declaration and dispatch
         let mut show_palette = app.show_command_palette;
         if !show_palette {
             return;
@@ -25,24 +26,35 @@ impl CommandPalette {
                 ui.separator();
 
                 let query = app.command_palette_search.to_lowercase();
-                
+
                 // Get localized command names and descriptions
                 let cmd_load_pdf = app.locale_mgr.tr(&app.active_language, "cmd_load_pdf");
-                let cmd_load_pdf_desc = app.locale_mgr.tr(&app.active_language, "cmd_load_pdf_desc");
+                let cmd_load_pdf_desc =
+                    app.locale_mgr.tr(&app.active_language, "cmd_load_pdf_desc");
                 let cmd_reset_view = app.locale_mgr.tr(&app.active_language, "cmd_reset_view");
-                let cmd_reset_view_desc = app.locale_mgr.tr(&app.active_language, "cmd_reset_view_desc");
+                let cmd_reset_view_desc =
+                    app.locale_mgr.tr(&app.active_language, "cmd_reset_view_desc");
                 let cmd_redact_brush = app.locale_mgr.tr(&app.active_language, "cmd_redact_brush");
-                let cmd_redact_brush_desc = app.locale_mgr.tr(&app.active_language, "cmd_redact_brush_desc");
-                let cmd_tagging_brush = app.locale_mgr.tr(&app.active_language, "cmd_tagging_brush");
-                let cmd_tagging_brush_desc = app.locale_mgr.tr(&app.active_language, "cmd_tagging_brush_desc");
-                let cmd_caliper_brush = app.locale_mgr.tr(&app.active_language, "cmd_caliper_brush");
-                let cmd_caliper_brush_desc = app.locale_mgr.tr(&app.active_language, "cmd_caliper_brush_desc");
+                let cmd_redact_brush_desc =
+                    app.locale_mgr.tr(&app.active_language, "cmd_redact_brush_desc");
+                let cmd_tagging_brush =
+                    app.locale_mgr.tr(&app.active_language, "cmd_tagging_brush");
+                let cmd_tagging_brush_desc =
+                    app.locale_mgr.tr(&app.active_language, "cmd_tagging_brush_desc");
+                let cmd_caliper_brush =
+                    app.locale_mgr.tr(&app.active_language, "cmd_caliper_brush");
+                let cmd_caliper_brush_desc =
+                    app.locale_mgr.tr(&app.active_language, "cmd_caliper_brush_desc");
                 let cmd_inspector = app.locale_mgr.tr(&app.active_language, "cmd_inspector");
-                let cmd_inspector_desc = app.locale_mgr.tr(&app.active_language, "cmd_inspector_desc");
+                let cmd_inspector_desc =
+                    app.locale_mgr.tr(&app.active_language, "cmd_inspector_desc");
                 let cmd_export_pdf = app.locale_mgr.tr(&app.active_language, "cmd_export_pdf");
-                let cmd_export_pdf_desc = app.locale_mgr.tr(&app.active_language, "cmd_export_pdf_desc");
-                let cmd_reading_order = app.locale_mgr.tr(&app.active_language, "cmd_reading_order");
-                let cmd_reading_order_desc = app.locale_mgr.tr(&app.active_language, "cmd_reading_order_desc");
+                let cmd_export_pdf_desc =
+                    app.locale_mgr.tr(&app.active_language, "cmd_export_pdf_desc");
+                let cmd_reading_order =
+                    app.locale_mgr.tr(&app.active_language, "cmd_reading_order");
+                let cmd_reading_order_desc =
+                    app.locale_mgr.tr(&app.active_language, "cmd_reading_order_desc");
 
                 let commands = vec![
                     (&cmd_load_pdf, &cmd_load_pdf_desc, "Load PDF"),
@@ -60,16 +72,23 @@ impl CommandPalette {
                         || cmd_name.to_lowercase().contains(&query)
                         || cmd_desc.to_lowercase().contains(&query)
                     {
-                        if ui.selectable_label(false, format!("{} — {}", cmd_name, cmd_desc)).clicked() {
+                        if ui
+                            .selectable_label(false, format!("{} — {}", cmd_name, cmd_desc))
+                            .clicked()
+                        {
                             match cmd_action {
                                 "Load PDF" => {
-                                    if let Some(p) = rfd::FileDialog::new().add_filter("PDF", &["pdf"]).pick_file() {
+                                    if let Some(p) = rfd::FileDialog::new()
+                                        .add_filter("PDF", &["pdf"])
+                                        .pick_file()
+                                    {
                                         app.open_file(p, ctx);
                                     }
                                 }
                                 "Reset View" => app.reset_view(),
                                 "Redact Brush" => {
-                                    app.redaction_manager.is_active = !app.redaction_manager.is_active;
+                                    app.redaction_manager.is_active =
+                                        !app.redaction_manager.is_active;
                                     if app.redaction_manager.is_active {
                                         app.selection_manager.clear();
                                         app.selection_manager.is_tagging_brush_active = false;
@@ -77,7 +96,8 @@ impl CommandPalette {
                                     }
                                 }
                                 "Tagging Brush" => {
-                                    app.selection_manager.is_tagging_brush_active = !app.selection_manager.is_tagging_brush_active;
+                                    app.selection_manager.is_tagging_brush_active =
+                                        !app.selection_manager.is_tagging_brush_active;
                                     if app.selection_manager.is_tagging_brush_active {
                                         app.selection_manager.clear();
                                         app.redaction_manager.is_active = false;

@@ -14,7 +14,8 @@ pub fn serialize_commands(cmds: &[Command]) -> Vec<u8> {
     buffer
 }
 
-fn serialize_command(cmd: &Command, buf: &mut Vec<u8>) { // RR-15 Limit: Dispatcher - Serializes high-level command IR via a single exhaustive flat match loop
+fn serialize_command(cmd: &Command, buf: &mut Vec<u8>) {
+    // RR-15 Limit: Dispatcher - Serializes high-level command IR via a single exhaustive flat match loop
     match cmd {
         Command::PushState => buf.extend_from_slice(b"q\n"),
         Command::PopState => buf.extend_from_slice(b"Q\n"),
@@ -71,7 +72,9 @@ fn serialize_command(cmd: &Command, buf: &mut Vec<u8>) { // RR-15 Limit: Dispatc
                 buf.extend_from_slice(format!("{:.6} {:.6} {:.6} rg\n", r, g, b).as_bytes());
             }
             crate::graphics::Color::Cmyk(c, m, y, k) => {
-                buf.extend_from_slice(format!("{:.6} {:.6} {:.6} {:.6} k\n", c, m, y, k).as_bytes());
+                buf.extend_from_slice(
+                    format!("{:.6} {:.6} {:.6} {:.6} k\n", c, m, y, k).as_bytes(),
+                );
             }
             crate::graphics::Color::Lab(l, a, b) => {
                 // Keep High-Fidelity color space (do not downgrade to RGB)
@@ -86,7 +89,9 @@ fn serialize_command(cmd: &Command, buf: &mut Vec<u8>) { // RR-15 Limit: Dispatc
                 buf.extend_from_slice(format!("{:.6} {:.6} {:.6} RG\n", r, g, b).as_bytes());
             }
             crate::graphics::Color::Cmyk(c, m, y, k) => {
-                buf.extend_from_slice(format!("{:.6} {:.6} {:.6} {:.6} K\n", c, m, y, k).as_bytes());
+                buf.extend_from_slice(
+                    format!("{:.6} {:.6} {:.6} {:.6} K\n", c, m, y, k).as_bytes(),
+                );
             }
             crate::graphics::Color::Lab(l, a, b) => {
                 // Keep High-Fidelity color space (do not downgrade to RGB)
@@ -127,7 +132,9 @@ fn serialize_command(cmd: &Command, buf: &mut Vec<u8>) { // RR-15 Limit: Dispatc
         }
         Command::SetCharSpacing(s) => buf.extend_from_slice(format!("{:.6} Tc\n", s).as_bytes()),
         Command::SetWordSpacing(s) => buf.extend_from_slice(format!("{:.6} Tw\n", s).as_bytes()),
-        Command::SetHorizontalScaling(s) => buf.extend_from_slice(format!("{:.6} Tz\n", s).as_bytes()),
+        Command::SetHorizontalScaling(s) => {
+            buf.extend_from_slice(format!("{:.6} Tz\n", s).as_bytes())
+        }
         Command::SetTextRenderMode(m) => {
             buf.extend_from_slice(format!("{} Tr\n", *m as i32).as_bytes())
         }
@@ -136,7 +143,9 @@ fn serialize_command(cmd: &Command, buf: &mut Vec<u8>) { // RR-15 Limit: Dispatc
         Command::MoveToNextLine => buf.extend_from_slice(b"T*\n"),
         Command::DrawXObject(name) => buf.extend_from_slice(format!("/{} Do\n", name).as_bytes()),
         Command::SetLineWidth(w) => buf.extend_from_slice(format!("{:.6} w\n", w).as_bytes()),
-        Command::SetLineCap(cap) => buf.extend_from_slice(format!("{} J\n", *cap as i32).as_bytes()),
+        Command::SetLineCap(cap) => {
+            buf.extend_from_slice(format!("{} J\n", *cap as i32).as_bytes())
+        }
         Command::SetLineJoin(join) => {
             buf.extend_from_slice(format!("{} j\n", *join as i32).as_bytes())
         }
@@ -152,21 +161,7 @@ fn serialize_command(cmd: &Command, buf: &mut Vec<u8>) { // RR-15 Limit: Dispatc
             buf.extend_from_slice(format!("] {:.6} d\n", phase).as_bytes());
         }
         Command::DrawInlineImage { width, height, format, data } => {
-            buf.extend_from_slice(b"BI\n");
-            buf.extend_from_slice(format!("  /W {}\n", width).as_bytes());
-            buf.extend_from_slice(format!("  /H {}\n", height).as_bytes());
-            let cs = match format {
-                crate::graphics::PixelFormat::Gray8 => "/G",
-                crate::graphics::PixelFormat::Rgb8 => "/RGB",
-                crate::graphics::PixelFormat::Rgba8 => "/RGB", // PDF doesn't support RGBA inline images directly easily, usually uses SMask
-                crate::graphics::PixelFormat::Cmyk8 => "/CMYK",
-                crate::graphics::PixelFormat::MonoMask | crate::graphics::PixelFormat::MonoMaskInverted => "/G",
-            };
-            buf.extend_from_slice(format!("  /CS {}\n", cs).as_bytes());
-            buf.extend_from_slice(b"  /BPC 8\n");
-            buf.extend_from_slice(b"ID\n");
-            buf.extend_from_slice(data);
-            buf.extend_from_slice(b"\nEI\n");
+            write_inline_image(*width, *height, *format, data, buf);
         }
         Command::RawOperator { name, operands } => {
             for op in operands {
@@ -196,13 +191,45 @@ fn serialize_command(cmd: &Command, buf: &mut Vec<u8>) { // RR-15 Limit: Dispatc
         }
         Command::Type3SetMetrics { wx, wy, bbox } => {
             if let Some(r) = bbox {
-                buf.extend_from_slice(format!("{:.6} {:.6} {:.6} {:.6} {:.6} {:.6} d1\n", wx, wy, r.x0, r.y0, r.x1, r.y1).as_bytes());
+                buf.extend_from_slice(
+                    format!(
+                        "{:.6} {:.6} {:.6} {:.6} {:.6} {:.6} d1\n",
+                        wx, wy, r.x0, r.y0, r.x1, r.y1
+                    )
+                    .as_bytes(),
+                );
             } else {
                 buf.extend_from_slice(format!("{:.6} {:.6} d0\n", wx, wy).as_bytes());
             }
         }
         _ => {} // Other commands like SetWritingMode are internal and don't map to PDF operators
     }
+}
+
+fn write_inline_image(
+    width: u32,
+    height: u32,
+    format: crate::graphics::PixelFormat,
+    data: &[u8],
+    buf: &mut Vec<u8>,
+) {
+    buf.extend_from_slice(b"BI\n");
+    buf.extend_from_slice(format!("  /W {}\n", width).as_bytes());
+    buf.extend_from_slice(format!("  /H {}\n", height).as_bytes());
+    let cs = match format {
+        crate::graphics::PixelFormat::Gray8 => "/G",
+        crate::graphics::PixelFormat::Rgb8 => "/RGB",
+        crate::graphics::PixelFormat::Rgba8 => "/RGB",
+        crate::graphics::PixelFormat::Cmyk8 => "/CMYK",
+        crate::graphics::PixelFormat::MonoMask | crate::graphics::PixelFormat::MonoMaskInverted => {
+            "/G"
+        }
+    };
+    buf.extend_from_slice(format!("  /CS {}\n", cs).as_bytes());
+    buf.extend_from_slice(b"  /BPC 8\n");
+    buf.extend_from_slice(b"ID\n");
+    buf.extend_from_slice(data);
+    buf.extend_from_slice(b"\nEI\n");
 }
 
 fn write_point(p: &Point, buf: &mut Vec<u8>) {
@@ -212,7 +239,8 @@ fn write_point(p: &Point, buf: &mut Vec<u8>) {
 fn write_affine(a: &Affine, buf: &mut Vec<u8>) {
     let c = a.as_coeffs();
     buf.extend_from_slice(
-        format!("{:.6} {:.6} {:.6} {:.6} {:.6} {:.6}", c[0], c[1], c[2], c[3], c[4], c[5]).as_bytes(),
+        format!("{:.6} {:.6} {:.6} {:.6} {:.6} {:.6}", c[0], c[1], c[2], c[3], c[4], c[5])
+            .as_bytes(),
     );
 }
 

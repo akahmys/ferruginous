@@ -120,7 +120,6 @@ impl SkrifaBridge {
             ctx.cid_to_gid_map,
         );
 
-
         if let Some(ref p) = path
             && p.segments().count() > 0
         {
@@ -151,12 +150,22 @@ impl SkrifaBridge {
     ) -> GlyphId {
         let mut final_gid = GlyphId::new(final_gid_in);
 
-        if is_fallback 
-            || (final_gid.to_u32() == 0 && !is_cid && unicode.is_some() && unicode.and_then(|u| font.charmap().map(u)).is_some())
+        if is_fallback
+            || (final_gid.to_u32() == 0
+                && !is_cid
+                && unicode.is_some()
+                && unicode.and_then(|u| font.charmap().map(u)).is_some())
         {
-            if is_fallback && let Some(u) = unicode && let Some(gid) = font.charmap().map(u) {
+            if is_fallback
+                && let Some(u) = unicode
+                && let Some(gid) = font.charmap().map(u)
+            {
                 final_gid = gid;
-            } else if final_gid.to_u32() == 0 && !is_cid && let Some(u) = unicode && let Some(gid) = font.charmap().map(u) {
+            } else if final_gid.to_u32() == 0
+                && !is_cid
+                && let Some(u) = unicode
+                && let Some(gid) = font.charmap().map(u)
+            {
                 final_gid = gid;
             }
         }

@@ -2,9 +2,13 @@
 pub struct ThumbnailSidebar;
 
 impl ThumbnailSidebar {
-    pub fn show(app: &mut crate::app::FerruginousApp, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
-        let panel_frame = egui::Frame::side_top_panel(ui.style())
-            .fill(egui::Color32::from_rgb(235, 237, 240));
+    pub fn show(
+        app: &mut crate::app::FerruginousApp,
+        ui: &mut egui::Ui,
+        frame: &mut eframe::Frame,
+    ) {
+        let panel_frame =
+            egui::Frame::side_top_panel(ui.style()).fill(egui::Color32::from_rgb(235, 237, 240));
 
         egui::Panel::right("thumbnail_sidebar")
             .resizable(true)
@@ -13,23 +17,31 @@ impl ThumbnailSidebar {
             .size_range(160.0..=300.0)
             .frame(panel_frame)
             .show_inside(ui, |ui| {
-                egui::ScrollArea::vertical()
-                    .id_salt("thumbnail_scroll_area")
-                    .hscroll(false)
-                    .show(ui, |ui| {
+                egui::ScrollArea::vertical().id_salt("thumbnail_scroll_area").hscroll(false).show(
+                    ui,
+                    |ui| {
                         if app.total_pages > 0 {
                             for i in 0..app.total_pages {
                                 Self::show_thumbnail_item(app, ui, frame, i);
                             }
                         }
                         ui.add_space(16.0);
-                    });
+                    },
+                );
             });
     }
 
-    fn show_thumbnail_item(app: &mut crate::app::FerruginousApp, ui: &mut egui::Ui, frame: &mut eframe::Frame, i: usize) { // RR-15 Limit: GUI - Render individual page thumbnail item and handle click interaction
+    fn show_thumbnail_item(
+        app: &mut crate::app::FerruginousApp,
+        ui: &mut egui::Ui,
+        frame: &mut eframe::Frame,
+        i: usize,
+    ) {
+        // RR-15 Limit: GUI - Render individual page thumbnail item and handle click interaction
         let (size, layout_rect) = {
-            let Some(layout) = app.page_layouts.get(i) else { return; };
+            let Some(layout) = app.page_layouts.get(i) else {
+                return;
+            };
             (layout.rect.size(), layout.rect)
         };
         let aspect_ratio = size.y / size.x;
@@ -88,23 +100,28 @@ impl ThumbnailSidebar {
 
             let mini_page_rect = egui::Rect::from_center_size(
                 rect.center() - egui::vec2(0.0, 7.0),
-                egui::vec2(mini_page_width, mini_page_height)
+                egui::vec2(mini_page_width, mini_page_height),
             );
 
             let mut visible_mask_rect = None;
             if is_visible {
                 if let Some(viewport_rect) = app.last_viewport_rect {
-                    let origin = egui::pos2(viewport_rect.center().x, viewport_rect.min.y + 20.0) + app.view.pan;
+                    let origin = egui::pos2(viewport_rect.center().x, viewport_rect.min.y + 20.0)
+                        + app.view.pan;
                     let page_rect = egui::Rect::from_min_size(
                         origin + layout_rect.min.to_vec2() * app.view.zoom,
                         layout_rect.size() * app.view.zoom,
                     );
                     let intersection = viewport_rect.intersect(page_rect);
                     if intersection.is_positive() {
-                        let x_min = ((intersection.min.x - page_rect.min.x) / page_rect.width()).clamp(0.0, 1.0);
-                        let x_max = ((intersection.max.x - page_rect.min.x) / page_rect.width()).clamp(0.0, 1.0);
-                        let y_min = ((intersection.min.y - page_rect.min.y) / page_rect.height()).clamp(0.0, 1.0);
-                        let y_max = ((intersection.max.y - page_rect.min.y) / page_rect.height()).clamp(0.0, 1.0);
+                        let x_min = ((intersection.min.x - page_rect.min.x) / page_rect.width())
+                            .clamp(0.0, 1.0);
+                        let x_max = ((intersection.max.x - page_rect.min.x) / page_rect.width())
+                            .clamp(0.0, 1.0);
+                        let y_min = ((intersection.min.y - page_rect.min.y) / page_rect.height())
+                            .clamp(0.0, 1.0);
+                        let y_max = ((intersection.max.y - page_rect.min.y) / page_rect.height())
+                            .clamp(0.0, 1.0);
 
                         let mask_min = egui::pos2(
                             mini_page_rect.min.x + x_min * mini_page_rect.width(),
@@ -135,7 +152,8 @@ impl ThumbnailSidebar {
         });
     }
 
-    fn render_thumbnail_graphics( // RR-15 Limit: GUI - Render actual thumbnail image or loader on sidebar
+    fn render_thumbnail_graphics(
+        // RR-15 Limit: GUI - Render actual thumbnail image or loader on sidebar
         app: &mut crate::app::FerruginousApp,
         ui: &mut egui::Ui,
         frame: &mut eframe::Frame,
@@ -169,7 +187,7 @@ impl ThumbnailSidebar {
                         mini_page_rect,
                         2.0,
                         page_stroke,
-                        egui::StrokeKind::Inside
+                        egui::StrokeKind::Inside,
                     );
                     rendered_thumb = true;
                 }
@@ -185,12 +203,7 @@ impl ThumbnailSidebar {
                     egui::Color32::from_rgba_unmultiplied(120, 125, 135, 45),
                 );
             }
-            ui.painter().rect_stroke(
-                mini_page_rect,
-                2.0,
-                page_stroke,
-                egui::StrokeKind::Inside
-            );
+            ui.painter().rect_stroke(mini_page_rect, 2.0, page_stroke, egui::StrokeKind::Inside);
             ui.painter().text(
                 mini_page_rect.center(),
                 egui::Align2::CENTER_CENTER,

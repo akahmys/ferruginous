@@ -251,7 +251,8 @@ impl Interpreter<'_> {
                         if let Some(arr_h) = decode_resolved.as_array() {
                             if let Some(arr) = self.doc.arena().get_array(arr_h) {
                                 if arr.len() >= 2 {
-                                    let first = arr[0].resolve(self.doc.arena()).as_f64().unwrap_or(0.0);
+                                    let first =
+                                        arr[0].resolve(self.doc.arena()).as_f64().unwrap_or(0.0);
                                     if first > 0.5 {
                                         invert_mask = true;
                                     }
@@ -276,7 +277,11 @@ impl Interpreter<'_> {
         let smask_data = if let Some(smask_obj) = dict.get(&smask_key) {
             let smask_stream = smask_obj.resolve(self.doc.arena());
             if let Object::Stream(dh, ref sd) = smask_stream {
-                let smask_dict = self.doc.arena().get_dict(dh).ok_or_else(|| PdfError::Other("SMask dictionary not found".into()))?;
+                let smask_dict = self
+                    .doc
+                    .arena()
+                    .get_dict(dh)
+                    .ok_or_else(|| PdfError::Other("SMask dictionary not found".into()))?;
                 let (sw, sh, sf, smask_decoded) =
                     if let ferruginous_core::object::SublimatedData::Image {
                         width,

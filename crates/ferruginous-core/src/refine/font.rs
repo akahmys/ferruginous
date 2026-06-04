@@ -37,10 +37,7 @@ pub fn normalize_font(
     RefinedObject::Dictionary(dict)
 }
 
-fn normalize_type0_font(
-    dict: &mut BTreeMap<PdfName, RefinedObject>,
-    resource: &FontResource,
-) {
+fn normalize_type0_font(dict: &mut BTreeMap<PdfName, RefinedObject>, resource: &FontResource) {
     let encoding_name = if resource.wmode == 1 { "Identity-V" } else { "Identity-H" };
     dict.insert(PdfName::new("Encoding"), RefinedObject::Name(PdfName::new(encoding_name)));
 

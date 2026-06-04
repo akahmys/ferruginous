@@ -16,8 +16,5 @@ pub enum PageTreeView<'a> {
     /// A flat slice of leaf page handles.
     Flat(&'a [Handle<Object>]),
     /// A balanced hierarchy of page tree views.
-    Balanced {
-        max_kids: usize,
-        nodes: Vec<PageTreeView<'a>>,
-    },
+    Balanced { max_kids: usize, nodes: Vec<PageTreeView<'a>> },
 }

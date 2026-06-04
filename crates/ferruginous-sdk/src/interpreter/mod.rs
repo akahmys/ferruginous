@@ -266,62 +266,62 @@ impl<'a> Interpreter<'a> {
             | Command::Type3SetMetrics { .. } => self.handle_text_command(cmd),
 
             // --- Color ---
-            Command::SetFillColor(color) => {
-                match color {
-                    ferruginous_core::graphics::Color::Gray(g) => {
-                        self.stack.push(Object::Real(*g));
-                        self.handle_color_operator("g")
-                    }
-                    ferruginous_core::graphics::Color::Rgb(r, g, b) => {
-                        self.stack.push(Object::Real(*r));
-                        self.stack.push(Object::Real(*g));
-                        self.stack.push(Object::Real(*b));
-                        self.handle_color_operator("rg")
-                    }
-                    ferruginous_core::graphics::Color::Cmyk(c, m, y, k) => {
-                        self.stack.push(Object::Real(*c));
-                        self.stack.push(Object::Real(*m));
-                        self.stack.push(Object::Real(*y));
-                        self.stack.push(Object::Real(*k));
-                        self.handle_color_operator("k")
-                    }
-                    ferruginous_core::graphics::Color::Lab(l, a, b) => {
-                        self.stack.push(Object::Real(*l));
-                        self.stack.push(Object::Real(*a));
-                        self.stack.push(Object::Real(*b));
-                        log::warn!("[SDK] Lab color in Command::SetFillColor not directly mappable to operator");
-                        Ok(())
-                    }
+            Command::SetFillColor(color) => match color {
+                ferruginous_core::graphics::Color::Gray(g) => {
+                    self.stack.push(Object::Real(*g));
+                    self.handle_color_operator("g")
                 }
-            }
-            Command::SetStrokeColor(color) => {
-                match color {
-                    ferruginous_core::graphics::Color::Gray(g) => {
-                        self.stack.push(Object::Real(*g));
-                        self.handle_color_operator("G")
-                    }
-                    ferruginous_core::graphics::Color::Rgb(r, g, b) => {
-                        self.stack.push(Object::Real(*r));
-                        self.stack.push(Object::Real(*g));
-                        self.stack.push(Object::Real(*b));
-                        self.handle_color_operator("RG")
-                    }
-                    ferruginous_core::graphics::Color::Cmyk(c, m, y, k) => {
-                        self.stack.push(Object::Real(*c));
-                        self.stack.push(Object::Real(*m));
-                        self.stack.push(Object::Real(*y));
-                        self.stack.push(Object::Real(*k));
-                        self.handle_color_operator("K")
-                    }
-                    ferruginous_core::graphics::Color::Lab(l, a, b) => {
-                        self.stack.push(Object::Real(*l));
-                        self.stack.push(Object::Real(*a));
-                        self.stack.push(Object::Real(*b));
-                        log::warn!("[SDK] Lab color in Command::SetStrokeColor not directly mappable to operator");
-                        Ok(())
-                    }
+                ferruginous_core::graphics::Color::Rgb(r, g, b) => {
+                    self.stack.push(Object::Real(*r));
+                    self.stack.push(Object::Real(*g));
+                    self.stack.push(Object::Real(*b));
+                    self.handle_color_operator("rg")
                 }
-            }
+                ferruginous_core::graphics::Color::Cmyk(c, m, y, k) => {
+                    self.stack.push(Object::Real(*c));
+                    self.stack.push(Object::Real(*m));
+                    self.stack.push(Object::Real(*y));
+                    self.stack.push(Object::Real(*k));
+                    self.handle_color_operator("k")
+                }
+                ferruginous_core::graphics::Color::Lab(l, a, b) => {
+                    self.stack.push(Object::Real(*l));
+                    self.stack.push(Object::Real(*a));
+                    self.stack.push(Object::Real(*b));
+                    log::warn!(
+                        "[SDK] Lab color in Command::SetFillColor not directly mappable to operator"
+                    );
+                    Ok(())
+                }
+            },
+            Command::SetStrokeColor(color) => match color {
+                ferruginous_core::graphics::Color::Gray(g) => {
+                    self.stack.push(Object::Real(*g));
+                    self.handle_color_operator("G")
+                }
+                ferruginous_core::graphics::Color::Rgb(r, g, b) => {
+                    self.stack.push(Object::Real(*r));
+                    self.stack.push(Object::Real(*g));
+                    self.stack.push(Object::Real(*b));
+                    self.handle_color_operator("RG")
+                }
+                ferruginous_core::graphics::Color::Cmyk(c, m, y, k) => {
+                    self.stack.push(Object::Real(*c));
+                    self.stack.push(Object::Real(*m));
+                    self.stack.push(Object::Real(*y));
+                    self.stack.push(Object::Real(*k));
+                    self.handle_color_operator("K")
+                }
+                ferruginous_core::graphics::Color::Lab(l, a, b) => {
+                    self.stack.push(Object::Real(*l));
+                    self.stack.push(Object::Real(*a));
+                    self.stack.push(Object::Real(*b));
+                    log::warn!(
+                        "[SDK] Lab color in Command::SetStrokeColor not directly mappable to operator"
+                    );
+                    Ok(())
+                }
+            },
             Command::SetFillColorSpace(name) => {
                 self.push_name(name);
                 self.handle_color_operator("cs")
@@ -370,7 +370,9 @@ impl<'a> Interpreter<'a> {
 
             // --- Fallback ---
             Command::RawOperator { name, operands } => {
-                fn ir_to_refined(ir: &ferruginous_core::object::sublimation::IrObject) -> ferruginous_core::refine::RefinedObject {
+                fn ir_to_refined(
+                    ir: &ferruginous_core::object::sublimation::IrObject,
+                ) -> ferruginous_core::refine::RefinedObject {
                     use ferruginous_core::object::sublimation::IrObject;
                     use ferruginous_core::refine::RefinedObject;
                     match ir {
@@ -380,7 +382,9 @@ impl<'a> Interpreter<'a> {
                         IrObject::String(b) => RefinedObject::String(b.clone()),
                         IrObject::Hex(b) => RefinedObject::Hex(b.clone()),
                         IrObject::Name(n) => RefinedObject::Name(ferruginous_core::PdfName::new(n)),
-                        IrObject::Array(a) => RefinedObject::Array(a.iter().map(ir_to_refined).collect()),
+                        IrObject::Array(a) => {
+                            RefinedObject::Array(a.iter().map(ir_to_refined).collect())
+                        }
                         IrObject::Dictionary(d) => {
                             let mut map = std::collections::BTreeMap::new();
                             for (k, v) in d {
@@ -394,7 +398,11 @@ impl<'a> Interpreter<'a> {
 
                 for op in operands {
                     let refined = ir_to_refined(op);
-                    self.stack.push(ferruginous_core::commit_to_arena(self.doc.arena(), refined, 0));
+                    self.stack.push(ferruginous_core::commit_to_arena(
+                        self.doc.arena(),
+                        refined,
+                        0,
+                    ));
                 }
                 self.execute_operator(name)
             }
@@ -403,17 +411,13 @@ impl<'a> Interpreter<'a> {
 
     fn execute_operator(&mut self, op: &str) -> PdfResult<()> {
         match op {
-            "m" | "l" | "c" | "v" | "y" | "re" | "h" | "W" | "W*" => {
-                self.handle_path_operator(op)
-            }
+            "m" | "l" | "c" | "v" | "y" | "re" | "h" | "W" | "W*" => self.handle_path_operator(op),
             "S" | "f" | "F" | "f*" | "n" | "b" | "b*" | "B" | "B*" | "s" => {
                 self.handle_painting_operator(op)
             }
             "q" | "Q" | "cm" | "gs" => self.handle_state_operator(op),
             "g" | "G" | "rg" | "RG" | "k" | "K" | "cs" | "CS" => self.handle_color_operator(op),
-            "Tc" | "Tw" | "Tz" | "TL" | "Tf" | "Tr" | "Ts" => {
-                self.handle_text_state_operator(op)
-            }
+            "Tc" | "Tw" | "Tz" | "TL" | "Tf" | "Tr" | "Ts" => self.handle_text_state_operator(op),
             "BT" | "ET" => self.handle_text_scope_operator(op),
             "Td" | "TD" | "Tm" | "T*" => self.handle_text_positioning_operator(op),
             "Tj" | "TJ" | "'" | "\"" => self.handle_text_showing_operator(op),
@@ -433,12 +437,8 @@ impl<'a> Interpreter<'a> {
                 let wx = self.pop_f64()?;
                 self.set_type3_metrics_bbox(wx, wy, llx, lly, urx, ury)
             }
-            "J" | "j" | "w" | "M" | "d" | "i" => {
-                self.handle_state_operator(op)
-            }
-            "SCN" | "scn" | "sc" | "SC" => {
-                self.handle_color_operator(op)
-            }
+            "J" | "j" | "w" | "M" | "d" | "i" => self.handle_state_operator(op),
+            "SCN" | "scn" | "sc" | "SC" => self.handle_color_operator(op),
             _ => {
                 if !op.is_empty() {
                     log::warn!("Unknown or unhandled operator: {op}");

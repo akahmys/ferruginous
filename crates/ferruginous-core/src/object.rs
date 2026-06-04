@@ -398,7 +398,6 @@ pub struct ObjectEntry {
     pub generation: u16,
 }
 
-
 impl Eq for Object {}
 
 impl PartialOrd for Object {

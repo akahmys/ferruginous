@@ -146,7 +146,9 @@ impl Ingestor {
         options: &IngestionOptions,
     ) -> crate::PdfResult<IngestedDocument> {
         let report = |msg: &str| {
-            if let Some(c) = &options.progress_callback { c(msg.to_string()); }
+            if let Some(c) = &options.progress_callback {
+                c(msg.to_string());
+            }
         };
         report("1/4: Decrypting and normalizing document...");
         let arena = PdfArena::new();
@@ -164,13 +166,14 @@ impl Ingestor {
 
         let (root_handle, info_handle) = Self::resolve_root_info(doc, &table);
         let temp_doc = Document::new(arena.clone(), root_handle, info_handle);
-        
+
         report("3/4: Discovering font resources and stream contexts...");
         let (font_indices, page_and_form_indices) = scan_ingested_objects(&arena);
         let handle_font_cache = discover_fonts(&arena, &temp_doc, Some(&font_indices));
 
         let global_font_registry = Self::build_global_font_registry(&arena, &handle_font_cache);
-        let mut stream_contexts = map_stream_contexts(&arena, &handle_font_cache, Some(&page_and_form_indices));
+        let mut stream_contexts =
+            map_stream_contexts(&arena, &handle_font_cache, Some(&page_and_form_indices));
 
         merge_global_fonts_into_contexts(&mut stream_contexts, &global_font_registry);
 
@@ -231,7 +234,15 @@ impl Ingestor {
                     .unwrap_or(&[]);
                 let encrypt_metadata =
                     dict.get(b"EncryptMetadata").and_then(|o| o.as_bool()).unwrap_or(true);
-                return SecurityHandler::new_v4(password, o_str, u_str, p_val, file_id, encrypt_metadata).ok();
+                return SecurityHandler::new_v4(
+                    password,
+                    o_str,
+                    u_str,
+                    p_val,
+                    file_id,
+                    encrypt_metadata,
+                )
+                .ok();
             } else if v_val == 5 && (r_val == 5 || r_val == 6) {
                 let mut file_id = &[][..];
                 if let Ok(id_array) = doc.trailer.get(b"ID")
@@ -257,7 +268,7 @@ impl Ingestor {
         let security_handler = Self::parse_security_handler(doc, options);
 
         if let Some(handler) = &security_handler {
-            if let Some(encrypt_dict_obj) = doc.trailer.get(b"Encrypt").ok() {
+            if let Ok(encrypt_dict_obj) = doc.trailer.get(b"Encrypt") {
                 let encrypt_obj = if let Ok(id) = encrypt_dict_obj.as_reference() {
                     doc.objects.get(&id)
                 } else {
@@ -280,7 +291,7 @@ impl Ingestor {
             let ids: Vec<lopdf::ObjectId> = doc.objects.keys().cloned().collect();
             for id in ids {
                 if let Some(obj) = doc.objects.get_mut(&id) {
-                    Self::decrypt_object_stacked(obj, id, &handler)?;
+                    Self::decrypt_object_stacked(obj, id, handler)?;
                 }
             }
             doc.trailer.remove(b"Encrypt");
@@ -327,9 +338,7 @@ impl Ingestor {
     }
 }
 
-fn scan_ingested_objects(
-    arena: &PdfArena,
-) -> (Vec<u32>, Vec<u32>) {
+fn scan_ingested_objects(arena: &PdfArena) -> (Vec<u32>, Vec<u32>) {
     let mut font_indices = Vec::new();
     let mut page_and_form_indices = Vec::new();
 
@@ -342,11 +351,13 @@ fn scan_ingested_objects(
 
     for i in 0..arena.object_count() {
         let obj_h = Handle::new(i);
-        if let Some(Object::Dictionary(handle) | Object::Stream(handle, _)) = arena.get_object(obj_h)
+        if let Some(Object::Dictionary(handle) | Object::Stream(handle, _)) =
+            arena.get_object(obj_h)
             && let Some(dict) = arena.get_dict(handle)
         {
             let type_val_resolved = dict.get(&type_key).and_then(|o| o.resolve(arena).as_name());
-            let subtype_val_resolved = dict.get(&subtype_key).and_then(|o| o.resolve(arena).as_name());
+            let subtype_val_resolved =
+                dict.get(&subtype_key).and_then(|o| o.resolve(arena).as_name());
 
             if type_val_resolved == Some(page_val) || subtype_val_resolved == Some(form_val) {
                 page_and_form_indices.push(i);

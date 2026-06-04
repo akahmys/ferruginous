@@ -241,23 +241,31 @@ impl PdfArena {
             let handle = Handle::new(i);
             if let Some(Object::Stream(dh, data_arc)) = self.get_object(handle) {
                 // If it's already structured, skip
-                if matches!(&*data_arc, SublimatedData::Commands { .. } | SublimatedData::Image { .. })
-                {
+                if matches!(
+                    &*data_arc,
+                    SublimatedData::Commands { .. } | SublimatedData::Image { .. }
+                ) {
                     continue;
                 }
 
                 // Determine if it's a content stream
-                let is_content = Object::Stream(dh, data_arc.clone()).is_likely_content_stream(self);
+                let is_content =
+                    Object::Stream(dh, data_arc.clone()).is_likely_content_stream(self);
 
                 let is_image = if let Some(dict) = self.get_dict(dh) {
-                    let subtype = dict.get(&self.name("Subtype")).and_then(|o| o.resolve(self).as_name()).and_then(|n| self.get_name(n));
+                    let subtype = dict
+                        .get(&self.name("Subtype"))
+                        .and_then(|o| o.resolve(self).as_name())
+                        .and_then(|n| self.get_name(n));
                     subtype.as_ref().map(|n| n.as_str() == "Image").unwrap_or(false)
                 } else {
                     false
                 };
-                
+
                 let is_font = if let Some(dict) = self.get_dict(dh) {
-                    dict.contains_key(&self.name("Length1")) || dict.contains_key(&self.name("Length2")) || dict.contains_key(&self.name("Length3"))
+                    dict.contains_key(&self.name("Length1"))
+                        || dict.contains_key(&self.name("Length2"))
+                        || dict.contains_key(&self.name("Length3"))
                 } else {
                     false
                 };
@@ -288,15 +296,18 @@ impl PdfArena {
         } else if let Some(Object::Stream(dh, _)) = self.get_object(handle)
             && let Some(dict) = self.get_dict(dh)
             && {
-                let subtype = dict.get(&self.name("Subtype"))
+                let subtype = dict
+                    .get(&self.name("Subtype"))
                     .and_then(|o: &Object| o.resolve(self).as_name())
                     .and_then(|n: Handle<PdfName>| self.get_name(n));
                 let is_image = subtype.as_ref().map(|n| n.as_str() == "Image").unwrap_or(false);
-                let is_font = dict.contains_key(&self.name("Length1")) || dict.contains_key(&self.name("Length2")) || dict.contains_key(&self.name("Length3"));
+                let is_font = dict.contains_key(&self.name("Length1"))
+                    || dict.contains_key(&self.name("Length2"))
+                    || dict.contains_key(&self.name("Length3"));
                 is_image || is_font
             }
         {
-            // High-Fidelity Preservation (Phase 2 & 3): 
+            // High-Fidelity Preservation (Phase 2 & 3):
             // Do NOT decode images or fonts to raw pixels/data during ingestion.
             // Preserve the original encoded bytes (Solid state) for lossless serialization.
             // On-demand sublimation (Gas state) occurs during interpretation/rendering.
@@ -336,9 +347,9 @@ impl PdfArena {
                     .map_err(|e| crate::PdfError::Other(e.to_string().into()))?;
                 Ok(bytes::Bytes::from(decoded))
             }
-            crate::object::SublimatedData::Commands { items: cmds } => {
-                Ok(bytes::Bytes::from(crate::object::sublimation::serializer::serialize_commands(cmds)))
-            }
+            crate::object::SublimatedData::Commands { items: cmds } => Ok(bytes::Bytes::from(
+                crate::object::sublimation::serializer::serialize_commands(cmds),
+            )),
             crate::object::SublimatedData::Image { data, .. } => {
                 Ok(bytes::Bytes::from(data.clone()))
             }
@@ -364,9 +375,10 @@ impl PdfArena {
         let objects = self.inner.objects.read();
         for (i, entry) in objects.iter().enumerate() {
             if let Object::Dictionary(h) = entry.object
-                && h == dh {
-                    return Some(Handle::new(i as u32));
-                }
+                && h == dh
+            {
+                return Some(Handle::new(i as u32));
+            }
         }
         None
     }

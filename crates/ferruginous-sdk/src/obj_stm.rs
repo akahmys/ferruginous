@@ -19,10 +19,7 @@ impl Default for ObjectStreamPacker {
 impl ObjectStreamPacker {
     /// Creates a new packer.
     pub fn new() -> Self {
-        Self {
-            indices: Vec::new(),
-            data: Vec::new(),
-        }
+        Self { indices: Vec::new(), data: Vec::new() }
     }
 
     /// Adds an object to the stream.
@@ -47,15 +44,15 @@ impl ObjectStreamPacker {
     pub fn finish(self) -> (usize, usize, Vec<u8>) {
         let mut full_data = Vec::new();
         let n = self.indices.len();
-        
+
         // Write index: <obj_id> <offset>
         for (id, offset) in &self.indices {
             let _ = write!(full_data, "{id} {offset} ");
         }
-        
+
         let first_offset = full_data.len();
         full_data.extend_from_slice(&self.data);
-        
+
         (n, first_offset, full_data)
     }
 

@@ -14,7 +14,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let page = doc.get_page(1)?; // Index 1 is page 2
     let arena = doc.inner().arena();
-    
+
     // Find the fonts defined in the resources
     let res_h = page.resources_handle();
     let res_dict = arena.get_dict(res_h).unwrap();
@@ -30,7 +30,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if let Some(font_obj_h) = font_obj.as_dict_handle() {
             let dict = arena.get_dict(font_obj_h).unwrap();
             let mut font_res = FontResource::load(&dict, doc.inner()).unwrap();
-            
+
             if font_res.subtype.as_str() == "Type0"
                 && let Some(desc_fonts_obj) = dict.get(&arena.name("DescendantFonts"))
                 && let ferruginous_core::Object::Array(ah) = desc_fonts_obj.resolve(arena)
@@ -55,7 +55,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let handles = page.contents_handles();
     for &stream_h in &handles {
         let sublimated = arena.get_sublimated_data(stream_h).unwrap();
-        if let ferruginous_core::object::SublimatedData::Commands { items: ref cmds, .. } = *sublimated {
+        if let ferruginous_core::object::SublimatedData::Commands { items: ref cmds, .. } =
+            *sublimated
+        {
             let mut current_font = None;
             for cmd in cmds {
                 match cmd {
@@ -65,7 +67,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ferruginous_core::object::sublimation::Command::ShowTextArray(items) => {
                         if let Some(font) = current_font {
                             for item in items {
-                                if let ferruginous_core::object::sublimation::TextArrayItem::Text(bytes) = item {
+                                if let ferruginous_core::object::sublimation::TextArrayItem::Text(
+                                    bytes,
+                                ) = item
+                                {
                                     let mut i = 0;
                                     while i < bytes.len() {
                                         let (consumed, u_opt) = font.decode_next(&bytes[i..]);
@@ -75,13 +80,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         let code = &bytes[i..i + consumed];
                                         let cid = font.to_cid(code);
                                         let u_char = u_opt.as_ref().and_then(|s| s.chars().next());
-                                        
+
                                         // Let's print out the decoding step and character
-                                        println!("[DECODE] CID {cid} -> Unicode {u_opt:?} (char_code={code:?})");
-                                        
+                                        println!(
+                                            "[DECODE] CID {cid} -> Unicode {u_opt:?} (char_code={code:?})"
+                                        );
+
                                         // Call resolve_gid, which will emit log messages
                                         let _resolved = font.resolve_gid(cid, u_char, None);
-                                        
+
                                         i += consumed;
                                     }
                                 }

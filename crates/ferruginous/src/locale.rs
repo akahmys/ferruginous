@@ -1,14 +1,12 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 pub struct LocaleManager {
-    translations: HashMap<String, HashMap<String, String>>,
+    translations: BTreeMap<String, BTreeMap<String, String>>,
 }
 
 impl LocaleManager {
     pub fn new() -> Self {
-        let mut mgr = Self {
-            translations: HashMap::new(),
-        };
+        let mut mgr = Self { translations: BTreeMap::new() };
         mgr.load_embedded();
         mgr.load_external();
         mgr
@@ -18,10 +16,10 @@ impl LocaleManager {
         let en_raw = include_str!("../assets/locales/en.json");
         let ja_raw = include_str!("../assets/locales/ja.json");
 
-        if let Ok(en_map) = serde_json::from_str::<HashMap<String, String>>(en_raw) {
+        if let Ok(en_map) = serde_json::from_str::<BTreeMap<String, String>>(en_raw) {
             self.translations.insert("en".to_string(), en_map);
         }
-        if let Ok(ja_map) = serde_json::from_str::<HashMap<String, String>>(ja_raw) {
+        if let Ok(ja_map) = serde_json::from_str::<BTreeMap<String, String>>(ja_raw) {
             self.translations.insert("ja".to_string(), ja_map);
         }
     }
@@ -34,11 +32,20 @@ impl LocaleManager {
                     if let Ok(entries) = std::fs::read_dir(locales_dir) {
                         for entry in entries.flatten() {
                             let path = entry.path();
-                            if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("json") {
+                            if path.is_file()
+                                && path.extension().and_then(|s| s.to_str()) == Some("json")
+                            {
                                 if let Some(lang_code) = path.file_stem().and_then(|s| s.to_str()) {
                                     if let Ok(content) = std::fs::read_to_string(&path) {
-                                        if let Ok(map) = serde_json::from_str::<HashMap<String, String>>(&content) {
-                                            log::info!("Dynamically loaded external locale: {}", lang_code);
+                                        if let Ok(map) =
+                                            serde_json::from_str::<BTreeMap<String, String>>(
+                                                &content,
+                                            )
+                                        {
+                                            log::info!(
+                                                "Dynamically loaded external locale: {}",
+                                                lang_code
+                                            );
                                             self.translations.insert(lang_code.to_string(), map);
                                         }
                                     }

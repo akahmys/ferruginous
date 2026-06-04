@@ -1,7 +1,7 @@
-use std::collections::BTreeMap;
-use regex::Regex;
-use crate::redaction::{RedactionManager, RedactionZone};
 use crate::interaction::TextSpan;
+use crate::redaction::{RedactionManager, RedactionZone};
+use regex::Regex;
+use std::collections::BTreeMap;
 
 pub struct SearchMatch {
     pub page_index: usize,
@@ -35,7 +35,8 @@ impl RedactionStudioPanel {
         }
     }
 
-    pub fn show( // RR-15 Limit: GUI - Sequential egui declarations for Redaction Studio window layout
+    pub fn show(
+        // RR-15 Limit: GUI - Sequential egui declarations for Redaction Studio window layout
         &mut self,
         ui: &mut egui::Ui,
         raw_texts: &BTreeMap<usize, String>,
@@ -134,7 +135,9 @@ impl RedactionStudioPanel {
                         let matched_str = m.as_str();
                         if let Some(spans) = page_spans.get(&page_idx) {
                             for span in spans {
-                                if span.text.contains(matched_str) || matched_str.contains(&span.text) {
+                                if span.text.contains(matched_str)
+                                    || matched_str.contains(&span.text)
+                                {
                                     self.matches.push(SearchMatch {
                                         page_index: page_idx,
                                         term: span.text.clone(),
@@ -160,11 +163,8 @@ impl RedactionStudioPanel {
     ) {
         for (&page_idx, spans) in page_spans {
             for span in spans {
-                let text_to_check = if self.case_sensitive {
-                    span.text.clone()
-                } else {
-                    span.text.to_lowercase()
-                };
+                let text_to_check =
+                    if self.case_sensitive { span.text.clone() } else { span.text.to_lowercase() };
 
                 if text_to_check.contains(search_term) {
                     self.matches.push(SearchMatch {

@@ -402,7 +402,8 @@ enum DebugSubcommands {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> { // RR-15 Limit: Dispatcher - CLIs top level command dispatcher routing to handlers
+async fn main() -> Result<()> {
+    // RR-15 Limit: Dispatcher - CLIs top level command dispatcher routing to handlers
     env_logger::init();
     let cli = Cli::parse();
 
@@ -449,7 +450,16 @@ async fn main() -> Result<()> { // RR-15 Limit: Dispatcher - CLIs top level comm
                 ingest,
                 save,
             } => {
-                handle_upgrade(input, output, standard, icc_profile, linearize, diff, ingest, save)?;
+                handle_upgrade(
+                    input,
+                    output,
+                    standard,
+                    icc_profile,
+                    linearize,
+                    diff,
+                    ingest,
+                    save,
+                )?;
             }
             PublishSubcommands::Render { input, output, page, ingest } => {
                 handle_render(input, output, page, ingest)?;
@@ -753,10 +763,7 @@ fn print_stream_fields(
         if let Ok(decoded) = arena.process_filters(&raw_bytes, &dict) {
             println!("Decoded Length: {} bytes", decoded.len());
             if decoded.len() < 2000 {
-                println!(
-                    "\n--- [ DECODED CONTENT ] ---\n{}",
-                    String::from_utf8_lossy(&decoded)
-                );
+                println!("\n--- [ DECODED CONTENT ] ---\n{}", String::from_utf8_lossy(&decoded));
             } else {
                 println!(
                     "\n--- [ DECODED CONTENT (PREVIEW) ] ---\n{}",
@@ -770,12 +777,7 @@ fn print_stream_fields(
     }
 }
 
-fn handle_debug_dump(
-    input: PathBuf,
-    obj_id: u32,
-    _gen_num: u16,
-    ingest: IngestArgs,
-) -> Result<()> {
+fn handle_debug_dump(input: PathBuf, obj_id: u32, _gen_num: u16, ingest: IngestArgs) -> Result<()> {
     println!("fepdf debug dump: Object {} from {:?}", obj_id, input);
     let data = std::fs::read(&input).with_context(|| "Failed to read input")?;
     let ingest_options: ferruginous_core::ingest::IngestionOptions = ingest.into();

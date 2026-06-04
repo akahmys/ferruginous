@@ -234,11 +234,12 @@ impl VelloBackend {
 
         let mut font_data = ctx.data_ref;
         let is_space = glyph.unicode == " " || glyph.unicode == "\u{3000}";
-        
+
         let mut is_fallback = state.is_fallback || glyph.is_fallback;
         let mut gid = glyph.gid;
 
-        if (glyph.is_fallback || (is_fallback && is_space)) && !ctx.data_ref.is_empty() && gid == 0 {
+        if (glyph.is_fallback || (is_fallback && is_space)) && !ctx.data_ref.is_empty() && gid == 0
+        {
             let _ = system_fonts.get(&state.fallback_type).map(|sys_data| {
                 font_data = sys_data;
                 is_fallback = true;
@@ -384,8 +385,12 @@ fn convert_image_pixels(
         PixelFormat::Gray8 => convert_gray8(image_data),
         PixelFormat::Rgb8 => convert_rgb8(image_data),
         PixelFormat::Cmyk8 => convert_cmyk8(image_data),
-        PixelFormat::MonoMask => convert_mono_mask(fill_color, fill_alpha, image_data, width, height, false),
-        PixelFormat::MonoMaskInverted => convert_mono_mask(fill_color, fill_alpha, image_data, width, height, true),
+        PixelFormat::MonoMask => {
+            convert_mono_mask(fill_color, fill_alpha, image_data, width, height, false)
+        }
+        PixelFormat::MonoMaskInverted => {
+            convert_mono_mask(fill_color, fill_alpha, image_data, width, height, true)
+        }
     }
 }
 
@@ -587,7 +592,14 @@ impl RenderBackend for VelloBackend {
         format: PixelFormat,
         smask: Option<SMaskData>,
     ) {
-        let mut rgba_data = convert_image_pixels(&self.state.fill_color, self.state.fill_alpha, image_data, width, height, format);
+        let mut rgba_data = convert_image_pixels(
+            &self.state.fill_color,
+            self.state.fill_alpha,
+            image_data,
+            width,
+            height,
+            format,
+        );
 
         if let Some(mask) = &smask
             && mask.width == width

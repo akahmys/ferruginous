@@ -52,14 +52,24 @@ impl SelectionManager {
     }
 
     /// Maps screen coordinate to PDF space.
-    pub fn screen_to_pdf(page_rect: egui::Rect, zoom: f32, page_h: f32, pos: egui::Pos2) -> egui::Pos2 {
+    pub fn screen_to_pdf(
+        page_rect: egui::Rect,
+        zoom: f32,
+        page_h: f32,
+        pos: egui::Pos2,
+    ) -> egui::Pos2 {
         let x = (pos.x - page_rect.min.x) / zoom;
         let y = page_h - (pos.y - page_rect.min.y) / zoom;
         egui::pos2(x, y)
     }
 
     /// Maps PDF space coordinate to screen space.
-    pub fn pdf_to_screen(page_rect: egui::Rect, zoom: f32, page_h: f32, pos: egui::Pos2) -> egui::Pos2 {
+    pub fn pdf_to_screen(
+        page_rect: egui::Rect,
+        zoom: f32,
+        page_h: f32,
+        pos: egui::Pos2,
+    ) -> egui::Pos2 {
         let x = page_rect.min.x + pos.x * zoom;
         let y = page_rect.min.y + (page_h - pos.y) * zoom;
         egui::pos2(x, y)
@@ -117,10 +127,7 @@ impl SelectionManager {
                     egui::vec2(word_w, line_height),
                 );
 
-                spans.push(TextSpan {
-                    text: word.to_string(),
-                    rect,
-                });
+                spans.push(TextSpan { text: word.to_string(), rect });
 
                 current_x += word_w + word_gap;
             }
@@ -140,16 +147,21 @@ impl SelectionManager {
         zoom: f32,
     ) {
         let response = ui.allocate_rect(page_rect, egui::Sense::drag());
-        
+
         let screen_pos = ui.input(|i| i.pointer.hover_pos());
 
-        if response.drag_started() && let Some(pos) = screen_pos {
+        if response.drag_started()
+            && let Some(pos) = screen_pos
+        {
             self.clear();
             self.active_page = Some(page_index);
             self.drag_start = Some(Self::screen_to_pdf(page_rect, zoom, page_unscaled_h, pos));
         }
 
-        if response.dragged() && let Some(pos) = screen_pos && self.active_page == Some(page_index) {
+        if response.dragged()
+            && let Some(pos) = screen_pos
+            && self.active_page == Some(page_index)
+        {
             self.drag_current = Some(Self::screen_to_pdf(page_rect, zoom, page_unscaled_h, pos));
             self.recalculate_selection(page_index, page_rect, page_unscaled_h, spans, zoom);
         }
@@ -245,11 +257,8 @@ impl SelectionManager {
                     .collect::<Vec<String>>()
                     .join(" ");
 
-                self.pending_tag_request = Some(PendingTagRequest {
-                    page_index,
-                    combined_rect,
-                    text: combined_text,
-                });
+                self.pending_tag_request =
+                    Some(PendingTagRequest { page_index, combined_rect, text: combined_text });
             }
         }
     }
@@ -270,12 +279,16 @@ impl SelectionManager {
         let response = ui.allocate_rect(page_rect, egui::Sense::drag());
         let screen_pos = ui.input(|i| i.pointer.hover_pos());
 
-        if response.drag_started() && let Some(pos) = screen_pos {
+        if response.drag_started()
+            && let Some(pos) = screen_pos
+        {
             self.clear();
             self.drag_start = Some(Self::screen_to_pdf(page_rect, zoom, page_unscaled_h, pos));
         }
 
-        if response.dragged() && let Some(pos) = screen_pos {
+        if response.dragged()
+            && let Some(pos) = screen_pos
+        {
             self.drag_current = Some(Self::screen_to_pdf(page_rect, zoom, page_unscaled_h, pos));
             self.recalculate_brush_highlights(page_index, page_rect, page_unscaled_h, spans, zoom);
         }

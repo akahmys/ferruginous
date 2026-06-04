@@ -127,51 +127,54 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let res_dict = doc.arena().get_dict(res_h).unwrap();
 
     if let Some(egs_obj) = res_dict.get(&doc.arena().name("ExtGState"))
-        && let Some(egs_dh) = egs_obj.resolve(doc.arena()).as_dict_handle() {
-            let egs_dict = doc.arena().get_dict(egs_dh).unwrap();
-            println!("ExtGState entries:");
-            for (nk, val) in egs_dict {
-                let name = doc.arena().get_name(nk).unwrap();
-                println!("  /{} -> {:?}", name.as_str(), val);
-                if let Some(h) = val.resolve(doc.arena()).as_dict_handle() {
-                    let d = doc.arena().get_dict(h).unwrap();
-                    println!("    Content:");
-                    for (k2, v2) in d {
-                        let n2 = doc.arena().get_name(k2).unwrap();
-                        println!("      /{} -> {:?}", n2.as_str(), v2);
-                    }
+        && let Some(egs_dh) = egs_obj.resolve(doc.arena()).as_dict_handle()
+    {
+        let egs_dict = doc.arena().get_dict(egs_dh).unwrap();
+        println!("ExtGState entries:");
+        for (nk, val) in egs_dict {
+            let name = doc.arena().get_name(nk).unwrap();
+            println!("  /{} -> {:?}", name.as_str(), val);
+            if let Some(h) = val.resolve(doc.arena()).as_dict_handle() {
+                let d = doc.arena().get_dict(h).unwrap();
+                println!("    Content:");
+                for (k2, v2) in d {
+                    let n2 = doc.arena().get_name(k2).unwrap();
+                    println!("      /{} -> {:?}", n2.as_str(), v2);
                 }
             }
         }
+    }
 
     if let Some(xobj_obj) = res_dict.get(&doc.arena().name("XObject"))
-        && let Some(xobj_dh) = xobj_obj.resolve(doc.arena()).as_dict_handle() {
-            let xobj_dict = doc.arena().get_dict(xobj_dh).unwrap();
-            println!("XObject entries:");
-            for (nk, val) in xobj_dict {
-                let name = doc.arena().get_name(nk).unwrap();
-                println!("  /{} ->", name.as_str());
-                dump_resolved(&doc, val.resolve(doc.arena()));
-            }
+        && let Some(xobj_dh) = xobj_obj.resolve(doc.arena()).as_dict_handle()
+    {
+        let xobj_dict = doc.arena().get_dict(xobj_dh).unwrap();
+        println!("XObject entries:");
+        for (nk, val) in xobj_dict {
+            let name = doc.arena().get_name(nk).unwrap();
+            println!("  /{} ->", name.as_str());
+            dump_resolved(&doc, val.resolve(doc.arena()));
         }
+    }
 
     if let Some(font_obj) = res_dict.get(&doc.arena().name("Font"))
-        && let Some(font_dh) = font_obj.resolve(doc.arena()).as_dict_handle() {
-            let font_dict = doc.arena().get_dict(font_dh).unwrap();
-            println!("Font entries:");
-            for (nk, val) in font_dict {
-                let name = doc.arena().get_name(nk).unwrap();
-                println!("  /{} -> {:?}", name.as_str(), val);
-                if let Some(dh) = val.resolve(doc.arena()).as_dict_handle() {
-                    let d = doc.arena().get_dict(dh).unwrap();
-                    println!("    Dictionary:");
-                    for (k2, v2) in d {
-                        let n2 = doc.arena().get_name(k2).unwrap();
-                        println!("      /{} -> {:?}", n2.as_str(), v2);
-                    }
+        && let Some(font_dh) = font_obj.resolve(doc.arena()).as_dict_handle()
+    {
+        let font_dict = doc.arena().get_dict(font_dh).unwrap();
+        println!("Font entries:");
+        for (nk, val) in font_dict {
+            let name = doc.arena().get_name(nk).unwrap();
+            println!("  /{} -> {:?}", name.as_str(), val);
+            if let Some(dh) = val.resolve(doc.arena()).as_dict_handle() {
+                let d = doc.arena().get_dict(dh).unwrap();
+                println!("    Dictionary:");
+                for (k2, v2) in d {
+                    let n2 = doc.arena().get_name(k2).unwrap();
+                    println!("      /{} -> {:?}", n2.as_str(), v2);
                 }
             }
         }
+    }
 
     Ok(())
 }

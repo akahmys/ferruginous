@@ -123,7 +123,7 @@ impl<'a> ObjectCloner<'a> {
             let target_obj = self.target.get_object(target_h).unwrap_or(Object::Null);
             if matches!(target_obj, Object::Null) && !matches!(source_obj, Object::Null) {
                 return Err(ferruginous_core::PdfError::Other(
-                    format!("Cloning failed: Object {target_h:?} remains Null in target").into()
+                    format!("Cloning failed: Object {target_h:?} remains Null in target").into(),
                 ));
             }
         }
@@ -164,7 +164,7 @@ impl<'a> ObjectCloner<'a> {
             }
             Object::Stream(dh, data) => {
                 // RR-15: Streams MUST be indirect objects. If we encounter a stream
-                // variant during shallow cloning (e.g., inside a dictionary), 
+                // variant during shallow cloning (e.g., inside a dictionary),
                 // we must promote it to a top-level object and return a reference.
                 let source_dict = self.source.get_dict(*dh).unwrap_or_default();
                 let mut target_dict = BTreeMap::new();

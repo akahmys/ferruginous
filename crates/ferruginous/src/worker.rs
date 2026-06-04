@@ -1,4 +1,9 @@
-#![allow(clippy::collapsible_if, clippy::match_result_ok, clippy::too_many_arguments, clippy::large_enum_variant)]
+#![allow(
+    clippy::collapsible_if,
+    clippy::match_result_ok,
+    clippy::too_many_arguments,
+    clippy::large_enum_variant
+)]
 
 use bytes::Bytes;
 use ferruginous_render::{FallbackFontType, VelloBackend};
@@ -8,9 +13,19 @@ use std::sync::mpsc::{Receiver, Sender};
 use vello::Scene;
 
 pub enum WorkerRequest {
-    Open { data: Bytes, name: Option<String> },
-    RenderPage { index: usize, scale: f64 },
-    UpdateNode { handle_id: u32, tag: String, alt_text: Option<String> },
+    Open {
+        data: Bytes,
+        name: Option<String>,
+    },
+    RenderPage {
+        index: usize,
+        scale: f64,
+    },
+    UpdateNode {
+        handle_id: u32,
+        tag: String,
+        alt_text: Option<String>,
+    },
     Save {
         path: std::path::PathBuf,
         compress: bool,
@@ -89,10 +104,32 @@ pub fn run_worker(rx: Receiver<WorkerRequest>, tx: Sender<WorkerResponse>, ctx: 
                 handle_update_node(&mut current_doc, handle_id, tag, alt_text, &tx);
                 ctx.request_repaint();
             }
-            WorkerRequest::Save { path, compress, linearize, vacuum, upgrade_pdf20, redaction_zones, cert_path, cert_password, signature_position } => {
+            WorkerRequest::Save {
+                path,
+                compress,
+                linearize,
+                vacuum,
+                upgrade_pdf20,
+                redaction_zones,
+                cert_path,
+                cert_password,
+                signature_position,
+            } => {
                 text_cache.clear();
                 spans_cache.clear();
-                handle_save(&current_doc, path, compress, linearize, vacuum, upgrade_pdf20, redaction_zones, cert_path, cert_password, signature_position, &tx);
+                handle_save(
+                    &current_doc,
+                    path,
+                    compress,
+                    linearize,
+                    vacuum,
+                    upgrade_pdf20,
+                    redaction_zones,
+                    cert_path,
+                    cert_password,
+                    signature_position,
+                    &tx,
+                );
                 ctx.request_repaint();
             }
             WorkerRequest::Audit => {
@@ -151,7 +188,12 @@ fn parse_struct_tree_findings(
                         let auditor = ferruginous_sdk::structure::MatterhornAuditor::new(arena);
                         if let Ok(findings) = auditor.audit(str_root_ref) {
                             for f in findings {
-                                audit_findings.push((f.checkpoint, f.severity, f.message, f.handle_id));
+                                audit_findings.push((
+                                    f.checkpoint,
+                                    f.severity,
+                                    f.message,
+                                    f.handle_id,
+                                ));
                             }
                         }
                     }
@@ -162,7 +204,10 @@ fn parse_struct_tree_findings(
     (ust_root, audit_findings)
 }
 
-fn resolve_struct_tree_root(doc: &PdfDocument, next_id: &mut usize) -> Option<crate::sidebar::USTNode> {
+fn resolve_struct_tree_root(
+    doc: &PdfDocument,
+    next_id: &mut usize,
+) -> Option<crate::sidebar::USTNode> {
     let arena = doc.inner().arena();
     let cah = doc.inner().catalog_handle()?;
     let cadh = doc.inner().resolve_to_dict(cah).ok()?;
@@ -174,7 +219,11 @@ fn resolve_struct_tree_root(doc: &PdfDocument, next_id: &mut usize) -> Option<cr
     parse_struct_node(arena, str_root_ref, next_id, &mut visited)
 }
 
-fn handle_open(data: Bytes, name: Option<String>, tx: &Sender<WorkerResponse>) -> Option<PdfDocument> {
+fn handle_open(
+    data: Bytes,
+    name: Option<String>,
+    tx: &Sender<WorkerResponse>,
+) -> Option<PdfDocument> {
     let file_size = data.len();
     let tx_clone = tx.clone();
     let options = ferruginous_core::ingest::IngestionOptions {
@@ -206,7 +255,8 @@ fn handle_open(data: Bytes, name: Option<String>, tx: &Sender<WorkerResponse>) -
                 });
             }
 
-            let version = doc.get_summary().ok().map(|s| s.version).unwrap_or_else(|| "1.7".to_string());
+            let version =
+                doc.get_summary().ok().map(|s| s.version).unwrap_or_else(|| "1.7".to_string());
             let metadata = doc.inner().metadata();
             let security_method = doc.inner().security_method.clone();
             let permissions = doc.inner().permissions;
@@ -270,14 +320,20 @@ fn parse_kids_helper(
     }
 }
 
-fn parse_tag_helper(arena: &PdfArena, dict: &std::collections::BTreeMap<Handle<PdfName>, Object>) -> String {
+fn parse_tag_helper(
+    arena: &PdfArena,
+    dict: &std::collections::BTreeMap<Handle<PdfName>, Object>,
+) -> String {
     let type_key = arena.name("Type");
     let s_key = arena.name("S");
 
     if let Some(s_obj) = dict.get(&s_key) {
         let resolved: Object = s_obj.resolve(arena);
         if let Some(name_h) = resolved.as_name() {
-            arena.get_name(name_h).map(|n| n.as_str().to_string()).unwrap_or_else(|| "P".to_string())
+            arena
+                .get_name(name_h)
+                .map(|n| n.as_str().to_string())
+                .unwrap_or_else(|| "P".to_string())
         } else {
             "P".to_string()
         }
@@ -295,7 +351,10 @@ fn parse_tag_helper(arena: &PdfArena, dict: &std::collections::BTreeMap<Handle<P
     }
 }
 
-fn parse_alt_text_helper(arena: &PdfArena, dict: &std::collections::BTreeMap<Handle<PdfName>, Object>) -> Option<String> {
+fn parse_alt_text_helper(
+    arena: &PdfArena,
+    dict: &std::collections::BTreeMap<Handle<PdfName>, Object>,
+) -> Option<String> {
     let alt_key = arena.name("Alt");
     let alt_obj = dict.get(&alt_key)?;
     let resolved = alt_obj.resolve(arena);
@@ -366,17 +425,19 @@ fn get_or_extract_spans(
     if let Some(cached) = cache.get(&index) {
         return Some(cached.clone());
     }
-    let spans: Option<Vec<crate::interaction::TextSpan>> = doc.extract_spans(index).ok().map(|sdk_spans| {
-        sdk_spans.into_iter().map(|s| {
-            crate::interaction::TextSpan {
-                text: s.text,
-                rect: egui::Rect::from_two_pos(
-                    egui::pos2(s.x as f32, s.y as f32),
-                    egui::pos2((s.x + s.width) as f32, (s.y + s.font_size) as f32),
-                ),
-            }
-        }).collect()
-    });
+    let spans: Option<Vec<crate::interaction::TextSpan>> =
+        doc.extract_spans(index).ok().map(|sdk_spans| {
+            sdk_spans
+                .into_iter()
+                .map(|s| crate::interaction::TextSpan {
+                    text: s.text,
+                    rect: egui::Rect::from_two_pos(
+                        egui::pos2(s.x as f32, s.y as f32),
+                        egui::pos2((s.x + s.width) as f32, (s.y + s.font_size) as f32),
+                    ),
+                })
+                .collect()
+        });
     if let Some(ref s) = spans {
         cache.insert(index, s.clone());
     }
@@ -402,13 +463,7 @@ fn handle_render(
 
     if let Ok(()) = doc.render_page(index, &mut backend, initial_transform) {
         let scene = Arc::new(backend.scene().clone());
-        let _ = tx.send(WorkerResponse::PageRendered {
-            index,
-            _scale: scale,
-            scene,
-            text,
-            spans,
-        });
+        let _ = tx.send(WorkerResponse::PageRendered { index, _scale: scale, scene, text, spans });
     } else {
         let _ = tx.send(WorkerResponse::Error(format!("Failed to render page {}", index)));
     }
@@ -428,7 +483,12 @@ fn handle_audit(doc_opt: &Option<PdfDocument>, tx: &Sender<WorkerResponse>) {
                         let auditor = ferruginous_sdk::structure::MatterhornAuditor::new(arena);
                         if let Ok(findings) = auditor.audit(str_root_ref) {
                             for f in findings {
-                                audit_findings.push((f.checkpoint, f.severity, f.message, f.handle_id));
+                                audit_findings.push((
+                                    f.checkpoint,
+                                    f.severity,
+                                    f.message,
+                                    f.handle_id,
+                                ));
                             }
                         }
                     }
@@ -489,7 +549,8 @@ fn handle_update_node(
     let _ = tx.send(WorkerResponse::AuditFindings { findings });
 }
 
-fn handle_save( // RR-15 Limit: Dispatcher - Thread pool worker saving request routing dispatcher handling signatures, redactions and compression saving options
+fn handle_save(
+    // RR-15 Limit: Dispatcher - Thread pool worker saving request routing dispatcher handling signatures, redactions and compression saving options
     doc_opt: &Option<PdfDocument>,
     path: std::path::PathBuf,
     compress: bool,
@@ -508,7 +569,8 @@ fn handle_save( // RR-15 Limit: Dispatcher - Thread pool worker saving request r
     };
 
     // 1. Group redaction zones by page index
-    let mut page_redactions: std::collections::BTreeMap<usize, Vec<[f32; 4]>> = std::collections::BTreeMap::new();
+    let mut page_redactions: std::collections::BTreeMap<usize, Vec<[f32; 4]>> =
+        std::collections::BTreeMap::new();
     for zone in redaction_zones {
         let rect_arr = [zone.rect.min.x, zone.rect.min.y, zone.rect.max.x, zone.rect.max.y];
         page_redactions.entry(zone.page_index).or_default().push(rect_arr);
@@ -516,8 +578,13 @@ fn handle_save( // RR-15 Limit: Dispatcher - Thread pool worker saving request r
 
     // 2. Apply physical stream sanitization to each page mutably
     for (page_idx, rects) in page_redactions {
-        if let Err(e) = ferruginous_sdk::apply_physical_redaction_to_page(doc.inner(), page_idx, &rects) {
-            let _ = tx.send(WorkerResponse::Error(format!("Failed physically redacting page {}: {}", page_idx, e)));
+        if let Err(e) =
+            ferruginous_sdk::apply_physical_redaction_to_page(doc.inner(), page_idx, &rects)
+        {
+            let _ = tx.send(WorkerResponse::Error(format!(
+                "Failed physically redacting page {}: {}",
+                page_idx, e
+            )));
             return;
         }
     }

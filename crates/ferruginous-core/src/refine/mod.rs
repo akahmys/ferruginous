@@ -363,7 +363,9 @@ impl ParallelRefinery {
 
         let subtype = refined_dict.get(&PdfName::new("Subtype")).and_then(|o| o.as_str());
         let is_image = subtype == Some("Image");
-        let is_font = refined_dict.contains_key(&PdfName::new("Length1")) || refined_dict.contains_key(&PdfName::new("Length2")) || refined_dict.contains_key(&PdfName::new("Length3"));
+        let is_font = refined_dict.contains_key(&PdfName::new("Length1"))
+            || refined_dict.contains_key(&PdfName::new("Length2"))
+            || refined_dict.contains_key(&PdfName::new("Length3"));
 
         let (content, was_decompressed) = if is_image || is_font {
             (Bytes::copy_from_slice(&s.content), false)
@@ -379,9 +381,13 @@ impl ParallelRefinery {
             refined_dict.remove(&PdfName::new("DecodeParms"));
         }
 
-
-
-        if let Some(sub) = Self::sublimate_stream_content_static(id, &refined_dict, &content, table, _stream_contexts) {
+        if let Some(sub) = Self::sublimate_stream_content_static(
+            id,
+            &refined_dict,
+            &content,
+            table,
+            _stream_contexts,
+        ) {
             return sub;
         }
 
@@ -407,18 +413,17 @@ fn commit_stream_to_arena(
         .map(|n: PdfName| n.as_str() == "Image")
         .unwrap_or(false);
 
-    let is_font = committed_dict.contains_key(&arena.name("Length1")) || committed_dict.contains_key(&arena.name("Length2")) || committed_dict.contains_key(&arena.name("Length3"));
+    let is_font = committed_dict.contains_key(&arena.name("Length1"))
+        || committed_dict.contains_key(&arena.name("Length2"))
+        || committed_dict.contains_key(&arena.name("Length3"));
 
     let sublimated = if is_image || is_font {
-        // High-Fidelity Preservation (Phase 2 & 3): 
+        // High-Fidelity Preservation (Phase 2 & 3):
         // Do NOT decode or re-compress images/fonts to internal format during refine.
         crate::object::SublimatedData::Raw(bytes)
     } else if bytes.len() > 4096 {
         let compressed = zstd::encode_all(&*bytes, 3).unwrap_or_else(|_| bytes.to_vec());
-        crate::object::SublimatedData::Compressed {
-            original_len: bytes.len(),
-            data: compressed,
-        }
+        crate::object::SublimatedData::Compressed { original_len: bytes.len(), data: compressed }
     } else {
         crate::object::SublimatedData::Raw(bytes)
     };
@@ -453,9 +458,7 @@ pub fn commit_to_arena(arena: &PdfArena, refined: RefinedObject, depth: usize) -
                 .collect();
             Object::Dictionary(arena.alloc_dict(committed))
         }
-        RefinedObject::Stream(dict, bytes) => {
-            commit_stream_to_arena(arena, dict, bytes, depth)
-        }
+        RefinedObject::Stream(dict, bytes) => commit_stream_to_arena(arena, dict, bytes, depth),
         RefinedObject::Sublimated(dict, data) => {
             let committed_dict: BTreeMap<Handle<PdfName>, Object> = dict
                 .into_iter()

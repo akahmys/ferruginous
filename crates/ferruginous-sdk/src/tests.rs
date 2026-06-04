@@ -5,7 +5,7 @@ use std::io::Write;
 
 fn get_minimal_pdf() -> Bytes {
     let mut doc = lopdf::Document::with_version("1.7");
-    
+
     let mut pages_dict = lopdf::Dictionary::new();
     pages_dict.set("Type", lopdf::Object::Name(b"Pages".to_vec()));
     pages_dict.set("Kids", lopdf::Object::Array(vec![]));
@@ -19,8 +19,11 @@ fn get_minimal_pdf() -> Bytes {
 
     doc.trailer.set("Root", lopdf::Object::Reference(catalog_id));
     doc.trailer.set("Size", lopdf::Object::Integer(i64::from(catalog_id.0 + 1)));
-    
-    let id_item = lopdf::Object::String(b"0123456789abcdef0123456789abcdef".to_vec(), lopdf::StringFormat::Hexadecimal);
+
+    let id_item = lopdf::Object::String(
+        b"0123456789abcdef0123456789abcdef".to_vec(),
+        lopdf::StringFormat::Hexadecimal,
+    );
     doc.trailer.set("ID", lopdf::Object::Array(vec![id_item.clone(), id_item]));
 
     let mut buf = Vec::new();
@@ -32,7 +35,7 @@ fn get_minimal_pdf() -> Bytes {
 fn test_document_save_settings_sync() {
     let data = get_minimal_pdf();
     let mut doc = PdfDocument::open(data).unwrap();
-    
+
     // Test initial states
     assert!(!doc.vacuum);
     assert!(!doc.strip);
@@ -72,7 +75,7 @@ fn test_upgrade_to_standard() {
     // Upgrade to PDF/A-4 standard and check GTS tag
     doc.upgrade_to_standard(PdfStandard::A4).unwrap();
     assert_eq!(doc.inner().arena().version(), 2.0);
-    
+
     let cah = doc.inner().catalog_handle().unwrap();
     let cadh = doc.inner().resolve_to_dict(cah).unwrap();
     let catalog = doc.inner().arena().get_dict(cadh).unwrap();
@@ -87,16 +90,20 @@ fn test_object_stream_packer() {
     assert_eq!(packer.count(), 0);
 
     // Add dummy object serializations
-    packer.add_object(5, |w| {
-        w.write_all(b"<< /Dummy 1 >>")?;
-        Ok(())
-    }).unwrap();
+    packer
+        .add_object(5, |w| {
+            w.write_all(b"<< /Dummy 1 >>")?;
+            Ok(())
+        })
+        .unwrap();
     assert_eq!(packer.count(), 1);
 
-    packer.add_object(6, |w| {
-        w.write_all(b"[1 2 3]")?;
-        Ok(())
-    }).unwrap();
+    packer
+        .add_object(6, |w| {
+            w.write_all(b"[1 2 3]")?;
+            Ok(())
+        })
+        .unwrap();
     assert_eq!(packer.count(), 2);
 
     // Finish and verify no unwrap panics
@@ -140,7 +147,7 @@ fn test_r5_key_derivation_multistage() {
     let file_id = b"testfileid123456";
     let handler = SecurityHandler::new_v5("password", "", file_id);
     assert!(handler.is_ok());
-    
+
     // Verify it is a Revision 5 handler with AES enabled
     let h = handler.unwrap();
     assert!(h.should_decrypt_metadata());

@@ -266,7 +266,7 @@ fn try_encode_pdfdoc(s: &str) -> Option<Vec<u8>> {
                 0x00A0..=0x00FF => result.push(cp as u8), // ISO-8859-1 overlap
                 0x20AC => result.push(0xA0), // Euro (special mapping in some versions, but let's be careful)
                 0x2022 => result.push(0x80), // Bullet
-                _ => return None, // Cannot encode
+                _ => return None,            // Cannot encode
             }
         }
     }

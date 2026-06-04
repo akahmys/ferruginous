@@ -22,9 +22,7 @@ pub struct CadSnapEngine {
 
 impl CadSnapEngine {
     pub fn new() -> Self {
-        Self {
-            page_snap_points: BTreeMap::new(),
-        }
+        Self { page_snap_points: BTreeMap::new() }
     }
 
     /// Populates simulated snapping points for the page based on text spans and page layout.
@@ -65,7 +63,11 @@ impl CadSnapEngine {
         }
     }
 
-    fn add_text_span_snap_points(&self, points: &mut Vec<SnapPoint>, text_spans: &[crate::interaction::TextSpan]) {
+    fn add_text_span_snap_points(
+        &self,
+        points: &mut Vec<SnapPoint>,
+        text_spans: &[crate::interaction::TextSpan],
+    ) {
         for span in text_spans.iter().take(12) {
             let r = span.rect;
             points.push(SnapPoint {
@@ -86,7 +88,13 @@ impl CadSnapEngine {
         }
     }
 
-    pub fn ensure_snap_points(&mut self, page_index: usize, page_w: f32, page_h: f32, text_spans: &[crate::interaction::TextSpan]) {
+    pub fn ensure_snap_points(
+        &mut self,
+        page_index: usize,
+        page_w: f32,
+        page_h: f32,
+        text_spans: &[crate::interaction::TextSpan],
+    ) {
         if self.page_snap_points.contains_key(&page_index) {
             return;
         }
@@ -190,16 +198,33 @@ impl CaliperTool {
         }
 
         // Ensure page snap points exist
-        snap_engine.ensure_snap_points(page_index, page_screen_rect.width() / zoom, page_screen_rect.height() / zoom, text_spans);
+        snap_engine.ensure_snap_points(
+            page_index,
+            page_screen_rect.width() / zoom,
+            page_screen_rect.height() / zoom,
+            text_spans,
+        );
 
         let response = ui.allocate_rect(page_screen_rect, egui::Sense::drag());
         let screen_pos = ui.input(|i| i.pointer.hover_pos());
 
         if let Some(pos) = screen_pos {
-            let pdf_pos = crate::interaction::SelectionManager::screen_to_pdf(page_screen_rect, zoom, page_unscaled_h, pos);
+            let pdf_pos = crate::interaction::SelectionManager::screen_to_pdf(
+                page_screen_rect,
+                zoom,
+                page_unscaled_h,
+                pos,
+            );
 
             // Real-time hover snapping (15px threshold)
-            let hovered_snap = snap_engine.find_snap(page_index, pdf_pos, page_screen_rect, page_unscaled_h, zoom, 15.0);
+            let hovered_snap = snap_engine.find_snap(
+                page_index,
+                pdf_pos,
+                page_screen_rect,
+                page_unscaled_h,
+                zoom,
+                15.0,
+            );
             self.current_snap = hovered_snap;
 
             if response.drag_started() {
@@ -233,7 +258,8 @@ impl CaliperTool {
         }
     }
 
-    pub fn draw_overlay( // RR-15 Limit: GUI - Renders CAD snap lines and ticks directly onto the page drawing layout overlay
+    pub fn draw_overlay(
+        // RR-15 Limit: GUI - Renders CAD snap lines and ticks directly onto the page drawing layout overlay
         &self,
         ui: &mut egui::Ui,
         page_screen_rect: egui::Rect,
@@ -319,7 +345,10 @@ impl CaliperTool {
 
                 // Draw background card for readability
                 painter.rect_filled(
-                    egui::Rect::from_center_size(mid_screen + egui::vec2(0.0, -15.0), egui::vec2(75.0, 20.0)),
+                    egui::Rect::from_center_size(
+                        mid_screen + egui::vec2(0.0, -15.0),
+                        egui::vec2(75.0, 20.0),
+                    ),
                     4.0,
                     egui::Color32::from_black_alpha(200),
                 );

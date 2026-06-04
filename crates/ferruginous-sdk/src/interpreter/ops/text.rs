@@ -387,7 +387,14 @@ impl Interpreter<'_> {
         let th = self.state.text_state.horizontal_scaling / 100.0;
 
         for glyph in glyphs {
-            let (adv_x, adv_y) = self.render_single_type3_glyph(&res, glyph, total_adv_x, total_adv_y, font_size, th)?;
+            let (adv_x, adv_y) = self.render_single_type3_glyph(
+                &res,
+                glyph,
+                total_adv_x,
+                total_adv_y,
+                font_size,
+                th,
+            )?;
             total_adv_x += adv_x;
             total_adv_y += adv_y;
         }
@@ -583,11 +590,11 @@ impl Interpreter<'_> {
             let w = if font.wmode() == 1 { w1_y } else { font.glyph_width_by_cid(cid) };
 
             let base_font_str = font.base_font.as_str();
-            let is_japanese = base_font_str.to_lowercase().contains("mincho") || 
-                             base_font_str.to_lowercase().contains("gothic") || 
-                             base_font_str.contains("明朝") || 
-                             base_font_str.contains("ゴシック") ||
-                             font.is_cid_keyed;
+            let is_japanese = base_font_str.to_lowercase().contains("mincho")
+                || base_font_str.to_lowercase().contains("gothic")
+                || base_font_str.contains("明朝")
+                || base_font_str.contains("ゴシック")
+                || font.is_cid_keyed;
             let unicode_opt = u.or_else(|| {
                 if is_japanese && (cid == 1 || cid == 2 || cid == 3) {
                     Some(" ".to_string())

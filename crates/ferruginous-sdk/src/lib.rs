@@ -33,12 +33,12 @@ pub mod cloning;
 /// The internal interpreter module for processing content streams.
 pub mod interpreter;
 pub use interpreter::Interpreter;
+/// The internal obj_stm module for high-density object packing.
+pub mod obj_stm;
 /// The internal remediation module for structural repair.
 pub mod remediation;
 /// The internal structure module for UA-2 logical tree handling.
 pub mod structure;
-/// The internal obj_stm module for high-density object packing.
-pub mod obj_stm;
 /// The internal writer module for generating PDF files.
 pub mod writer;
 
@@ -193,12 +193,7 @@ impl PdfDocument {
         options: &ferruginous_core::ingest::IngestionOptions,
     ) -> PdfResult<Self> {
         let inner = Document::open(data, options)?;
-        Ok(Self {
-            inner,
-            vacuum: false,
-            strip: false,
-            password: None,
-        })
+        Ok(Self { inner, vacuum: false, strip: false, password: None })
     }
 
     /// Returns the internal document.
@@ -262,12 +257,7 @@ impl PdfDocument {
         options: &ferruginous_core::ingest::IngestionOptions,
     ) -> PdfResult<Self> {
         let inner = Document::open_repair(data, options)?;
-        Ok(Self {
-            inner,
-            vacuum: false,
-            strip: false,
-            password: None,
-        })
+        Ok(Self { inner, vacuum: false, strip: false, password: None })
     }
 
     /// Merges multiple documents into a new one.
@@ -911,7 +901,7 @@ impl PdfDocument {
         let page = self.inner.get_page(index)?;
         let res_dh = page.resources_handle();
         let mut interpreter = Interpreter::new(backend, &self.inner, res_dh, initial_transform);
-        
+
         let resolved_contents = self.resolve_page_contents(&page)?;
         self.execute_interpreter(&mut interpreter, resolved_contents)?;
         Ok(())
@@ -930,7 +920,8 @@ impl PdfDocument {
                     if let Ok(cadh) = self.inner.resolve_to_dict(cah) {
                         let mut catalog = arena.get_dict(cadh).unwrap_or_default();
                         let gts_key = arena.intern_name(PdfName::new("GTS_PDFA14"));
-                        catalog.insert(gts_key, Object::Name(arena.intern_name(PdfName::new("Yes"))));
+                        catalog
+                            .insert(gts_key, Object::Name(arena.intern_name(PdfName::new("Yes"))));
                         arena.set_dict(cadh, catalog);
                     }
                 }
@@ -952,7 +943,10 @@ impl PdfDocument {
                     if let Ok(cadh) = self.inner.resolve_to_dict(cah) {
                         let mut catalog = arena.get_dict(cadh).unwrap_or_default();
                         let gts_key = arena.intern_name(PdfName::new("GTS_PDFX"));
-                        catalog.insert(gts_key, Object::Name(arena.intern_name(PdfName::new("PDFX6"))));
+                        catalog.insert(
+                            gts_key,
+                            Object::Name(arena.intern_name(PdfName::new("PDFX6"))),
+                        );
                         arena.set_dict(cadh, catalog);
                     }
                 }

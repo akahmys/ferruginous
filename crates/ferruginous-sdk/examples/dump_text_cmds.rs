@@ -19,26 +19,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         for h in handles {
             if let Some(sublimated) = doc.inner().arena().get_sublimated_data(h)
-                && let ferruginous_core::object::SublimatedData::Commands { items: cmds } = &*sublimated {
-                    for cmd in cmds {
-                        match cmd {
-                            Command::ShowText(bytes) => {
-                                println!("Tj: {bytes:?}");
-                            }
-                            Command::ShowTextArray(items) => {
-                                print!("TJ: [");
-                                for item in items {
-                                    match item {
-                                        TextArrayItem::Text(b) => print!("{b:?}, "),
-                                        TextArrayItem::Offset(o) => print!("{o}, "),
-                                    }
-                                }
-                                println!("]");
-                            }
-                            _ => {}
+                && let ferruginous_core::object::SublimatedData::Commands { items: cmds } =
+                    &*sublimated
+            {
+                for cmd in cmds {
+                    match cmd {
+                        Command::ShowText(bytes) => {
+                            println!("Tj: {bytes:?}");
                         }
+                        Command::ShowTextArray(items) => {
+                            print!("TJ: [");
+                            for item in items {
+                                match item {
+                                    TextArrayItem::Text(b) => print!("{b:?}, "),
+                                    TextArrayItem::Offset(o) => print!("{o}, "),
+                                }
+                            }
+                            println!("]");
+                        }
+                        _ => {}
                     }
                 }
+            }
         }
     }
 

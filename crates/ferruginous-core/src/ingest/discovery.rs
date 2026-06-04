@@ -29,9 +29,7 @@ fn process_font_object(
             dict.contains_key(&base_font_key) && dict.contains_key(&subtype_key)
         };
 
-        if is_font
-            && let Ok(font_res) = FontResource::load(&dict, doc)
-        {
+        if is_font && let Ok(font_res) = FontResource::load(&dict, doc) {
             cache.insert(obj_handle.index(), Arc::new(font_res));
         }
     }
@@ -169,13 +167,7 @@ fn process_stream_context(
             let context_fonts = extract_context_fonts(arena, resource_nodes, &font_key, fonts);
 
             if is_page {
-                associate_page_streams(
-                    arena,
-                    &dict,
-                    &contents_key,
-                    context_fonts,
-                    contexts,
-                );
+                associate_page_streams(arena, &dict, &contents_key, context_fonts, contexts);
             } else {
                 contexts.insert(obj_h.index(), context_fonts);
             }

@@ -20,14 +20,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let resources_h = page.resources_handle();
                 if let Some(dict) = arena.get_dict(resources_h)
                     && let Some(fonts_obj) = dict.get(&arena.name("Font"))
-                        && let ferruginous_core::Object::Dictionary(dh) = fonts_obj.resolve(arena)
-                            && let Some(font_dict) = arena.get_dict(dh) {
-                                for (name_h, _) in font_dict {
-                                    if let Some(name) = arena.get_name(name_h) {
-                                        println!("  Page {}: Font {}", i, name.as_str());
-                                    }
-                                }
-                            }
+                    && let ferruginous_core::Object::Dictionary(dh) = fonts_obj.resolve(arena)
+                    && let Some(font_dict) = arena.get_dict(dh)
+                {
+                    for (name_h, _) in font_dict {
+                        if let Some(name) = arena.get_name(name_h) {
+                            println!("  Page {}: Font {}", i, name.as_str());
+                        }
+                    }
+                }
             }
         }
     }

@@ -90,7 +90,11 @@ impl Interpreter<'_> {
                     && (d.starts_with(b"OTTO")
                         || d.starts_with(&[0, 1, 0, 0])
                         || d.starts_with(b"true"));
-                log::debug!("[SDK] Font {backend_name} data size: {}, is_sfnt: {}", d.len(), sig_match);
+                log::debug!(
+                    "[SDK] Font {backend_name} data size: {}, is_sfnt: {}",
+                    d.len(),
+                    sig_match
+                );
                 sig_match
             });
 

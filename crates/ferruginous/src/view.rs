@@ -23,26 +23,33 @@ impl PDFView {
         }
     }
 
-
-    pub fn center_on_rect(&mut self, viewport_rect: egui::Rect, page_layout: &PageLayout, rect: [f32; 4]) {
+    pub fn center_on_rect(
+        &mut self,
+        viewport_rect: egui::Rect,
+        page_layout: &PageLayout,
+        rect: [f32; 4],
+    ) {
         let pdf_center_x = (rect[0] + rect[2]) / 2.0;
         let pdf_center_y = (rect[1] + rect[3]) / 2.0;
-        
+
         let unscaled_h = page_layout.rect.height();
-        
+
         // Convert to egui page-local coordinate system (Y=0 is top)
         let local_x = pdf_center_x;
         let local_y = unscaled_h - pdf_center_y;
-        
+
         // In virtual space (relative to layout center/top):
         let page_local_pos = page_layout.rect.min + egui::vec2(local_x, local_y);
-        
+
         // We want origin + page_local_pos * zoom = viewport_rect.center()
         let origin_no_pan = egui::pos2(viewport_rect.center().x, viewport_rect.min.y + 20.0);
-        self.pan = viewport_rect.center().to_vec2() - origin_no_pan.to_vec2() - page_local_pos.to_vec2() * self.zoom;
+        self.pan = viewport_rect.center().to_vec2()
+            - origin_no_pan.to_vec2()
+            - page_local_pos.to_vec2() * self.zoom;
     }
 
-    pub fn show_virtual( // RR-15 Limit: GUI - Renders a virtualized grid layout of PDF pages and overlays highlights/signals
+    pub fn show_virtual(
+        // RR-15 Limit: GUI - Renders a virtualized grid layout of PDF pages and overlays highlights/signals
         &mut self,
         ui: &mut egui::Ui,
         layouts: &[PageLayout],
@@ -78,8 +85,9 @@ impl PDFView {
 
         // Draw premium design/CAD grid lines that dynamically move with the pan offset
         let grid_size = 32.0;
-        let grid_stroke = egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(0, 0, 0, 10));
-        
+        let grid_stroke =
+            egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(0, 0, 0, 10));
+
         // Vertical grid lines
         let step = grid_size * self.zoom;
         if step > 0.1 {
@@ -96,7 +104,7 @@ impl PDFView {
                 }
             }
         }
-        
+
         // Horizontal grid lines
         if step > 0.1 {
             let start_y = viewport_rect.min.y + (self.pan.y % step);
@@ -125,7 +133,8 @@ impl PDFView {
                 if scenes.contains_key(&layout.index) {
                     for offset in 1..=4 {
                         ui.painter().rect_filled(
-                            page_rect.translate(egui::vec2(offset as f32 * 1.5, offset as f32 * 1.5)),
+                            page_rect
+                                .translate(egui::vec2(offset as f32 * 1.5, offset as f32 * 1.5)),
                             4.0,
                             egui::Color32::from_black_alpha(20 - offset * 4),
                         );
@@ -162,11 +171,7 @@ impl PDFView {
 
                 if !scenes.contains_key(&layout.index) {
                     // Soft premium white backing for the rendering page to completely remove the gray mask
-                    ui.painter().rect_filled(
-                        page_rect,
-                        4.0,
-                        egui::Color32::WHITE,
-                    );
+                    ui.painter().rect_filled(page_rect, 4.0, egui::Color32::WHITE);
 
                     // Faint, clean border for pristine CAD-like presentation
                     ui.painter().rect_stroke(
@@ -328,11 +333,17 @@ impl PDFView {
                 );
                 ui.painter().line_segment(
                     [sig_rect.left_top(), sig_rect.right_bottom()],
-                    egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(226, 135, 67, 100)),
+                    egui::Stroke::new(
+                        1.0,
+                        egui::Color32::from_rgba_unmultiplied(226, 135, 67, 100),
+                    ),
                 );
                 ui.painter().line_segment(
                     [sig_rect.right_top(), sig_rect.left_bottom()],
-                    egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(226, 135, 67, 100)),
+                    egui::Stroke::new(
+                        1.0,
+                        egui::Color32::from_rgba_unmultiplied(226, 135, 67, 100),
+                    ),
                 );
                 ui.painter().text(
                     sig_rect.center(),
@@ -345,10 +356,15 @@ impl PDFView {
         }
     }
 
-    fn handle_input(&mut self, ui: &mut egui::Ui, response: &egui::Response, viewport_rect: egui::Rect) {
-        let is_hovered = ui.ctx().input(|i| {
-            i.pointer.hover_pos().is_some_and(|pos| viewport_rect.contains(pos))
-        });
+    fn handle_input(
+        &mut self,
+        ui: &mut egui::Ui,
+        response: &egui::Response,
+        viewport_rect: egui::Rect,
+    ) {
+        let is_hovered = ui
+            .ctx()
+            .input(|i| i.pointer.hover_pos().is_some_and(|pos| viewport_rect.contains(pos)));
         if is_hovered {
             ui.input(|i| {
                 let zoom_delta = i.zoom_delta();
@@ -394,9 +410,9 @@ impl PDFView {
 
             let color = match node.tag.as_str() {
                 "H1" | "H2" | "H3" => egui::Color32::from_rgb(0, 120, 215), // Blue
-                "P" => egui::Color32::from_rgb(34, 197, 94), // Green
-                "Figure" => egui::Color32::from_rgb(168, 85, 247), // Purple
-                "Table" => egui::Color32::from_rgb(249, 115, 22), // Orange
+                "P" => egui::Color32::from_rgb(34, 197, 94),                // Green
+                "Figure" => egui::Color32::from_rgb(168, 85, 247),          // Purple
+                "Table" => egui::Color32::from_rgb(249, 115, 22),           // Orange
                 _ => egui::Color32::from_gray(120),
             };
 
@@ -414,13 +430,16 @@ impl PDFView {
         }
     }
 
-    fn collect_nodes_for_reading_order(node: &crate::sidebar::USTNode, list: &mut Vec<(String, egui::Color32)>) {
+    fn collect_nodes_for_reading_order(
+        node: &crate::sidebar::USTNode,
+        list: &mut Vec<(String, egui::Color32)>,
+    ) {
         if node.rect.is_some() {
             let color = match node.tag.as_str() {
                 "H1" | "H2" | "H3" => egui::Color32::from_rgb(0, 120, 215), // Blue
-                "P" => egui::Color32::from_rgb(34, 197, 94), // Green
-                "Figure" => egui::Color32::from_rgb(168, 85, 247), // Purple
-                "Table" => egui::Color32::from_rgb(249, 115, 22), // Orange
+                "P" => egui::Color32::from_rgb(34, 197, 94),                // Green
+                "Figure" => egui::Color32::from_rgb(168, 85, 247),          // Purple
+                "Table" => egui::Color32::from_rgb(249, 115, 22),           // Orange
                 _ => egui::Color32::from_gray(120),
             };
             list.push((node.tag.clone(), color));
@@ -430,10 +449,15 @@ impl PDFView {
         }
     }
 
-    fn draw_reading_order_bar(&self, ui: &mut egui::Ui, page_rect: egui::Rect, root_node: &crate::sidebar::USTNode) {
+    fn draw_reading_order_bar(
+        &self,
+        ui: &mut egui::Ui,
+        page_rect: egui::Rect,
+        root_node: &crate::sidebar::USTNode,
+    ) {
         let mut list = Vec::new();
         Self::collect_nodes_for_reading_order(root_node, &mut list);
-        
+
         if list.is_empty() {
             return;
         }
@@ -441,7 +465,7 @@ impl PDFView {
         let bar_height = 24.0;
         let bar_rect = egui::Rect::from_min_size(
             egui::pos2(page_rect.left(), page_rect.bottom() + 8.0),
-            egui::vec2(page_rect.width(), bar_height)
+            egui::vec2(page_rect.width(), bar_height),
         );
 
         ui.painter().rect_filled(bar_rect, 4.0, egui::Color32::from_gray(40));
@@ -449,7 +473,11 @@ impl PDFView {
         let mut x_offset = bar_rect.left() + 4.0;
         for (i, (tag, color)) in list.iter().enumerate() {
             let label = format!("{}: {}", i + 1, tag);
-            let text_gal = ui.painter().layout_no_wrap(label.clone(), egui::FontId::proportional(10.0), egui::Color32::WHITE);
+            let text_gal = ui.painter().layout_no_wrap(
+                label.clone(),
+                egui::FontId::proportional(10.0),
+                egui::Color32::WHITE,
+            );
             let block_width = text_gal.size().x + 12.0;
 
             if x_offset + block_width > bar_rect.right() - 4.0 {
@@ -458,7 +486,7 @@ impl PDFView {
 
             let block_rect = egui::Rect::from_min_size(
                 egui::pos2(x_offset, bar_rect.top() + 3.0),
-                egui::vec2(block_width, bar_height - 6.0)
+                egui::vec2(block_width, bar_height - 6.0),
             );
 
             ui.painter().rect_filled(block_rect, 2.0, *color);
@@ -467,7 +495,7 @@ impl PDFView {
                 egui::Align2::CENTER_CENTER,
                 &label,
                 egui::FontId::proportional(10.0),
-                egui::Color32::WHITE
+                egui::Color32::WHITE,
             );
 
             x_offset += block_width + 6.0;

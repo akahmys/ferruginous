@@ -46,7 +46,6 @@ mod vello_egui;
 mod view;
 mod worker;
 
-
 use app::FerruginousApp;
 use std::path::PathBuf;
 

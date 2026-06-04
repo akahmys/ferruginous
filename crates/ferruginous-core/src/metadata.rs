@@ -132,7 +132,7 @@ fn update_xmp_metadata(doc: &crate::Document, info: &MetadataInfo) -> crate::Pdf
 
         let refined_map = build_refined_metadata_map(info);
         let raw_xmp = crate::refine::metadata::info_to_xmp(&refined_map);
-        
+
         // Append 2KB space padding and replace the read-only flag end="r" with writable flag end="w"
         let trimmed = raw_xmp.trim_end();
         let suffix = "<?xpacket end=\"r\"?>";
@@ -166,10 +166,7 @@ fn insert_text_if_present(
     val: &Option<String>,
 ) {
     if let Some(v) = val {
-        map.insert(
-            crate::object::PdfName::new(key),
-            crate::refine::RefinedObject::Text(v.clone()),
-        );
+        map.insert(crate::object::PdfName::new(key), crate::refine::RefinedObject::Text(v.clone()));
     }
 }
 
@@ -207,11 +204,12 @@ fn commit_metadata_stream(
 }
 
 fn find_tag_text(doc: &roxmltree::Document, ns: &str, tag: &str) -> Option<String> {
-    doc.descendants().find(|n| n.has_tag_name((ns, tag)))
-        .and_then(|node| {
-            node.descendants().find(|n| n.is_text()).map(|n| n.text().unwrap_or_default().to_string())
-                .or_else(|| node.text().map(|t| t.to_string()))
-        })
+    doc.descendants().find(|n| n.has_tag_name((ns, tag))).and_then(|node| {
+        node.descendants()
+            .find(|n| n.is_text())
+            .map(|n| n.text().unwrap_or_default().to_string())
+            .or_else(|| node.text().map(|t| t.to_string()))
+    })
 }
 
 fn apply_xmp_metadata(doc: &roxmltree::Document, info: &mut MetadataInfo) {
@@ -223,7 +221,8 @@ fn apply_xmp_metadata(doc: &roxmltree::Document, info: &mut MetadataInfo) {
         info.title = Some(text);
     }
     if let Some(node) = doc.descendants().find(|n| n.has_tag_name((dc_ns, "creator"))) {
-        let creators: Vec<String> = node.descendants()
+        let creators: Vec<String> = node
+            .descendants()
             .filter(|n| n.has_tag_name("li"))
             .filter_map(|li| li.text().map(|t| t.to_string()))
             .collect();

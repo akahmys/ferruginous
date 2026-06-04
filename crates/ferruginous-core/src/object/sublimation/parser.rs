@@ -56,21 +56,24 @@ impl<'a> Sublimator<'a> {
             };
             dict.insert(key, val);
         }
-        
-        // Now skip binary data until EI. 
+
+        // Now skip binary data until EI.
         // EI must be preceded by whitespace and followed by whitespace/EOF.
         let start_pos = lexer.pos();
         let data = lexer.get_data();
         let mut end_pos = start_pos;
         while end_pos + 3 <= data.len() {
-            if &data[end_pos..end_pos+3] == b" EI" || &data[end_pos..end_pos+3] == b"\nEI" || &data[end_pos..end_pos+3] == b"\rEI" {
+            if &data[end_pos..end_pos + 3] == b" EI"
+                || &data[end_pos..end_pos + 3] == b"\nEI"
+                || &data[end_pos..end_pos + 3] == b"\rEI"
+            {
                 break;
             }
             end_pos += 1;
         }
         let img_data = data[start_pos..end_pos].to_vec();
         lexer.set_pos(end_pos + 3);
-        
+
         Command::DrawInlineImage {
             width: dict.get("W").and_then(|v| v.as_i64()).unwrap_or(0) as u32,
             height: dict.get("H").and_then(|v| v.as_i64()).unwrap_or(0) as u32,
@@ -126,10 +129,9 @@ impl<'a> Sublimator<'a> {
 
     fn handle_operator(&mut self, op: &str, prev_commands: &[Command]) -> Vec<Command> {
         match op {
-            "q" | "Q" | "cm" | "m" | "l" | "c" | "v" | "y" | "h" | "n" | "re" | "f" | "F" | "f*" | "S" | "s" | "B" | "B*"
-            | "b" | "b*" | "W" | "W*" | "Do" | "w" | "J" | "j" | "M" | "d" | "i" | "gs" | "sh" | "ri" => {
-                self.handle_graphics_op(op, prev_commands)
-            }
+            "q" | "Q" | "cm" | "m" | "l" | "c" | "v" | "y" | "h" | "n" | "re" | "f" | "F"
+            | "f*" | "S" | "s" | "B" | "B*" | "b" | "b*" | "W" | "W*" | "Do" | "w" | "J" | "j"
+            | "M" | "d" | "i" | "gs" | "sh" | "ri" => self.handle_graphics_op(op, prev_commands),
             "BT" | "ET" | "Tf" | "Tj" | "'" | "\"" | "TJ" | "Td" | "TD" | "Tm" | "Tc" | "Tw"
             | "Tz" | "Tr" | "Ts" | "TL" | "T*" => self.handle_text_op(op),
             "rg" | "RG" | "k" | "K" | "g" | "G" | "cs" | "CS" | "scn" | "SCN" | "sc" | "SC" => {
@@ -150,14 +152,19 @@ impl<'a> Sublimator<'a> {
     }
 
     #[allow(clippy::collapsible_if)]
-    fn handle_graphics_op(&mut self, op: &str, prev_commands: &[Command]) -> Vec<Command> { // RR-15 Limit: Dispatcher - Flat non-nested PDF graphics instruction parsing dispatcher routing ops to Commands
+    fn handle_graphics_op(&mut self, op: &str, prev_commands: &[Command]) -> Vec<Command> {
+        // RR-15 Limit: Dispatcher - Flat non-nested PDF graphics instruction parsing dispatcher routing ops to Commands
         match op {
             "q" => vec![Command::PushState],
             "Q" => vec![Command::PopState],
             "cm" => self.pop_affine().map(Command::Transform).into_iter().collect(),
             "m" => self.pop_point().map(Command::MoveTo).into_iter().collect(),
             "l" => self.pop_point().map(Command::LineTo).into_iter().collect(),
-            "c" => self.pop_three_points().map(|(p1, p2, p3)| Command::CurveTo(p1, p2, p3)).into_iter().collect(),
+            "c" => self
+                .pop_three_points()
+                .map(|(p1, p2, p3)| Command::CurveTo(p1, p2, p3))
+                .into_iter()
+                .collect(),
             "v" | "y" | "n" => {
                 let mut operands = Vec::new();
                 if op == "v" || op == "y" {
@@ -180,7 +187,10 @@ impl<'a> Sublimator<'a> {
                     if let Some(Command::Rect(r)) = prev_commands.last() {
                         if r.y1 > 700.0 && r.height() < 15.0 && r.width() > 500.0 {
                             log::info!("[SUBLIMATE] Suppressing suspicious header fill at {:?}", r);
-                            return vec![Command::RawOperator { name: "n".to_string(), operands: Vec::new() }];
+                            return vec![Command::RawOperator {
+                                name: "n".to_string(),
+                                operands: Vec::new(),
+                            }];
                         }
                     }
                 }
@@ -196,8 +206,16 @@ impl<'a> Sublimator<'a> {
                         }
                         cmds
                     }
-                    "B" => self.create_stroke().map(|s| Command::FillStroke(WindingRule::NonZero, s)).into_iter().collect(),
-                    "B*" => self.create_stroke().map(|s| Command::FillStroke(WindingRule::EvenOdd, s)).into_iter().collect(),
+                    "B" => self
+                        .create_stroke()
+                        .map(|s| Command::FillStroke(WindingRule::NonZero, s))
+                        .into_iter()
+                        .collect(),
+                    "B*" => self
+                        .create_stroke()
+                        .map(|s| Command::FillStroke(WindingRule::EvenOdd, s))
+                        .into_iter()
+                        .collect(),
                     "b" => {
                         let mut cmds = self.handle_operator("h", prev_commands);
                         if let Some(s) = self.create_stroke() {
@@ -217,7 +235,11 @@ impl<'a> Sublimator<'a> {
             }
             "W" => vec![Command::Clip(WindingRule::NonZero)],
             "W*" => vec![Command::Clip(WindingRule::EvenOdd)],
-            "Do" => self.pop_name().map(|n| Command::DrawXObject(n.as_str().to_string())).into_iter().collect(),
+            "Do" => self
+                .pop_name()
+                .map(|n| Command::DrawXObject(n.as_str().to_string()))
+                .into_iter()
+                .collect(),
             "w" => {
                 if let Some(w) = self.pop_f64() {
                     self.current_stroke_style.width = w;
@@ -345,8 +367,14 @@ impl<'a> Sublimator<'a> {
             "RG" => self.pop_rgb().map(Command::SetStrokeColor).into_iter().collect(),
             "k" => self.pop_cmyk().map(Command::SetFillColor).into_iter().collect(),
             "K" => self.pop_cmyk().map(Command::SetStrokeColor).into_iter().collect(),
-            "g" => self.pop_f64().map(|g| Command::SetFillColor(Color::Gray(g))).into_iter().collect(),
-            "G" => self.pop_f64().map(|g| Command::SetStrokeColor(Color::Gray(g))).into_iter().collect(),
+            "g" => {
+                self.pop_f64().map(|g| Command::SetFillColor(Color::Gray(g))).into_iter().collect()
+            }
+            "G" => self
+                .pop_f64()
+                .map(|g| Command::SetStrokeColor(Color::Gray(g)))
+                .into_iter()
+                .collect(),
             "cs" | "CS" => self.sublimate_cs(op),
             "scn" | "SCN" | "sc" | "SC" => self.sublimate_sc(op),
             _ => {
@@ -375,12 +403,18 @@ impl<'a> Sublimator<'a> {
 
     fn handle_marked_content_op(&mut self, op: &str) -> Vec<Command> {
         match op {
-            "BMC" => self.pop_name().map(|n| Command::BeginMarkedContent { tag: n, properties: None }).into_iter().collect(),
+            "BMC" => self
+                .pop_name()
+                .map(|n| Command::BeginMarkedContent { tag: n, properties: None })
+                .into_iter()
+                .collect(),
             "BDC" => self.handle_bdc(),
             "EMC" => vec![Command::EndMarkedContent],
             "MP" | "DP" => {
                 let mut operands = Vec::new();
-                if let Some(op1) = self.stack.pop() { operands.push(op1); }
+                if let Some(op1) = self.stack.pop() {
+                    operands.push(op1);
+                }
                 vec![Command::RawOperator { name: op.to_string(), operands }]
             }
             _ => Vec::new(),
@@ -468,13 +502,25 @@ impl<'a> Sublimator<'a> {
         // Rule 5: Exhaustive matching
         let color = match current_cs {
             ColorSpaceKind::DeviceGray => {
-                if count >= 1 { self.pop_f64().map(Color::Gray) } else { None }
+                if count >= 1 {
+                    self.pop_f64().map(Color::Gray)
+                } else {
+                    None
+                }
             }
             ColorSpaceKind::DeviceRGB => {
-                if count >= 3 { self.pop_rgb() } else { None }
+                if count >= 3 {
+                    self.pop_rgb()
+                } else {
+                    None
+                }
             }
             ColorSpaceKind::DeviceCMYK => {
-                if count >= 4 { self.pop_cmyk() } else { None }
+                if count >= 4 {
+                    self.pop_cmyk()
+                } else {
+                    None
+                }
             }
             ColorSpaceKind::CalGray
             | ColorSpaceKind::CalRGB
@@ -640,7 +686,6 @@ impl<'a> Sublimator<'a> {
         }
         Some(Command::ShowTextArray(array_items))
     }
-
 
     fn parse_ir_array(&self, lexer: &mut Lexer) -> IrObject {
         let mut elements = Vec::new();

@@ -11,9 +11,9 @@ pub struct RedactionZone {
 pub struct RedactionManager {
     pub zones: Vec<RedactionZone>,
     pub next_zone_id: usize,
-    pub drag_start: Option<egui::Pos2>, // PDF User Space
+    pub drag_start: Option<egui::Pos2>,   // PDF User Space
     pub drag_current: Option<egui::Pos2>, // PDF User Space
-    pub is_active: bool, // Redaction brush active
+    pub is_active: bool,                  // Redaction brush active
 }
 
 impl Default for RedactionManager {
@@ -56,23 +56,25 @@ impl RedactionManager {
         let response = ui.allocate_rect(page_rect, egui::Sense::drag());
         let screen_pos = ui.input(|i| i.pointer.hover_pos());
 
-        if response.drag_started() && let Some(pos) = screen_pos {
-            self.drag_start = Some(SelectionManager::screen_to_pdf(page_rect, zoom, page_unscaled_h, pos));
+        if response.drag_started()
+            && let Some(pos) = screen_pos
+        {
+            self.drag_start =
+                Some(SelectionManager::screen_to_pdf(page_rect, zoom, page_unscaled_h, pos));
         }
 
-        if response.dragged() && let Some(pos) = screen_pos {
-            self.drag_current = Some(SelectionManager::screen_to_pdf(page_rect, zoom, page_unscaled_h, pos));
+        if response.dragged()
+            && let Some(pos) = screen_pos
+        {
+            self.drag_current =
+                Some(SelectionManager::screen_to_pdf(page_rect, zoom, page_unscaled_h, pos));
         }
 
         if response.drag_stopped() {
             if let (Some(start), Some(current)) = (self.drag_start, self.drag_current) {
                 let rect = egui::Rect::from_two_pos(start, current);
                 if rect.width() > 1.0 && rect.height() > 1.0 {
-                    self.zones.push(RedactionZone {
-                        id: self.next_zone_id,
-                        page_index,
-                        rect,
-                    });
+                    self.zones.push(RedactionZone { id: self.next_zone_id, page_index, rect });
                     self.next_zone_id += 1;
                 }
             }
@@ -151,7 +153,8 @@ impl RedactionManager {
         spans: &mut Vec<crate::interaction::TextSpan>,
     ) -> String {
         let mut clean_lines = Vec::new();
-        let page_zones: Vec<&RedactionZone> = self.zones.iter().filter(|z| z.page_index == page_index).collect();
+        let page_zones: Vec<&RedactionZone> =
+            self.zones.iter().filter(|z| z.page_index == page_index).collect();
 
         // 1. Clean in-memory text spans
         spans.retain_mut(|span| {

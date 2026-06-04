@@ -68,7 +68,8 @@ impl VelloRenderer {
     pub fn next_frame(&mut self, _render_state: &RenderState) {}
 
     /// Renders all visible pages directly onto the single viewport render target texture.
-    pub fn render_viewport( // RR-15 Limit: GUI - Performs sequential scene assembly and rendering to the single viewport target
+    pub fn render_viewport(
+        // RR-15 Limit: GUI - Performs sequential scene assembly and rendering to the single viewport target
         &mut self,
         render_state: &RenderState,
         visible_pages: &[(usize, Arc<Scene>, egui::Rect, egui::Vec2)], // (page_index, scene, page_screen_rect, page_unscaled_size)
@@ -113,12 +114,7 @@ impl VelloRenderer {
         // Explicitly fill the entire viewport texture background with our premium slate navy color.
         // This is required because Vello's storage texture rendering clears to (0, 0, 0, 0) by default,
         // ignoring the RenderParams base_color, which egui's opaque texture shader then renders as solid black.
-        let viewport_kurbo_rect = kurbo::Rect::new(
-            0.0,
-            0.0,
-            width as f64,
-            height as f64,
-        );
+        let viewport_kurbo_rect = kurbo::Rect::new(0.0, 0.0, width as f64, height as f64);
         viewport_scene.fill(
             vello::peniko::Fill::NonZero,
             kurbo::Affine::IDENTITY,
@@ -175,12 +171,7 @@ impl VelloRenderer {
         Some(tex.egui_texture)
     }
 
-    fn recreate_viewport_texture(
-        &mut self,
-        render_state: &RenderState,
-        width: u32,
-        height: u32,
-    ) {
+    fn recreate_viewport_texture(&mut self, render_state: &RenderState, width: u32, height: u32) {
         let device = &render_state.device;
 
         let texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -206,16 +197,12 @@ impl VelloRenderer {
             wgpu::FilterMode::Linear,
         );
 
-        self.viewport_texture = Some(ViewportTexture {
-            _texture: texture,
-            view,
-            egui_texture: tid,
-            width,
-            height,
-        });
+        self.viewport_texture =
+            Some(ViewportTexture { _texture: texture, view, egui_texture: tid, width, height });
     }
 
-    pub fn render_thumbnail( // RR-15 Limit: GUI - Performs rendering of page scenes to thumbnail textures
+    pub fn render_thumbnail(
+        // RR-15 Limit: GUI - Performs rendering of page scenes to thumbnail textures
         &mut self,
         render_state: &RenderState,
         page_index: usize,
@@ -238,7 +225,11 @@ impl VelloRenderer {
             let device = &render_state.device;
             let texture = device.create_texture(&wgpu::TextureDescriptor {
                 label: Some(&format!("Vello Target Thumbnail Texture {}", page_index)),
-                size: wgpu::Extent3d { width: thumb_width, height: thumb_height, depth_or_array_layers: 1 },
+                size: wgpu::Extent3d {
+                    width: thumb_width,
+                    height: thumb_height,
+                    depth_or_array_layers: 1,
+                },
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
@@ -255,13 +246,16 @@ impl VelloRenderer {
                 &view,
                 wgpu::FilterMode::Linear,
             );
-            self.thumbnail_textures.insert(page_index, ThumbnailTexture {
-                _texture: texture,
-                view,
-                egui_texture: tid,
-                width: thumb_width,
-                height: thumb_height,
-            });
+            self.thumbnail_textures.insert(
+                page_index,
+                ThumbnailTexture {
+                    _texture: texture,
+                    view,
+                    egui_texture: tid,
+                    width: thumb_width,
+                    height: thumb_height,
+                },
+            );
 
             // Render page scene onto thumbnail texture
             let tex = self.thumbnail_textures.get(&page_index)?;

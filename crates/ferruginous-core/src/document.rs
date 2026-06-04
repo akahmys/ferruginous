@@ -151,10 +151,20 @@ impl Document {
     }
 
     #[cfg(target_os = "macos")]
-    fn load_mac_fallbacks(&self, fonts: &mut BTreeMap<FallbackFontType, Arc<Vec<u8>>>, missing_types: &[FallbackFontType]) {
+    fn load_mac_fallbacks(
+        &self,
+        fonts: &mut BTreeMap<FallbackFontType, Arc<Vec<u8>>>,
+        missing_types: &[FallbackFontType],
+    ) {
         let mac_paths = [
-            (crate::font::FallbackFontType::JapaneseSerif, "/System/Library/Fonts/ヒラギノ明朝 ProN.ttc"),
-            (crate::font::FallbackFontType::JapaneseSans, "/System/Library/Fonts/ヒラギノ角ゴ Interface.ttc"),
+            (
+                crate::font::FallbackFontType::JapaneseSerif,
+                "/System/Library/Fonts/ヒラギノ明朝 ProN.ttc",
+            ),
+            (
+                crate::font::FallbackFontType::JapaneseSans,
+                "/System/Library/Fonts/ヒラギノ角ゴ Interface.ttc",
+            ),
             (crate::font::FallbackFontType::Serif, "/System/Library/Fonts/Times.ttc"),
             (crate::font::FallbackFontType::SansSerif, "/System/Library/Fonts/Helvetica.ttc"),
             (crate::font::FallbackFontType::Monospace, "/System/Library/Fonts/Courier.dfont"),
@@ -169,7 +179,11 @@ impl Document {
     }
 
     #[cfg(target_os = "windows")]
-    fn load_windows_fallbacks(&self, fonts: &mut BTreeMap<FallbackFontType, Arc<Vec<u8>>>, missing_types: &[FallbackFontType]) {
+    fn load_windows_fallbacks(
+        &self,
+        fonts: &mut BTreeMap<FallbackFontType, Arc<Vec<u8>>>,
+        missing_types: &[FallbackFontType],
+    ) {
         let win_paths = [
             (crate::font::FallbackFontType::JapaneseSerif, "C:\\Windows\\Fonts\\msmincho.ttc"),
             (crate::font::FallbackFontType::JapaneseSans, "C:\\Windows\\Fonts\\msgothic.ttc"),
@@ -187,13 +201,32 @@ impl Document {
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    fn load_linux_fallbacks(&self, fonts: &mut BTreeMap<FallbackFontType, Arc<Vec<u8>>>, missing_types: &[FallbackFontType]) {
+    fn load_linux_fallbacks(
+        &self,
+        fonts: &mut BTreeMap<FallbackFontType, Arc<Vec<u8>>>,
+        missing_types: &[FallbackFontType],
+    ) {
         let linux_paths = [
-            (crate::font::FallbackFontType::JapaneseSerif, "/usr/share/fonts/truetype/fonts-japanese-mincho.ttf"),
-            (crate::font::FallbackFontType::JapaneseSans, "/usr/share/fonts/truetype/fonts-japanese-gothic.ttf"),
-            (crate::font::FallbackFontType::Serif, "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf"),
-            (crate::font::FallbackFontType::SansSerif, "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
-            (crate::font::FallbackFontType::Monospace, "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"),
+            (
+                crate::font::FallbackFontType::JapaneseSerif,
+                "/usr/share/fonts/truetype/fonts-japanese-mincho.ttf",
+            ),
+            (
+                crate::font::FallbackFontType::JapaneseSans,
+                "/usr/share/fonts/truetype/fonts-japanese-gothic.ttf",
+            ),
+            (
+                crate::font::FallbackFontType::Serif,
+                "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
+            ),
+            (
+                crate::font::FallbackFontType::SansSerif,
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            ),
+            (
+                crate::font::FallbackFontType::Monospace,
+                "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+            ),
         ];
         for (ftype, path) in linux_paths {
             if missing_types.contains(&ftype) {
@@ -342,7 +375,9 @@ impl Document {
 
     /// Retrieves a specific page by its 0-based index.
     pub fn get_page(&self, index: usize) -> PdfResult<Page<'_>> {
-        let page_handle = self.pages.get(index)
+        let page_handle = self
+            .pages
+            .get(index)
             .ok_or_else(|| PdfError::Other("Page index out of bounds".into()))?;
         let parent_chain = self.get_parent_chain(*page_handle);
         Ok(Page::new(&self.arena, *page_handle, parent_chain))
@@ -390,7 +425,11 @@ impl Document {
         Ok(())
     }
 
-    fn build_page_tree_layer(&mut self, layer: &[Object], max_kids: usize) -> PdfResult<Vec<Object>> {
+    fn build_page_tree_layer(
+        &mut self,
+        layer: &[Object],
+        max_kids: usize,
+    ) -> PdfResult<Vec<Object>> {
         let mut next_layer = Vec::new();
         for chunk in layer.chunks(max_kids) {
             let mut total_count = 0;
@@ -435,7 +474,8 @@ impl Document {
     /// Dynamically rebuilds a clean, balanced B-Tree (max_kids = 50) in the arena.
     pub fn rebuild_page_tree_in_arena(&mut self) -> PdfResult<()> {
         let max_kids = 50;
-        let mut current_layer: Vec<Object> = self.pages.iter().map(|&h| Object::Reference(h)).collect();
+        let mut current_layer: Vec<Object> =
+            self.pages.iter().map(|&h| Object::Reference(h)).collect();
 
         if current_layer.is_empty() {
             return self.create_empty_page_tree();
@@ -710,9 +750,17 @@ impl Document {
         depth: usize,
     ) -> PdfResult<()> {
         let kids_key = self.arena.name("Kids");
-        let kids_obj = dict.get(&kids_key).ok_or_else(|| PdfError::Other("Missing Kids in Pages node".into()))?;
-        let ah = kids_obj.resolve(&self.arena).as_array().ok_or_else(|| PdfError::Other("Invalid Kids array".into()))?;
-        let kids = self.arena.get_array(ah).ok_or_else(|| PdfError::Other("Invalid kids array handle".into()))?;
+        let kids_obj = dict
+            .get(&kids_key)
+            .ok_or_else(|| PdfError::Other("Missing Kids in Pages node".into()))?;
+        let ah = kids_obj
+            .resolve(&self.arena)
+            .as_array()
+            .ok_or_else(|| PdfError::Other("Invalid Kids array".into()))?;
+        let kids = self
+            .arena
+            .get_array(ah)
+            .ok_or_else(|| PdfError::Other("Invalid kids array handle".into()))?;
         for kid in kids {
             if let Some(kh) = kid.as_reference() {
                 self.push_down_attributes_recursive(kh, local_inherited, depth + 1)?;
@@ -738,10 +786,8 @@ impl Document {
         }
 
         let dict_h = self.resolve_to_dict(node_h)?;
-        let dict = self
-            .arena
-            .get_dict(dict_h)
-            .ok_or_else(|| PdfError::Other("Invalid node".into()))?;
+        let dict =
+            self.arena.get_dict(dict_h).ok_or_else(|| PdfError::Other("Invalid node".into()))?;
 
         let type_key = self.arena.name("Type");
         let node_type = dict

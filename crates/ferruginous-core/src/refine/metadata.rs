@@ -15,7 +15,9 @@ fn parse_tz_part(tz: char, tz_part: &str) -> Option<xmp_writer::Timezone> {
         if tz_digits.len() >= 2 {
             let tz_h = tz_digits[0..2].parse::<i8>().ok().map(|h| h * sign);
             let mut tz_min = 0;
-            if tz_digits.len() >= 4 && let Ok(m) = tz_digits[2..4].parse::<i8>() {
+            if tz_digits.len() >= 4
+                && let Ok(m) = tz_digits[2..4].parse::<i8>()
+            {
                 tz_min = m;
             }
             tz_h.map(|h| xmp_writer::Timezone::Local { hour: h, minute: tz_min })
@@ -58,15 +60,7 @@ fn parse_legacy_pdf_date(s: &str) -> Option<xmp_writer::DateTime> {
 
     let timezone = tz_char.and_then(|tz| parse_tz_part(tz, tz_part));
 
-    Some(xmp_writer::DateTime {
-        year,
-        month,
-        day,
-        hour,
-        minute,
-        second,
-        timezone,
-    })
+    Some(xmp_writer::DateTime { year, month, day, hour, minute, second, timezone })
 }
 
 fn parse_iso8601_date(s: &str) -> Option<xmp_writer::DateTime> {
@@ -98,7 +92,9 @@ fn parse_iso8601_date(s: &str) -> Option<xmp_writer::DateTime> {
                 if tz_digits.len() >= 2 {
                     let tz_h = tz_digits[0..2].parse::<i8>().ok().map(|h| h * sign);
                     let mut tz_min = 0;
-                    if tz_digits.len() >= 4 && let Ok(m) = tz_digits[2..4].parse::<i8>() {
+                    if tz_digits.len() >= 4
+                        && let Ok(m) = tz_digits[2..4].parse::<i8>()
+                    {
                         tz_min = m;
                     }
                     if let Some(h) = tz_h {
@@ -109,15 +105,7 @@ fn parse_iso8601_date(s: &str) -> Option<xmp_writer::DateTime> {
         }
     }
 
-    Some(xmp_writer::DateTime {
-        year,
-        month,
-        day,
-        hour,
-        minute,
-        second,
-        timezone,
-    })
+    Some(xmp_writer::DateTime { year, month, day, hour, minute, second, timezone })
 }
 
 /// Parses a legacy PDF date string (e.g. "D:20031003221948+09'00'") or a standard ISO 8601
@@ -129,7 +117,9 @@ pub fn parse_date_string(s: &str) -> Option<xmp_writer::DateTime> {
     }
 
     // 1. Check if it's a legacy PDF date (starts with D: or contains only digits and offset indicators)
-    if s.starts_with("D:") || (s.len() >= 4 && s.chars().take(4).all(|c| c.is_ascii_digit()) && !s.contains('-')) {
+    if s.starts_with("D:")
+        || (s.len() >= 4 && s.chars().take(4).all(|c| c.is_ascii_digit()) && !s.contains('-'))
+    {
         return parse_legacy_pdf_date(s);
     }
 
@@ -142,11 +132,15 @@ pub fn parse_date_string(s: &str) -> Option<xmp_writer::DateTime> {
 }
 
 fn get_info_field(info: &BTreeMap<PdfName, RefinedObject>, key: &str) -> Option<String> {
-    info.get(&PdfName::new(key)).map(|obj| match obj {
-        RefinedObject::Text(s) => s.clone(),
-        RefinedObject::String(s) | RefinedObject::Hex(s) => crate::refine::text::recover_string(s),
-        _ => "".into(),
-    }).filter(|s| !s.is_empty())
+    info.get(&PdfName::new(key))
+        .map(|obj| match obj {
+            RefinedObject::Text(s) => s.clone(),
+            RefinedObject::String(s) | RefinedObject::Hex(s) => {
+                crate::refine::text::recover_string(s)
+            }
+            _ => "".into(),
+        })
+        .filter(|s| !s.is_empty())
 }
 
 fn write_basic_fields(info: &BTreeMap<PdfName, RefinedObject>, writer: &mut XmpWriter) {
@@ -188,19 +182,41 @@ fn generate_and_write_uuids(info: &BTreeMap<PdfName, RefinedObject>, writer: &mu
 
     let doc_uuid = format!(
         "uuid:{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
-        doc_bytes[0], doc_bytes[1], doc_bytes[2], doc_bytes[3],
-        doc_bytes[4], doc_bytes[5],
-        doc_bytes[6], doc_bytes[7],
-        doc_bytes[8], doc_bytes[9],
-        doc_bytes[10], doc_bytes[11], doc_bytes[12], doc_bytes[13], doc_bytes[14], doc_bytes[15]
+        doc_bytes[0],
+        doc_bytes[1],
+        doc_bytes[2],
+        doc_bytes[3],
+        doc_bytes[4],
+        doc_bytes[5],
+        doc_bytes[6],
+        doc_bytes[7],
+        doc_bytes[8],
+        doc_bytes[9],
+        doc_bytes[10],
+        doc_bytes[11],
+        doc_bytes[12],
+        doc_bytes[13],
+        doc_bytes[14],
+        doc_bytes[15]
     );
     let inst_uuid = format!(
         "uuid:{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
-        inst_bytes[0], inst_bytes[1], inst_bytes[2], inst_bytes[3],
-        inst_bytes[4], inst_bytes[5],
-        inst_bytes[6], inst_bytes[7],
-        inst_bytes[8], inst_bytes[9],
-        inst_bytes[10], inst_bytes[11], inst_bytes[12], inst_bytes[13], inst_bytes[14], inst_bytes[15]
+        inst_bytes[0],
+        inst_bytes[1],
+        inst_bytes[2],
+        inst_bytes[3],
+        inst_bytes[4],
+        inst_bytes[5],
+        inst_bytes[6],
+        inst_bytes[7],
+        inst_bytes[8],
+        inst_bytes[9],
+        inst_bytes[10],
+        inst_bytes[11],
+        inst_bytes[12],
+        inst_bytes[13],
+        inst_bytes[14],
+        inst_bytes[15]
     );
 
     writer.document_id(&doc_uuid);

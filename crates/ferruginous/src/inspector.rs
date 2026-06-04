@@ -14,14 +14,12 @@ pub struct ArlingtonInspectorPanel {
 
 impl ArlingtonInspectorPanel {
     pub fn new() -> Self {
-        Self {
-            active_object_name: "Catalog (Root)".to_string(),
-            search_query: String::new(),
-        }
+        Self { active_object_name: "Catalog (Root)".to_string(), search_query: String::new() }
     }
 
     /// Simulates PDF dictionary structures for the selected tag/node.
-    fn get_mock_dictionary_for_node(&self, tag: &str) -> Vec<InspectorEntry> { // RR-15 Limit: Dispatcher - Flat mapping of node types to mock dictionary elements
+    fn get_mock_dictionary_for_node(&self, tag: &str) -> Vec<InspectorEntry> {
+        // RR-15 Limit: Dispatcher - Flat mapping of node types to mock dictionary elements
         match tag {
             "Catalog" | "Document" => vec![
                 InspectorEntry {
@@ -50,7 +48,9 @@ impl ArlingtonInspectorPanel {
                     val_type: "String".to_string(),
                     raw_value: "()".to_string(),
                     compliance_rule: "PDF/UA-2: Primary natural language. Must not be empty.",
-                    warning: Some("🚨 Empty language catalog. Natural language string must be defined for text synthesis!"),
+                    warning: Some(
+                        "🚨 Empty language catalog. Natural language string must be defined for text synthesis!",
+                    ),
                 },
             ],
             "Figure" => vec![
@@ -73,7 +73,9 @@ impl ArlingtonInspectorPanel {
                     val_type: "String".to_string(),
                     raw_value: "None".to_string(),
                     compliance_rule: "PDF/UA-2 Checkpoint 3.1: Alternative descriptions required for non-text objects.",
-                    warning: Some("🚨 Matterhorn violation: Alternative description (Alt) missing for /Figure structural element!"),
+                    warning: Some(
+                        "🚨 Matterhorn violation: Alternative description (Alt) missing for /Figure structural element!",
+                    ),
                 },
             ],
             _ => vec![
@@ -102,7 +104,14 @@ impl ArlingtonInspectorPanel {
         }
     }
 
-    pub fn show(&mut self, ui: &mut egui::Ui, selected_tag: Option<&str>, locale_mgr: &crate::locale::LocaleManager, active_lang: &str) { // RR-15 Limit: GUI - Arlington Dictionary Inspector panel show
+    pub fn show(
+        &mut self,
+        ui: &mut egui::Ui,
+        selected_tag: Option<&str>,
+        locale_mgr: &crate::locale::LocaleManager,
+        active_lang: &str,
+    ) {
+        // RR-15 Limit: GUI - Arlington Dictionary Inspector panel show
         let tag = selected_tag.unwrap_or("Catalog");
         self.active_object_name = format!("Dictionary: <{}>", tag);
 
@@ -128,15 +137,18 @@ impl ArlingtonInspectorPanel {
 
             egui::ScrollArea::vertical().id_salt("inspector_scroll").show(ui, |ui| {
                 for entry in entries {
-                    if !self.search_query.is_empty() 
-                        && !entry.key.to_lowercase().contains(&self.search_query.to_lowercase()) 
+                    if !self.search_query.is_empty()
+                        && !entry.key.to_lowercase().contains(&self.search_query.to_lowercase())
                     {
                         continue;
                     }
 
                     let frame = egui::Frame::NONE
                         .fill(ui.style().visuals.extreme_bg_color)
-                        .stroke(egui::Stroke::new(1.0, ui.style().visuals.widgets.noninteractive.bg_stroke.color))
+                        .stroke(egui::Stroke::new(
+                            1.0,
+                            ui.style().visuals.widgets.noninteractive.bg_stroke.color,
+                        ))
                         .corner_radius(6.0)
                         .inner_margin(egui::Margin::same(8));
 
@@ -144,8 +156,11 @@ impl ArlingtonInspectorPanel {
                         ui.vertical(|ui| {
                             ui.horizontal(|ui| {
                                 // Key name in bold primary color
-                                ui.colored_label(egui::Color32::from_rgb(230, 90, 0), egui::RichText::new(&entry.key).strong());
-                                
+                                ui.colored_label(
+                                    egui::Color32::from_rgb(230, 90, 0),
+                                    egui::RichText::new(&entry.key).strong(),
+                                );
+
                                 // Type badge
                                 let badge_color = match entry.val_type.as_str() {
                                     "Name" => egui::Color32::from_rgb(0, 120, 200),
@@ -159,12 +174,20 @@ impl ArlingtonInspectorPanel {
                                     .corner_radius(3.0)
                                     .inner_margin(egui::Margin::symmetric(4, 2));
                                 badge_frame.show(ui, |ui| {
-                                    ui.colored_label(badge_color, egui::RichText::new(&entry.val_type).small().strong());
+                                    ui.colored_label(
+                                        badge_color,
+                                        egui::RichText::new(&entry.val_type).small().strong(),
+                                    );
                                 });
 
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.monospace(egui::RichText::new(&entry.raw_value).strong());
-                                });
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        ui.monospace(
+                                            egui::RichText::new(&entry.raw_value).strong(),
+                                        );
+                                    },
+                                );
                             });
 
                             ui.add_space(4.0);
@@ -174,12 +197,18 @@ impl ArlingtonInspectorPanel {
                                 ui.add_space(6.0);
                                 let warn_frame = egui::Frame::NONE
                                     .fill(egui::Color32::from_rgba_unmultiplied(255, 200, 200, 30))
-                                    .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(255, 80, 80)))
+                                    .stroke(egui::Stroke::new(
+                                        1.0,
+                                        egui::Color32::from_rgb(255, 80, 80),
+                                    ))
                                     .corner_radius(4.0)
                                     .inner_margin(egui::Margin::same(6));
                                 warn_frame.show(ui, |ui| {
                                     ui.horizontal(|ui| {
-                                        ui.colored_label(egui::Color32::from_rgb(255, 80, 80), egui::RichText::new(warn).small());
+                                        ui.colored_label(
+                                            egui::Color32::from_rgb(255, 80, 80),
+                                            egui::RichText::new(warn).small(),
+                                        );
                                     });
                                 });
                             }

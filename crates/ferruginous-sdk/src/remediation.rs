@@ -594,13 +594,13 @@ impl HeuristicEngine {
         let r_max_x = f64::from(rect[2]);
         let r_max_y = f64::from(rect[3]);
 
-        span_min_x < r_max_x
-            && span_max_x > r_min_x
-            && span_min_y < r_max_y
-            && span_max_y > r_min_y
+        span_min_x < r_max_x && span_max_x > r_min_x && span_min_y < r_max_y && span_max_y > r_min_y
     }
 
-    fn collect_redacted_op_indices(spans: &[TextSpan], redacted_rects: &[[f32; 4]]) -> std::collections::BTreeSet<usize> {
+    fn collect_redacted_op_indices(
+        spans: &[TextSpan],
+        redacted_rects: &[[f32; 4]],
+    ) -> std::collections::BTreeSet<usize> {
         let mut redacted_op_indices = std::collections::BTreeSet::new();
         for span in spans {
             for rect in redacted_rects {
@@ -612,7 +612,10 @@ impl HeuristicEngine {
         redacted_op_indices
     }
 
-    fn rewrite_redacted_tokens(data: bytes::Bytes, redacted_op_indices: &std::collections::BTreeSet<usize>) -> Vec<u8> {
+    fn rewrite_redacted_tokens(
+        data: bytes::Bytes,
+        redacted_op_indices: &std::collections::BTreeSet<usize>,
+    ) -> Vec<u8> {
         use ferruginous_core::lexer::{Lexer, Token};
         let mut lexer = Lexer::new(data);
         let mut output = Vec::new();
@@ -663,11 +666,13 @@ pub fn apply_physical_redaction_to_page(
         // 1. Collect text spans with op_indices
         let mut collector = CollectorBackend::new();
         let res_dh = page.resources_handle();
-        let mut interpreter = Interpreter::new(&mut collector, doc, res_dh, kurbo::Affine::IDENTITY);
+        let mut interpreter =
+            Interpreter::new(&mut collector, doc, res_dh, kurbo::Affine::IDENTITY);
         let _ = interpreter.execute_raw(&data);
 
         // 2. Identify which op_indices intersect the redacted rectangles
-        let redacted_op_indices = HeuristicEngine::collect_redacted_op_indices(&collector.spans, redacted_rects);
+        let redacted_op_indices =
+            HeuristicEngine::collect_redacted_op_indices(&collector.spans, redacted_rects);
 
         if redacted_op_indices.is_empty() {
             return Ok(());
@@ -681,9 +686,9 @@ pub fn apply_physical_redaction_to_page(
         stream_dict.insert(arena.name("Length"), Object::Integer(output.len() as i64));
         let new_contents = arena.alloc_object(Object::Stream(
             arena.alloc_dict(stream_dict),
-            std::sync::Arc::new(ferruginous_core::object::SublimatedData::Raw(
-                bytes::Bytes::from(output),
-            )),
+            std::sync::Arc::new(ferruginous_core::object::SublimatedData::Raw(bytes::Bytes::from(
+                output,
+            ))),
         ));
 
         let mut updated_dict = arena.get_dict(page_dh).unwrap_or_default();
