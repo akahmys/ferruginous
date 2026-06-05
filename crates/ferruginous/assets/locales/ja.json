@@ -148,5 +148,13 @@
   "cmd_export_pdf": "PDF書き出し",
   "cmd_export_pdf_desc": "Production 書き出しウィザードを開きます",
   "cmd_reading_order": "読み上げ順",
-  "cmd_reading_order_desc": "読み上げ順オーバーレイ表示を切り替えます"
+  "cmd_reading_order_desc": "読み上げ順オーバーレイ表示を切り替えます",
+  "tooltip_view_continuous": "連続表示",
+  "tooltip_view_single": "ページ単位表示",
+  "tooltip_fit_width": "幅合わせ",
+  "tooltip_fit_height": "高さ合わせ",
+  "tooltip_zoom_in": "拡大",
+  "tooltip_zoom_out": "縮小",
+  "tooltip_first_page": "先頭ページに移動",
+  "tooltip_last_page": "最終ページに移動"
 }

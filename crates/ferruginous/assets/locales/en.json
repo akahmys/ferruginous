@@ -148,5 +148,13 @@
   "cmd_export_pdf": "Export PDF",
   "cmd_export_pdf_desc": "Open production export wizard",
   "cmd_reading_order": "Reading Order",
-  "cmd_reading_order_desc": "Toggle reading order bar overlay"
+  "cmd_reading_order_desc": "Toggle reading order bar overlay",
+  "tooltip_view_continuous": "Continuous Scroll",
+  "tooltip_view_single": "Page-by-page Display",
+  "tooltip_fit_width": "Fit to Width",
+  "tooltip_fit_height": "Fit to Height",
+  "tooltip_zoom_in": "Zoom In",
+  "tooltip_zoom_out": "Zoom Out",
+  "tooltip_first_page": "First Page",
+  "tooltip_last_page": "Last Page"
 }

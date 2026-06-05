@@ -6,20 +6,39 @@ pub struct PageLayout {
     pub rect: egui::Rect,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DisplayMode {
+    Continuous,
+    SinglePage,
+}
+
 pub struct PDFView {
     pub zoom: f32,
     pub pan: egui::Vec2,
     pub visible_pages: Vec<usize>,
+    pub display_mode: DisplayMode,
+    pub active_page: usize,
 }
 
 impl PDFView {
     pub fn new() -> Self {
-        Self { zoom: 1.0, pan: egui::Vec2::ZERO, visible_pages: Vec::new() }
+        Self {
+            zoom: 1.0,
+            pan: egui::Vec2::ZERO,
+            visible_pages: Vec::new(),
+            display_mode: DisplayMode::Continuous,
+            active_page: 0,
+        }
     }
     pub fn scroll_to_page(&mut self, page_index: usize, layouts: &[PageLayout]) {
-        if let Some(layout) = layouts.get(page_index) {
-            self.pan.y = -layout.rect.min.y * self.zoom;
-            self.pan.x = 0.0;
+        self.active_page = page_index;
+        if self.display_mode == DisplayMode::Continuous {
+            if let Some(layout) = layouts.get(page_index) {
+                self.pan.y = -layout.rect.min.y * self.zoom;
+                self.pan.x = 0.0;
+            }
+        } else {
+            self.pan = egui::Vec2::ZERO;
         }
     }
 
@@ -123,6 +142,9 @@ impl PDFView {
         // 2. Draw page shadows and authoritatively paint solid pure-white backings under each visible page
         let origin = egui::pos2(viewport_rect.center().x, viewport_rect.min.y + 20.0) + self.pan;
         for layout in layouts {
+            if self.display_mode == DisplayMode::SinglePage && layout.index != self.active_page {
+                continue;
+            }
             let page_rect = egui::Rect::from_min_size(
                 origin + layout.rect.min.to_vec2() * self.zoom,
                 layout.rect.size() * self.zoom,
@@ -159,6 +181,9 @@ impl PDFView {
         let origin = egui::pos2(viewport_rect.center().x, viewport_rect.min.y + 20.0) + self.pan;
 
         for layout in layouts {
+            if self.display_mode == DisplayMode::SinglePage && layout.index != self.active_page {
+                continue;
+            }
             let page_rect = egui::Rect::from_min_size(
                 origin + layout.rect.min.to_vec2() * self.zoom,
                 layout.rect.size() * self.zoom,
@@ -230,7 +255,7 @@ impl PDFView {
                 ui.painter().rect_filled(
                     *hl_rect,
                     0.0,
-                    egui::Color32::from_rgba_unmultiplied(0, 120, 215, 60),
+                    egui::Color32::from_rgba_unmultiplied(120, 125, 135, 45),
                 );
             }
         }
